@@ -29,6 +29,7 @@ Worker 获取租约并校验请求
 `pipeline-request` 包含以下不可变信息：
 
 - `request_id`、`job_id`、尝试次数和创建时间；
+- 明确区分 `simulated` 与 `real` 执行模式，防止模拟产物被当成真实结果；
 - 不包含邮箱、用户名等 Worker 不需要的身份信息，只传内部 `user_id`；
 - Re3D 标签、提交 SHA 和配置 SHA-256；
 - 输入 manifest 哈希、图片数和总字节数；

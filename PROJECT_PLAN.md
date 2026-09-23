@@ -72,7 +72,8 @@
 - 已完成 Re3D 标签、Git SHA、配置哈希和模型清单哈希冻结；
 - 已完成 `pipeline-request`、`pipeline-event`、`pipeline-result`、`evaluation` v1 JSON Schema；
 - 已完成契约有效样例、负向校验和跨文件一致性测试；
-- 下一步实现 Windows Worker 适配器、模拟执行模式和 Re3D 可配置运行目录。
+- 已完成 Windows Worker 目录边界、事件日志、模拟执行、原子结果和检查点恢复；
+- 下一步为 Re3D 增加可配置运行目录并实现真实适配器 dry-run。
 
 ## 4. 推荐技术架构
 

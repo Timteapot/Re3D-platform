@@ -7,6 +7,7 @@
   "additionalProperties": false,
   "required": [
     "contract_version",
+    "execution_mode",
     "job_id",
     "request_id",
     "attempt",
@@ -21,6 +22,7 @@
   ],
   "properties": {
     "contract_version": { "const": "1.0" },
+    "execution_mode": { "enum": ["simulated", "real"] },
     "job_id": { "type": "string", "format": "uuid" },
     "request_id": { "type": "string", "format": "uuid" },
     "attempt": { "type": "integer", "minimum": 1 },

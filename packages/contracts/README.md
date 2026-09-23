@@ -13,6 +13,8 @@
 
 Schema 使用 JSON Schema Draft 2020-12，`contract_version` 固定为 `1.0`。首期不允许普通用户改变分支或 Re3D 基线，因此请求 Schema 将三分支、标签、提交和配置哈希固定为常量。
 
+请求和结果都包含 `execution_mode`。模拟 Worker 只能处理 `simulated`，后续真实适配器只能处理 `real`，两类产物不得混用。
+
 ## 验证
 
 ```powershell
