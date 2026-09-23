@@ -1,10 +1,12 @@
-# Windows Worker 与模拟执行模式
+# Windows Worker、模拟执行与真实 dry-run
 
 ## 当前实现范围
 
-当前 Worker 是真实 GPU 接入前的可执行骨架。它读取和验证正式 v1 契约，模拟共享阶段和 A-v4、B-v2、C 三条分支，生成结构化事件、最小合法 GLB、产物清单、输出校验和最终结果。
+当前 Worker 是真实 GPU 执行前的可执行骨架。它既能模拟共享阶段和 A-v4、B-v2、C 三条分支，也能验证已安装 Re3D v1.1.0 并通过真实入口执行不启动子进程的 dry-run。
 
 模拟器不会启动 Re3D、不会占用 GPU，也不会把模拟指标解释为真实重建质量。请求和结果都必须包含 `execution_mode: simulated`，避免模拟数据进入真实任务统计。
+
+真实 dry-run 要求 `execution_mode: real`，会调用 Re3D `scripts/run_pipeline.py --dry-run`，但只打印预期命令，不运行 COLMAP、模型或 OpenMVS。它生成预检报告，不生成 `pipeline-result.json`，因此不能被解释为重建成功。
 
 ## 模块职责
 
@@ -14,8 +16,10 @@
 | `contracts.py` | 加载 JSON Schema，并在组件边界验证请求、事件和结果 |
 | `events.py` | 追加 JSONL 事件、刷新磁盘、恢复连续序号并保护终态 |
 | `io.py` | 文件 SHA-256 和同目录临时文件加 `os.replace` 的原子写入 |
+| `input_validation.py` | 共享的 manifest、文件名、数量、字节数和符号链接检查 |
 | `simulation.py` | 模拟阶段、生成三分支 GLB、恢复检查点并汇总结果 |
-| `settings.py` | 从参数或环境变量读取数据根目录和 Worker 身份 |
+| `real.py` | 校验 Re3D Git/配置身份、构建隔离命令、执行 dry-run 并映射步骤 |
+| `settings.py` | 从参数或环境变量读取数据根目录、Worker 与 Re3D 位置 |
 | `apps/worker/main.py` | Windows 命令行入口和稳定退出码 |
 
 ## 输入前置条件
@@ -53,6 +57,15 @@ python -m apps.worker.main simulate --job-id <job_uuid>
 ```
 
 也可以显式传入 `--data-root` 和 `--worker-id`，命令行参数优先于环境变量。
+
+真实 dry-run：
+
+```powershell
+$env:RE3D_ROOT = "D:\3Dreconstruction\Re3D"
+python -m apps.worker.main real-dry-run --job-id <job_uuid>
+```
+
+未设置 `RE3D_DRIVER_PYTHON` 时，适配器从 Re3D 的 `configs/paths.local.json` 读取 `mapanything_python`。
 
 成功时标准输出只包含一个 JSON 摘要，不输出图片路径、用户信息或内部 traceback。退出码约定：
 
@@ -96,15 +109,15 @@ python -m apps.worker.main simulate --job-id <job_uuid>
 ## 尚未实现
 
 - PostgreSQL 任务领取、租约和心跳；
-- 真实 Re3D 子进程调用；
+- 真实 Re3D 非 dry-run 执行和产物归一化；
 - GPU/CPU/磁盘资源采样；
 - 用户取消和超时终止子进程；
 - 失败任务目录清理；
 - 评估器执行；
 - 任意时刻进程崩溃后的部分文件修复。
 
-因此当前结果证明的是平台协议、目录边界和恢复骨架可用，不代表真实重建已经接入。
+因此当前结果证明的是平台协议、目录边界、Re3D 安装身份和真实命令编排可用，不代表真实 GPU 重建已经接入。
 
 ## 下一步
 
-下一步是在保留 `re3d-pipeline-v1.0.0` 标签不变的前提下，为 Re3D 新增可配置的工作、输出和日志根目录，形成新的候选管线版本；随后实现真实适配器的 `dry-run`，把 Re3D 步骤映射为本次定义的结构化事件。
+下一步实现 PostgreSQL 最小任务状态机、Worker 租约和心跳。真实执行必须先取得租约，再由适配器启动 Re3D；API 只读取数据库投影和受控产物，不直接运行管线。

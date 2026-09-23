@@ -6,8 +6,9 @@ Re3D Platform 是基于 Re3D 三维重建管线的非商业学习与工程实践
 
 项目处于阶段 0：基线冻结与平台骨架准备。
 
-- Re3D 基线标签：`re3d-pipeline-v1.0.0`
-- Re3D 基线提交：`d528b1474c55bf3b65a1253bd56ab4b5024adab2`
+- Re3D 活动基线标签：`re3d-pipeline-v1.1.0`
+- Re3D 活动基线提交：`2c5ba174dae9fe53dcec8f7d8466793fdebf0c58`
+- 首个冻结基线：`re3d-pipeline-v1.0.0`，保持不变并保留历史清单
 - 首期固定分支：`A-v4`、`B-v2`、`C`
 - 当前开发环境：Windows
 - 平台代码目录：`D:\3Dreconstruction\Re3D-platform`
@@ -53,4 +54,4 @@ tests                    集成、端到端与测试夹具
 
 ## 下一步
 
-运行契约 v1、Windows Worker 骨架和三分支模拟执行模式已完成。下一步为 Re3D 新增可配置的工作、输出和日志根目录，并实现真实适配器 `dry-run`；冻结标签 `re3d-pipeline-v1.0.0` 保持不变。
+运行契约、Windows Worker、三分支模拟器、Re3D 隔离运行目录和真实适配器 dry-run 已完成。下一步实现 PostgreSQL 最小任务状态机、Worker 租约和心跳，再把 dry-run 适配器扩展为受控真实执行。

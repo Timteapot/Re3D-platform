@@ -8,6 +8,7 @@ from .errors import (
     SimulatedCrash,
 )
 from .paths import TaskLayout
+from .real import RealDryRunOutcome, RealDryRunRunner
 from .simulation import SimulationOutcome, SimulationRunner
 
 __all__ = [
@@ -15,6 +16,8 @@ __all__ = [
     "ContractValidationError",
     "IntegrityError",
     "PathBoundaryError",
+    "RealDryRunOutcome",
+    "RealDryRunRunner",
     "SimulatedCrash",
     "SimulationOutcome",
     "SimulationRunner",

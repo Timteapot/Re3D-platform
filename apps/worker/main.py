@@ -4,8 +4,14 @@ import argparse
 import json
 import sys
 
-from backend.re3d_adapter import AdapterError, SimulatedCrash, SimulationRunner, TaskLayout
-from backend.re3d_adapter.settings import WorkerSettings
+from backend.re3d_adapter import (
+    AdapterError,
+    RealDryRunRunner,
+    SimulatedCrash,
+    SimulationRunner,
+    TaskLayout,
+)
+from backend.re3d_adapter.settings import Re3DSettings, WorkerSettings
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -22,6 +28,15 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["A-v4", "B-v2", "C"],
         help="Development-only recovery test hook",
     )
+    real_dry_run = subparsers.add_parser(
+        "real-dry-run",
+        description="Validate the installed Re3D baseline and preview all commands",
+    )
+    real_dry_run.add_argument("--job-id", required=True)
+    real_dry_run.add_argument("--data-root")
+    real_dry_run.add_argument("--worker-id")
+    real_dry_run.add_argument("--re3d-root")
+    real_dry_run.add_argument("--driver-python")
     return parser
 
 
@@ -33,9 +48,35 @@ def main(argv: list[str] | None = None) -> int:
             worker_id=args.worker_id,
         )
         layout = TaskLayout.from_data_root(settings.data_root, args.job_id)
-        outcome = SimulationRunner(layout, worker_id=settings.worker_id).run(
-            crash_after_branch=args.crash_after_branch
-        )
+        if args.command == "simulate":
+            outcome = SimulationRunner(layout, worker_id=settings.worker_id).run(
+                crash_after_branch=args.crash_after_branch
+            )
+            response = {
+                "job_id": outcome.result["job_id"],
+                "status": outcome.result["status"],
+                "execution_mode": outcome.result["execution_mode"],
+                "reused": outcome.reused,
+                "result": str(outcome.result_path),
+            }
+        else:
+            re3d = Re3DSettings.from_environment(
+                root=args.re3d_root,
+                driver_python=args.driver_python,
+            )
+            outcome = RealDryRunRunner(
+                layout,
+                re3d_root=re3d.root,
+                driver_python=re3d.driver_python,
+            ).run()
+            response = {
+                "job_id": outcome.report["job_id"],
+                "status": outcome.report["status"],
+                "execution_mode": "real",
+                "operation": outcome.report["operation"],
+                "step_count": outcome.report["step_count"],
+                "report": str(outcome.report_path),
+            }
     except SimulatedCrash as exc:
         print(str(exc), file=sys.stderr)
         return 75
@@ -44,13 +85,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     print(
         json.dumps(
-            {
-                "job_id": outcome.result["job_id"],
-                "status": outcome.result["status"],
-                "execution_mode": outcome.result["execution_mode"],
-                "reused": outcome.reused,
-                "result": str(outcome.result_path),
-            },
+            response,
             ensure_ascii=False,
         )
     )

@@ -2,7 +2,7 @@
 
 文档版本：1.1
 编制日期：2026-09-23
-算法基线：Re3D 标签 `re3d-pipeline-v1.0.0`，提交 `d528b1474c55bf3b65a1253bd56ab4b5024adab2`
+活动算法基线：Re3D 标签 `re3d-pipeline-v1.1.0`，提交 `2c5ba174dae9fe53dcec8f7d8466793fdebf0c58`
 平台目录：`D:\3Dreconstruction\Re3D-platform`
 数据目录：`D:\3Dreconstruction\Re3D-data`
 
@@ -61,7 +61,7 @@
 
 ### 3.2 平台开发前必须冻结
 
-1. 将标签 `re3d-pipeline-v1.0.0` 和提交 `d528b1474c55bf3b65a1253bd56ab4b5024adab2` 记录为第一版算法基线，不在平台开发过程中无版本地修改管线行为；
+1. 保留标签 `re3d-pipeline-v1.0.0` 和提交 `d528b1474c55bf3b65a1253bd56ab4b5024adab2` 作为第一版冻结基线；平台活动基线升级为只增加隔离运行目录接口的 `re3d-pipeline-v1.1.0`，不无版本地修改管线行为；
 2. 为管线定义机器可读的运行契约，包括参数、阶段、退出码、日志和产物；
 3. 首期任务固定执行 A-v4、B-v2、C 三条分支；用户界面解释三条分支并提供结果切换和对比，不允许普通用户通过参数绕过平台固定配置；
 4. 确认 MapAnything 当前权重的准确来源；无法补录时继续按 CC-BY-NC 非商业权重处理；
@@ -73,7 +73,8 @@
 - 已完成 `pipeline-request`、`pipeline-event`、`pipeline-result`、`evaluation` v1 JSON Schema；
 - 已完成契约有效样例、负向校验和跨文件一致性测试；
 - 已完成 Windows Worker 目录边界、事件日志、模拟执行、原子结果和检查点恢复；
-- 下一步为 Re3D 增加可配置运行目录并实现真实适配器 dry-run。
+- 已完成 Re3D v1.1.0 隔离运行目录和平台真实适配器 dry-run；
+- 下一步实现 PostgreSQL 最小任务状态机、Worker 租约和心跳。
 
 ## 4. 推荐技术架构
 
