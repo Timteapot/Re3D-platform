@@ -1,0 +1,217 @@
+{
+  "contract_version": "1.0",
+  "rules_version": "1.0.0",
+  "job_id": "11111111-1111-4111-8111-111111111111",
+  "evaluated_at": "2026-09-23T14:01:00Z",
+  "source_result_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "scope": "structural_health",
+  "overall": {
+    "status": "warning",
+    "score": 84.5,
+    "summary": "三条分支均生成完整产物；输入与 SfM 健康，部分分支深度保留率需要关注。"
+  },
+  "shared_dimensions": {
+    "input": {
+      "status": "pass",
+      "summary": "图片数量和尺寸满足首期规则。",
+      "checks": [
+        {
+          "id": "input.image_count",
+          "label": "输入图片数量",
+          "status": "pass",
+          "actual": 49,
+          "unit": "images",
+          "thresholds": { "minimum": 3, "maximum": 150 },
+          "evidence_refs": ["input/input-manifest.json"]
+        }
+      ]
+    },
+    "sfm": {
+      "status": "pass",
+      "summary": "全部图片完成注册，平均重投影误差处于建议范围。",
+      "checks": [
+        {
+          "id": "sfm.registration_rate",
+          "label": "SfM 图片注册率",
+          "status": "pass",
+          "actual": 1.0,
+          "unit": "ratio",
+          "thresholds": { "pass_minimum": 0.9, "warning_minimum": 0.7 },
+          "evidence_refs": ["runtime/work/shared/colmap/reconstruction_metrics.json"]
+        }
+      ]
+    },
+    "performance": {
+      "status": "pass",
+      "summary": "任务在资源和超时限制内完成。",
+      "checks": [
+        {
+          "id": "performance.duration",
+          "label": "总运行时长",
+          "status": "pass",
+          "actual": 7140,
+          "unit": "seconds",
+          "thresholds": { "timeout": 43200 },
+          "evidence_refs": ["manifests/pipeline-result.json"]
+        }
+      ]
+    }
+  },
+  "branches": {
+    "A-v4": {
+      "status": "pass",
+      "score": 88,
+      "summary": "产物完整，深度保留率和网格结构正常。",
+      "dimensions": {
+        "depth": {
+          "status": "pass",
+          "summary": "跨视角过滤后保留率正常。",
+          "checks": [
+            {
+              "id": "a.depth_retained_fraction",
+              "label": "深度有效像素保留率",
+              "status": "pass",
+              "actual": 0.7556,
+              "unit": "ratio",
+              "thresholds": { "pass_minimum": 0.5, "warning_minimum": 0.3 },
+              "evidence_refs": ["runtime/work/branches/a_mapanything/depth-v4/consistency_manifest.json"]
+            }
+          ]
+        },
+        "mesh": {
+          "status": "pass",
+          "summary": "网格可解析且顶点、面数量有效。",
+          "checks": [
+            {
+              "id": "a.mesh_faces",
+              "label": "网格面数量",
+              "status": "pass",
+              "actual": 297110,
+              "unit": "faces",
+              "thresholds": { "minimum": 1 },
+              "evidence_refs": ["manifests/output-validation.json"]
+            }
+          ]
+        },
+        "artifacts": {
+          "status": "pass",
+          "summary": "GLB 产物校验通过。",
+          "checks": [
+            {
+              "id": "a.glb_valid",
+              "label": "GLB 完整性",
+              "status": "pass",
+              "actual": true,
+              "unit": null,
+              "evidence_refs": ["output/A-v4/mesh.glb", "manifests/output-validation.json"]
+            }
+          ]
+        }
+      }
+    },
+    "B-v2": {
+      "status": "pass",
+      "score": 85,
+      "summary": "产物完整，深度与网格指标处于建议范围。",
+      "dimensions": {
+        "depth": {
+          "status": "pass",
+          "summary": "跨视角过滤后的有效深度比例可用。",
+          "checks": [
+            {
+              "id": "b.depth_retained_fraction",
+              "label": "深度有效像素保留率",
+              "status": "pass",
+              "actual": 0.7021,
+              "unit": "ratio",
+              "thresholds": { "pass_minimum": 0.5, "warning_minimum": 0.3 },
+              "evidence_refs": ["runtime/work/branches/b_mvsanywhere/depth-v2/consistency_manifest.json"]
+            }
+          ]
+        },
+        "mesh": {
+          "status": "pass",
+          "summary": "网格可解析且面数量有效。",
+          "checks": [
+            {
+              "id": "b.mesh_faces",
+              "label": "网格面数量",
+              "status": "pass",
+              "actual": 307525,
+              "unit": "faces",
+              "thresholds": { "minimum": 1 },
+              "evidence_refs": ["manifests/output-validation.json"]
+            }
+          ]
+        },
+        "artifacts": {
+          "status": "pass",
+          "summary": "GLB 产物校验通过。",
+          "checks": [
+            {
+              "id": "b.glb_valid",
+              "label": "GLB 完整性",
+              "status": "pass",
+              "actual": true,
+              "unit": null,
+              "evidence_refs": ["output/B-v2/mesh.glb", "manifests/output-validation.json"]
+            }
+          ]
+        }
+      }
+    },
+    "C": {
+      "status": "warning",
+      "score": 80.5,
+      "summary": "产物完整，但该分支不使用学习深度保留率指标。",
+      "dimensions": {
+        "depth": {
+          "status": "not_applicable",
+          "summary": "C 分支采用 OpenMVS PatchMatch，不套用 A/B 的深度保留率规则。",
+          "checks": [
+            {
+              "id": "c.depth_retained_fraction",
+              "label": "学习深度保留率",
+              "status": "not_applicable",
+              "actual": null,
+              "unit": "ratio",
+              "evidence_refs": ["manifests/pipeline-result.json"]
+            }
+          ]
+        },
+        "mesh": {
+          "status": "pass",
+          "summary": "网格可解析且面数量有效。",
+          "checks": [
+            {
+              "id": "c.mesh_faces",
+              "label": "网格面数量",
+              "status": "pass",
+              "actual": 908969,
+              "unit": "faces",
+              "thresholds": { "minimum": 1 },
+              "evidence_refs": ["manifests/output-validation.json"]
+            }
+          ]
+        },
+        "artifacts": {
+          "status": "pass",
+          "summary": "GLB 产物校验通过。",
+          "checks": [
+            {
+              "id": "c.glb_valid",
+              "label": "GLB 完整性",
+              "status": "pass",
+              "actual": true,
+              "unit": null,
+              "evidence_refs": ["output/C/mesh.glb", "manifests/output-validation.json"]
+            }
+          ]
+        }
+      }
+    }
+  },
+  "limitations": [
+    "本报告没有真值网格或激光扫描作为参照，只能描述输入、流程和产物的结构健康状况，不能证明几何绝对精度。"
+  ]
+}

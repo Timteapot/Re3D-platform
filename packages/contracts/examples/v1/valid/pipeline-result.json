@@ -1,0 +1,81 @@
+{
+  "contract_version": "1.0",
+  "job_id": "11111111-1111-4111-8111-111111111111",
+  "request_id": "22222222-2222-4222-8222-222222222222",
+  "attempt": 1,
+  "status": "succeeded",
+  "started_at": "2026-09-23T12:01:00Z",
+  "finished_at": "2026-09-23T14:00:00Z",
+  "duration_seconds": 7140,
+  "pipeline": {
+    "tag": "re3d-pipeline-v1.0.0",
+    "commit": "d528b1474c55bf3b65a1253bd56ab4b5024adab2",
+    "config_sha256": "e0b7ff8b5613884dba4eb6e86ff66419c4b5df96f3d89fa4b7756184fb055c69"
+  },
+  "input_summary": {
+    "image_count": 49,
+    "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "registered_images": 49,
+    "mean_reprojection_error_px": 0.7623
+  },
+  "branches": {
+    "A-v4": {
+      "status": "succeeded",
+      "duration_seconds": 2100,
+      "artifacts": [
+        {
+          "kind": "glb",
+          "path": "output/A-v4/mesh.glb",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "size_bytes": 22736400,
+          "content_type": "model/gltf-binary"
+        }
+      ],
+      "metrics": {
+        "vertices": 891330,
+        "faces": 297110,
+        "retained_valid_fraction": 0.7556
+      }
+    },
+    "B-v2": {
+      "status": "succeeded",
+      "duration_seconds": 2400,
+      "artifacts": [
+        {
+          "kind": "glb",
+          "path": "output/B-v2/mesh.glb",
+          "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "size_bytes": 23483488,
+          "content_type": "model/gltf-binary"
+        }
+      ],
+      "metrics": {
+        "vertices": 922575,
+        "faces": 307525,
+        "retained_valid_fraction": 0.7021
+      }
+    },
+    "C": {
+      "status": "succeeded",
+      "duration_seconds": 1800,
+      "artifacts": [
+        {
+          "kind": "glb",
+          "path": "output/C/mesh.glb",
+          "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "size_bytes": 66741716,
+          "content_type": "model/gltf-binary"
+        }
+      ],
+      "metrics": {
+        "vertices": 2726907,
+        "faces": 908969
+      }
+    }
+  },
+  "diagnostics": {
+    "input_manifest": "input/input-manifest.json",
+    "events": "manifests/pipeline-events.jsonl",
+    "output_validation": "manifests/output-validation.json"
+  }
+}

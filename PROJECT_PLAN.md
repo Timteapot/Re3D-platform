@@ -67,6 +67,13 @@
 4. 确认 MapAnything 当前权重的准确来源；无法补录时继续按 CC-BY-NC 非商业权重处理；
 5. 把所有阈值和资源限制放入环境配置，不写死在页面或业务代码中。
 
+### 3.3 当前阶段 0 进度
+
+- 已完成 Re3D 标签、Git SHA、配置哈希和模型清单哈希冻结；
+- 已完成 `pipeline-request`、`pipeline-event`、`pipeline-result`、`evaluation` v1 JSON Schema；
+- 已完成契约有效样例、负向校验和跨文件一致性测试；
+- 下一步实现 Windows Worker 适配器、模拟执行模式和 Re3D 可配置运行目录。
+
 ## 4. 推荐技术架构
 
 ### 4.1 技术栈

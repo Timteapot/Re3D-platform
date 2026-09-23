@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:re3d-platform:schema:pipeline-request:1.0",
+  "title": "Re3D Pipeline Request",
+  "description": "Immutable request written by the platform for one worker attempt.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "request_id",
+    "job_id",
+    "attempt",
+    "created_at",
+    "requested_by",
+    "pipeline",
+    "input",
+    "branches",
+    "storage",
+    "limits",
+    "idempotency_key"
+  ],
+  "properties": {
+    "contract_version": { "const": "1.0" },
+    "request_id": { "type": "string", "format": "uuid" },
+    "job_id": { "type": "string", "format": "uuid" },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "created_at": { "type": "string", "format": "date-time" },
+    "requested_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["user_id"],
+      "properties": {
+        "user_id": { "type": "string", "format": "uuid" }
+      }
+    },
+    "pipeline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "tag", "commit", "config_sha256"],
+      "properties": {
+        "name": { "const": "Re3D" },
+        "tag": { "const": "re3d-pipeline-v1.0.0" },
+        "commit": {
+          "const": "d528b1474c55bf3b65a1253bd56ab4b5024adab2"
+        },
+        "config_sha256": {
+          "const": "e0b7ff8b5613884dba4eb6e86ff66419c4b5df96f3d89fa4b7756184fb055c69"
+        }
+      }
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["images_path", "manifest_path", "manifest_sha256", "image_count", "total_bytes"],
+      "properties": {
+        "images_path": { "const": "input/images" },
+        "manifest_path": { "const": "input/input-manifest.json" },
+        "manifest_sha256": { "$ref": "#/$defs/sha256" },
+        "image_count": { "type": "integer", "minimum": 3, "maximum": 150 },
+        "total_bytes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "branches": {
+      "const": ["A-v4", "B-v2", "C"]
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["work_path", "logs_path", "output_path", "reports_path", "manifests_path"],
+      "properties": {
+        "work_path": { "const": "runtime/work" },
+        "logs_path": { "const": "runtime/logs" },
+        "output_path": { "const": "output" },
+        "reports_path": { "const": "reports" },
+        "manifests_path": { "const": "manifests" }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timeout_seconds", "max_disk_bytes", "gpu_concurrency"],
+      "properties": {
+        "timeout_seconds": { "type": "integer", "minimum": 60, "maximum": 604800 },
+        "max_disk_bytes": { "type": "integer", "minimum": 1073741824 },
+        "gpu_concurrency": { "const": 1 }
+      }
+    },
+    "idempotency_key": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  }
+}

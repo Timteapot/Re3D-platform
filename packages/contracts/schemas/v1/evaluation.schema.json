@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:re3d-platform:schema:evaluation:1.0",
+  "title": "Re3D Structural Health Evaluation",
+  "description": "Explainable, non-ground-truth health assessment for one successful pipeline result.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "rules_version",
+    "job_id",
+    "evaluated_at",
+    "source_result_sha256",
+    "scope",
+    "overall",
+    "shared_dimensions",
+    "branches",
+    "limitations"
+  ],
+  "properties": {
+    "contract_version": { "const": "1.0" },
+    "rules_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "job_id": { "type": "string", "format": "uuid" },
+    "evaluated_at": { "type": "string", "format": "date-time" },
+    "source_result_sha256": { "$ref": "#/$defs/sha256" },
+    "scope": { "const": "structural_health" },
+    "overall": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "score", "summary"],
+      "properties": {
+        "status": { "$ref": "#/$defs/check_status" },
+        "score": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 1000 }
+      }
+    },
+    "shared_dimensions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input", "sfm", "performance"],
+      "properties": {
+        "input": { "$ref": "#/$defs/dimension" },
+        "sfm": { "$ref": "#/$defs/dimension" },
+        "performance": { "$ref": "#/$defs/dimension" }
+      }
+    },
+    "branches": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["A-v4", "B-v2", "C"],
+      "properties": {
+        "A-v4": { "$ref": "#/$defs/branch_evaluation" },
+        "B-v2": { "$ref": "#/$defs/branch_evaluation" },
+        "C": { "$ref": "#/$defs/branch_evaluation" }
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 1000 }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "task_relative_path": {
+      "type": "string",
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"
+    },
+    "check_status": {
+      "enum": ["pass", "warning", "fail", "not_applicable", "not_available"]
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "status", "actual", "unit", "evidence_refs"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{2,63}$" },
+        "label": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "status": { "$ref": "#/$defs/check_status" },
+        "actual": { "type": ["number", "string", "boolean", "null"] },
+        "unit": { "type": ["string", "null"], "maxLength": 32 },
+        "thresholds": {
+          "type": "object",
+          "maxProperties": 8,
+          "additionalProperties": { "type": ["number", "string", "boolean", "null"] }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/task_relative_path" }
+        },
+        "recommendation": { "type": "string", "minLength": 1, "maxLength": 1000 }
+      }
+    },
+    "dimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "summary", "checks"],
+      "properties": {
+        "status": { "$ref": "#/$defs/check_status" },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "checks": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/check" }
+        }
+      }
+    },
+    "branch_evaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "score", "summary", "dimensions"],
+      "properties": {
+        "status": { "$ref": "#/$defs/check_status" },
+        "score": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "dimensions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["depth", "mesh", "artifacts"],
+          "properties": {
+            "depth": { "$ref": "#/$defs/dimension" },
+            "mesh": { "$ref": "#/$defs/dimension" },
+            "artifacts": { "$ref": "#/$defs/dimension" }
+          }
+        }
+      }
+    }
+  }
+}

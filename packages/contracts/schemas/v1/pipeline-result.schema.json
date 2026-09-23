@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:re3d-platform:schema:pipeline-result:1.0",
+  "title": "Re3D Pipeline Result",
+  "description": "Terminal result for one Re3D worker attempt.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "job_id",
+    "request_id",
+    "attempt",
+    "status",
+    "started_at",
+    "finished_at",
+    "duration_seconds",
+    "pipeline",
+    "input_summary",
+    "branches",
+    "diagnostics"
+  ],
+  "properties": {
+    "contract_version": { "const": "1.0" },
+    "job_id": { "type": "string", "format": "uuid" },
+    "request_id": { "type": "string", "format": "uuid" },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "status": { "enum": ["succeeded", "failed", "cancelled"] },
+    "started_at": { "type": "string", "format": "date-time" },
+    "finished_at": { "type": "string", "format": "date-time" },
+    "duration_seconds": { "type": "number", "minimum": 0 },
+    "pipeline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tag", "commit", "config_sha256"],
+      "properties": {
+        "tag": { "const": "re3d-pipeline-v1.0.0" },
+        "commit": { "const": "d528b1474c55bf3b65a1253bd56ab4b5024adab2" },
+        "config_sha256": { "const": "e0b7ff8b5613884dba4eb6e86ff66419c4b5df96f3d89fa4b7756184fb055c69" }
+      }
+    },
+    "input_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image_count", "manifest_sha256"],
+      "properties": {
+        "image_count": { "type": "integer", "minimum": 3, "maximum": 150 },
+        "manifest_sha256": { "$ref": "#/$defs/sha256" },
+        "registered_images": { "type": "integer", "minimum": 0 },
+        "mean_reprojection_error_px": { "type": ["number", "null"], "minimum": 0 }
+      }
+    },
+    "branches": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["A-v4", "B-v2", "C"],
+      "properties": {
+        "A-v4": { "$ref": "#/$defs/branch_result" },
+        "B-v2": { "$ref": "#/$defs/branch_result" },
+        "C": { "$ref": "#/$defs/branch_result" }
+      }
+    },
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input_manifest", "events", "output_validation"],
+      "properties": {
+        "input_manifest": { "$ref": "#/$defs/task_relative_path" },
+        "events": { "$ref": "#/$defs/task_relative_path" },
+        "output_validation": { "$ref": "#/$defs/task_relative_path" }
+      }
+    },
+    "error": { "$ref": "#/$defs/error" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "status": { "const": "succeeded" } },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "branches": {
+            "properties": {
+              "A-v4": { "properties": { "status": { "const": "succeeded" } } },
+              "B-v2": { "properties": { "status": { "const": "succeeded" } } },
+              "C": { "properties": { "status": { "const": "succeeded" } } }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "status": { "const": "failed" } },
+        "required": ["status"]
+      },
+      "then": { "required": ["error"] }
+    }
+  ],
+  "$defs": {
+    "task_relative_path": {
+      "type": "string",
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path", "sha256", "size_bytes", "content_type"],
+      "properties": {
+        "kind": { "enum": ["glb", "obj", "mtl", "texture", "manifest"] },
+        "path": { "$ref": "#/$defs/task_relative_path" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "size_bytes": { "type": "integer", "minimum": 0 },
+        "content_type": { "type": "string", "minLength": 1, "maxLength": 100 }
+      }
+    },
+    "branch_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "duration_seconds", "artifacts", "metrics"],
+      "properties": {
+        "status": { "enum": ["succeeded", "failed", "cancelled", "not_run"] },
+        "duration_seconds": { "type": "number", "minimum": 0 },
+        "artifacts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/artifact" },
+          "maxItems": 16
+        },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": { "type": ["number", "string", "boolean", "null"] },
+          "maxProperties": 64
+        },
+        "error_code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$" }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "category", "retryable", "safe_message"],
+      "properties": {
+        "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$" },
+        "category": { "enum": ["input", "environment", "resource", "pipeline", "timeout", "cancelled", "internal"] },
+        "retryable": { "type": "boolean" },
+        "safe_message": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "diagnostic_ref": { "$ref": "#/$defs/task_relative_path" }
+      }
+    }
+  }
+}

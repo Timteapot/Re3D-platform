@@ -53,4 +53,4 @@ tests                    集成、端到端与测试夹具
 
 ## 下一步
 
-下一步先定义并测试 `pipeline-request`、`pipeline-event`、`pipeline-result` 和 `evaluation` 的 JSON Schema，然后用模拟 Worker 打通任务状态机，再创建前后端工程。
+运行契约 v1 已定义并具有自动校验测试。下一步实现 Windows Worker 的 Re3D 适配器和模拟执行模式，把任务相对目录安全映射到 Re3D，并输出结构化事件与结果。

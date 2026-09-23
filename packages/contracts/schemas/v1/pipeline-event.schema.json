@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:re3d-platform:schema:pipeline-event:1.0",
+  "title": "Re3D Pipeline Event",
+  "description": "One append-only JSONL event emitted by a worker.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "event_id",
+    "job_id",
+    "attempt",
+    "sequence",
+    "occurred_at",
+    "worker_id",
+    "type"
+  ],
+  "properties": {
+    "contract_version": { "const": "1.0" },
+    "event_id": { "type": "string", "format": "uuid" },
+    "job_id": { "type": "string", "format": "uuid" },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "worker_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+    },
+    "type": {
+      "enum": [
+        "job_started",
+        "stage_started",
+        "stage_progress",
+        "stage_completed",
+        "artifact_created",
+        "warning",
+        "heartbeat",
+        "job_succeeded",
+        "job_failed",
+        "job_cancelled"
+      ]
+    },
+    "stage": { "$ref": "#/$defs/stage" },
+    "branch": { "$ref": "#/$defs/branch" },
+    "progress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["percent"],
+      "properties": {
+        "percent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "completed_units": { "type": "integer", "minimum": 0 },
+        "total_units": { "type": "integer", "minimum": 1 },
+        "eta_seconds": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "message_code": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{2,63}$"
+    },
+    "safe_message": { "type": "string", "minLength": 1, "maxLength": 1000 },
+    "metrics": {
+      "type": "object",
+      "maxProperties": 32,
+      "additionalProperties": { "type": ["number", "string", "boolean", "null"] }
+    },
+    "artifact": { "$ref": "#/$defs/artifact" },
+    "error": { "$ref": "#/$defs/error" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "type": { "enum": ["stage_started", "stage_completed"] } },
+        "required": ["type"]
+      },
+      "then": { "required": ["stage"] }
+    },
+    {
+      "if": {
+        "properties": { "type": { "const": "stage_progress" } },
+        "required": ["type"]
+      },
+      "then": { "required": ["stage", "progress"] }
+    },
+    {
+      "if": {
+        "properties": { "type": { "const": "artifact_created" } },
+        "required": ["type"]
+      },
+      "then": { "required": ["branch", "artifact"] }
+    },
+    {
+      "if": {
+        "properties": { "type": { "const": "job_failed" } },
+        "required": ["type"]
+      },
+      "then": { "required": ["error"] }
+    }
+  ],
+  "$defs": {
+    "task_relative_path": {
+      "type": "string",
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "branch": {
+      "enum": ["shared", "A-v4", "B-v2", "C"]
+    },
+    "stage": {
+      "enum": [
+        "preparing",
+        "input_validation",
+        "sfm",
+        "c_geometry",
+        "c_meshing",
+        "c_texturing",
+        "a_inference",
+        "a_calibration",
+        "a_cross_view",
+        "a_fusion",
+        "a_meshing",
+        "a_texturing",
+        "b_inference",
+        "b_calibration",
+        "b_cross_view",
+        "b_fusion",
+        "b_meshing",
+        "b_texturing",
+        "output_validation",
+        "evaluation",
+        "cleanup"
+      ]
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path", "sha256", "size_bytes", "content_type"],
+      "properties": {
+        "kind": { "enum": ["glb", "obj", "mtl", "texture", "manifest", "report"] },
+        "path": { "$ref": "#/$defs/task_relative_path" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "size_bytes": { "type": "integer", "minimum": 0 },
+        "content_type": { "type": "string", "minLength": 1, "maxLength": 100 }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "category", "retryable", "safe_message"],
+      "properties": {
+        "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$" },
+        "category": {
+          "enum": ["input", "environment", "resource", "pipeline", "timeout", "cancelled", "internal"]
+        },
+        "retryable": { "type": "boolean" },
+        "safe_message": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "diagnostic_ref": { "$ref": "#/$defs/task_relative_path" }
+      }
+    }
+  }
+}
