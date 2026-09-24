@@ -2,17 +2,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import unicodedata
 import uuid
 import warnings
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, BinaryIO
 
 from PIL import Image, UnidentifiedImageError
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError as DatabaseIntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -39,6 +40,7 @@ FORMAT_DETAILS = {
     "JPEG": (".jpg", "image/jpeg"),
     "PNG": (".png", "image/png"),
 }
+LOGGER = logging.getLogger(__name__)
 
 
 class UploadService:
@@ -144,7 +146,11 @@ class UploadService:
         source: BinaryIO,
         original_name: str | None,
     ) -> dict[str, Any]:
-        self.get(upload_id=upload_id, user_id=user_id)
+        current = self.get(upload_id=upload_id, user_id=user_id)
+        if current["status"] != "uploading":
+            raise UploadConflictError(
+                "images cannot be added after upload submission or cancellation"
+            )
         layout = TaskLayout.from_data_root(self.data_root, str(upload_id))
         staging_path = layout.resolve(f"input/staging/{uuid.uuid4().hex}.part")
         destination: Path | None = None
@@ -224,6 +230,181 @@ class UploadService:
         finally:
             staging_path.unlink(missing_ok=True)
         return self.get(upload_id=upload_id, user_id=user_id)
+
+    def delete_image(
+        self,
+        *,
+        upload_id: uuid.UUID,
+        image_id: uuid.UUID,
+        user_id: uuid.UUID,
+    ) -> dict[str, Any]:
+        source_path: Path | None = None
+        tombstone_path: Path | None = None
+        try:
+            with self.sessions.begin() as session:
+                upload = _locked_upload(session, upload_id, user_id)
+                if upload.status != "uploading":
+                    raise UploadConflictError(
+                        "images can only be deleted from an active upload"
+                    )
+                image = session.execute(
+                    select(JobUploadImage).where(
+                        JobUploadImage.id == image_id,
+                        JobUploadImage.upload_id == upload.id,
+                    )
+                ).scalar_one_or_none()
+                if image is None:
+                    raise UploadNotFoundError("uploaded image does not exist")
+
+                layout = TaskLayout.from_data_root(
+                    self.data_root,
+                    str(upload.id),
+                )
+                source_path = layout.resolve(f"input/images/{image.stored_name}")
+                if source_path.is_symlink() or not source_path.is_file():
+                    raise UploadConflictError(
+                        "uploaded image file is missing or unsafe"
+                    )
+                staging = layout.resolve("input/staging")
+                staging.mkdir(exist_ok=True)
+                tombstone_path = staging / f"delete-{uuid.uuid4().hex}.part"
+                os.replace(source_path, tombstone_path)
+
+                upload.image_count -= 1
+                upload.total_bytes -= image.size_bytes
+                upload.updated_at = _database_now(session)
+                session.delete(image)
+                session.flush()
+        except Exception:
+            if (
+                source_path is not None
+                and tombstone_path is not None
+                and tombstone_path.is_file()
+                and not source_path.exists()
+            ):
+                os.replace(tombstone_path, source_path)
+            raise
+
+        if tombstone_path is not None:
+            try:
+                tombstone_path.unlink(missing_ok=True)
+            except OSError:
+                LOGGER.warning(
+                    "Could not remove deleted upload image tombstone %s",
+                    tombstone_path,
+                )
+        return self.get(upload_id=upload_id, user_id=user_id)
+
+    def cancel(
+        self,
+        *,
+        upload_id: uuid.UUID,
+        user_id: uuid.UUID,
+    ) -> dict[str, Any]:
+        with self.sessions.begin() as session:
+            upload = _locked_upload(session, upload_id, user_id)
+            if upload.status == "submitted":
+                raise UploadConflictError(
+                    "submitted uploads must be cancelled through the job API"
+                )
+            if upload.status == "uploading":
+                _mark_upload_cancelled(session, upload, reason="user")
+
+        storage_removed = self._remove_cancelled_storage(upload_id)
+        snapshot = self.get(upload_id=upload_id, user_id=user_id)
+        snapshot["storage_removed"] = storage_removed
+        return snapshot
+
+    def cleanup_stale(
+        self,
+        *,
+        now: datetime | None = None,
+        stale_after_hours: int | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        configured_hours = (
+            self.settings.stale_after_hours
+            if stale_after_hours is None
+            else stale_after_hours
+        )
+        configured_limit = (
+            self.settings.cleanup_batch_size if limit is None else limit
+        )
+        if not 1 <= configured_hours <= 24 * 30:
+            raise ValueError("stale_after_hours must be between 1 and 720")
+        if not 1 <= configured_limit <= 1000:
+            raise ValueError("cleanup limit must be between 1 and 1000")
+        current = now or datetime.now(timezone.utc)
+        cutoff = current - timedelta(hours=configured_hours)
+
+        with self.sessions() as session:
+            candidate_ids = list(
+                session.execute(
+                    select(JobUpload.id)
+                    .where(_cleanup_candidate_filter(cutoff))
+                    .order_by(JobUpload.updated_at, JobUpload.id)
+                    .limit(configured_limit)
+                ).scalars()
+            )
+
+        scanned = 0
+        expired = 0
+        storage_cleaned = 0
+        failures: list[str] = []
+        for upload_id in candidate_ids:
+            with self.sessions.begin() as session:
+                upload = session.execute(
+                    select(JobUpload)
+                    .where(
+                        JobUpload.id == upload_id,
+                        _cleanup_candidate_filter(cutoff),
+                    )
+                    .with_for_update()
+                ).scalar_one_or_none()
+                if upload is None:
+                    continue
+                scanned += 1
+                if upload.status == "uploading":
+                    _mark_upload_cancelled(session, upload, reason="expired")
+                    expired += 1
+
+            if self._remove_cancelled_storage(upload_id):
+                storage_cleaned += 1
+            else:
+                failures.append(str(upload_id))
+
+        return {
+            "scanned": scanned,
+            "expired": expired,
+            "storage_cleaned": storage_cleaned,
+            "storage_cleanup_failures": failures,
+            "cutoff": cutoff.isoformat(),
+        }
+
+    def _remove_cancelled_storage(self, upload_id: uuid.UUID) -> bool:
+        try:
+            _remove_upload_directory(self.data_root, upload_id)
+        except OSError:
+            LOGGER.exception(
+                "Could not remove cancelled upload directory for %s",
+                upload_id,
+            )
+            return False
+
+        with self.sessions.begin() as session:
+            upload = session.execute(
+                select(JobUpload)
+                .where(JobUpload.id == upload_id)
+                .with_for_update()
+            ).scalar_one_or_none()
+            if (
+                upload is not None
+                and upload.status == "cancelled"
+                and upload.storage_cleaned_at is None
+            ):
+                upload.storage_cleaned_at = _database_now(session)
+                session.flush()
+        return True
 
     def submit(
         self,
@@ -466,6 +647,45 @@ def _locked_upload(
     return upload
 
 
+def _mark_upload_cancelled(
+    session: Session,
+    upload: JobUpload,
+    *,
+    reason: str,
+) -> None:
+    if reason not in {"user", "expired"}:
+        raise ValueError("unsupported upload cancellation reason")
+    images = list(
+        session.execute(
+            select(JobUploadImage).where(JobUploadImage.upload_id == upload.id)
+        ).scalars()
+    )
+    for image in images:
+        session.delete(image)
+    now = _database_now(session)
+    upload.status = "cancelled"
+    upload.image_count = 0
+    upload.total_bytes = 0
+    upload.cancelled_at = now
+    upload.cancellation_reason = reason
+    upload.storage_cleaned_at = None
+    upload.updated_at = now
+    session.flush()
+
+
+def _cleanup_candidate_filter(cutoff: datetime):
+    return or_(
+        and_(
+            JobUpload.status == "uploading",
+            JobUpload.updated_at < cutoff,
+        ),
+        and_(
+            JobUpload.status == "cancelled",
+            JobUpload.storage_cleaned_at.is_(None),
+        ),
+    )
+
+
 def _upload_snapshot(session: Session, upload: JobUpload) -> dict[str, Any]:
     images = list(
         session.execute(
@@ -480,7 +700,11 @@ def _upload_snapshot(session: Session, upload: JobUpload) -> dict[str, Any]:
         "image_count": upload.image_count,
         "total_bytes": upload.total_bytes,
         "created_at": upload.created_at,
+        "updated_at": upload.updated_at,
         "submitted_at": upload.submitted_at,
+        "cancelled_at": upload.cancelled_at,
+        "cancellation_reason": upload.cancellation_reason,
+        "storage_cleaned_at": upload.storage_cleaned_at,
         "images": [
             {
                 "id": image.id,
@@ -521,3 +745,18 @@ def _database_now(session: Session) -> datetime:
 def _remove_unsubmitted_layout(layout: TaskLayout) -> None:
     if layout.root.is_dir() and layout.root.parent == layout.jobs_root:
         shutil.rmtree(layout.root)
+
+
+def _remove_upload_directory(data_root: Path, upload_id: uuid.UUID) -> None:
+    jobs_root = (data_root.expanduser().resolve() / "jobs").resolve()
+    candidate = jobs_root / str(upload_id)
+    if not candidate.exists() and not candidate.is_symlink():
+        return
+    resolved = candidate.resolve()
+    if (
+        candidate.is_symlink()
+        or not candidate.is_dir()
+        or resolved.parent != jobs_root
+    ):
+        raise OSError("upload cleanup target is not a safe task directory")
+    shutil.rmtree(candidate)

@@ -74,6 +74,7 @@ button:focus-visible, input:focus-visible, a:focus-visible {
 .button.primary { color: #f8fff9; background: var(--forest); box-shadow: 0 10px 24px rgba(20, 61, 50, 0.18); }
 .button.primary:hover:not(:disabled) { background: #1a5142; box-shadow: 0 14px 30px rgba(20, 61, 50, 0.24); }
 .button.secondary { color: var(--forest); border-color: #aab7ae; background: transparent; }
+.button.danger { color: #8b3c2d; border-color: #d8a99d; background: #fff7f4; }
 .button.ghost { color: var(--forest); background: transparent; }
 .button.small { min-height: 38px; padding-inline: 14px; font-size: 13px; }
 .button.full { width: 100%; margin-top: 12px; }
@@ -177,7 +178,20 @@ button:focus-visible, input:focus-visible, a:focus-visible {
 .selection-summary li { padding: 7px 0; display: flex; justify-content: space-between; gap: 12px; border-top: 1px solid rgba(211,219,211,0.75); font-size: 12px; }
 .selection-summary li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .selection-summary li small { flex: 0 0 auto; color: var(--muted); }
+.server-upload { margin: 16px 0; padding: 16px; border: 1px solid #bfd3c4; border-radius: 12px; background: rgba(244,250,245,0.9); }
+.server-upload > div { display: flex; justify-content: space-between; gap: 12px; }
+.server-upload > div > span { color: var(--muted); font-size: 12px; }
+.server-upload ul { max-height: 240px; margin: 12px 0 0; padding: 0; overflow-y: auto; list-style: none; }
+.server-upload li { padding: 9px 0; display: flex; justify-content: space-between; gap: 14px; align-items: center; border-top: 1px solid var(--line); }
+.server-upload li > span { min-width: 0; display: grid; gap: 3px; }
+.server-upload li strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.server-upload li small { color: var(--muted); font-size: 11px; }
+.server-upload li button { flex: 0 0 auto; border: 0; color: #8b3c2d; background: transparent; font-size: 12px; font-weight: 700; cursor: pointer; }
+.server-upload li button:disabled { opacity: 0.45; cursor: wait; }
 .upload-card .button { margin-top: 14px; }
+.upload-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.upload-actions .button { margin-top: 0; }
+.upload-hint { margin: 10px 0 0; font-size: 12px; }
 .privacy-note { margin-bottom: 0; font-size: 11px; }
 .upload-progress { margin: 16px 0 4px; }
 .upload-progress div { margin-bottom: 8px; display: flex; justify-content: space-between; font-size: 12px; }

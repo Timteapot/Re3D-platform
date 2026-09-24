@@ -6,6 +6,7 @@ import json
 import tempfile
 import unittest
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -16,7 +17,13 @@ from sqlalchemy.orm import sessionmaker
 from apps.api.main import AppServices, create_app
 from apps.worker.main import main as worker_main
 from backend.auth import AuthService, AuthSettings
-from backend.db.models import ReconstructionJob, RefreshSession, User, WorkerLease
+from backend.db.models import (
+    JobUpload,
+    ReconstructionJob,
+    RefreshSession,
+    User,
+    WorkerLease,
+)
 from backend.db.queue import JobQueue
 from backend.jobs.development import DevelopmentJobService
 from backend.uploads import UploadService
@@ -103,7 +110,11 @@ class PostgreSQLApiWorkerFlowTests(unittest.TestCase):
             json={"idempotency_key": "postgres-upload-loop-001"},
             headers={"Authorization": f"Bearer {self.access_token}"},
         )
-        self.assertEqual(upload_response.status_code, 201)
+        self.assertEqual(
+            upload_response.status_code,
+            201,
+            upload_response.text,
+        )
         upload_id = upload_response.json()["upload_id"]
         for index, color in enumerate(
             ((180, 30, 20), (20, 170, 60), (40, 80, 200))
@@ -184,6 +195,62 @@ class PostgreSQLApiWorkerFlowTests(unittest.TestCase):
         )
         self.assertEqual(evaluation["job_id"], str(job_id))
         self.assertEqual(evaluation["overall"]["status"], "not_available")
+
+    def test_postgresql_upload_delete_cancel_and_expiry_cleanup(self) -> None:
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+        created = self.client.post(
+            "/api/v1/uploads",
+            json={"idempotency_key": "postgres-lifecycle-001"},
+            headers=headers,
+        ).json()
+        upload_id = created["upload_id"]
+        uploaded = self.client.post(
+            f"/api/v1/uploads/{upload_id}/images",
+            files={
+                "file": (
+                    "postgres-delete.png",
+                    self.png_bytes((120, 40, 30)),
+                    "image/png",
+                )
+            },
+            headers=headers,
+        ).json()
+        deleted = self.client.delete(
+            f"/api/v1/uploads/{upload_id}/images/{uploaded['images'][0]['id']}",
+            headers=headers,
+        )
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(deleted.json()["image_count"], 0)
+        cancelled = self.client.post(
+            f"/api/v1/uploads/{upload_id}/cancel",
+            headers=headers,
+        )
+        self.assertEqual(cancelled.status_code, 200)
+        self.assertEqual(cancelled.json()["cancellation_reason"], "user")
+        self.assertTrue(cancelled.json()["storage_removed"])
+
+        stale = self.client.post(
+            "/api/v1/uploads",
+            json={"idempotency_key": "postgres-lifecycle-stale-001"},
+            headers=headers,
+        ).json()
+        now = datetime.now(timezone.utc)
+        with self.sessions.begin() as session:
+            record = session.get(JobUpload, uuid.UUID(stale["upload_id"]))
+            assert record is not None
+            record.updated_at = now - timedelta(hours=2)
+        report = self.services.uploads.cleanup_stale(
+            now=now,
+            stale_after_hours=1,
+        )
+        self.assertEqual(report["expired"], 1)
+        expired = self.client.get(
+            f"/api/v1/uploads/{stale['upload_id']}",
+            headers=headers,
+        ).json()
+        self.assertEqual(expired["status"], "cancelled")
+        self.assertEqual(expired["cancellation_reason"], "expired")
+        self.assertIsNotNone(expired["storage_cleaned_at"])
 
     @staticmethod
     def png_bytes(color: tuple[int, int, int]) -> bytes:

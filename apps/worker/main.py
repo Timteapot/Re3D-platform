@@ -20,6 +20,7 @@ from backend.re3d_adapter import (
     TaskLayout,
 )
 from backend.re3d_adapter.settings import Re3DSettings, WorkerSettings
+from backend.uploads import UploadService, UploadSettings
 from backend.worker import QueuedSimulationWorker
 
 
@@ -56,6 +57,14 @@ def build_parser() -> argparse.ArgumentParser:
     queued.add_argument("--resource-key")
     queued.add_argument("--lease-seconds", type=int)
     queued.add_argument("--heartbeat-seconds", type=int)
+    cleanup = subparsers.add_parser(
+        "cleanup-stale-uploads",
+        description="Cancel stale uploads and remove their task directories",
+    )
+    cleanup.add_argument("--data-root")
+    cleanup.add_argument("--database-url")
+    cleanup.add_argument("--stale-after-hours", type=int)
+    cleanup.add_argument("--limit", type=int)
     return parser
 
 
@@ -64,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         settings = WorkerSettings.from_environment(
             data_root=args.data_root,
-            worker_id=args.worker_id,
+            worker_id=getattr(args, "worker_id", None),
         )
         if args.command == "simulate":
             layout = TaskLayout.from_data_root(settings.data_root, args.job_id)
@@ -97,6 +106,26 @@ def main(argv: list[str] | None = None) -> int:
                 "step_count": outcome.report["step_count"],
                 "report": str(outcome.report_path),
             }
+        elif args.command == "cleanup-stale-uploads":
+            database = DatabaseSettings.from_environment(args.database_url)
+            engine = create_database_engine(database)
+            try:
+                sessions = create_session_factory(engine)
+                uploads = UploadService(
+                    sessions,
+                    JobQueue(sessions),
+                    data_root=settings.data_root,
+                    settings=UploadSettings.from_environment(),
+                )
+                response = {
+                    "operation": "cleanup-stale-uploads",
+                    **uploads.cleanup_stale(
+                        stale_after_hours=args.stale_after_hours,
+                        limit=args.limit,
+                    ),
+                }
+            finally:
+                engine.dispose()
         else:
             database = DatabaseSettings.from_environment(args.database_url)
             scheduler = SchedulerSettings.from_environment(

@@ -88,6 +88,9 @@ SELECT count(*) AS open_upload_count
 FROM job_uploads
 WHERE status = 'uploading';
 SELECT count(*) AS uploaded_image_count FROM job_upload_images;
+SELECT count(*) AS pending_upload_storage_cleanup_count
+FROM job_uploads
+WHERE status = 'cancelled' AND storage_cleaned_at IS NULL;
 SELECT count(*) AS active_refresh_session_count
 FROM refresh_sessions
 WHERE revoked_at IS NULL AND expires_at > CURRENT_TIMESTAMP;

@@ -110,6 +110,19 @@ class JobUpload(Base):
         ),
         CheckConstraint("total_bytes >= 0", name="ck_job_uploads_total_bytes"),
         Index("ix_job_uploads_user_status", "user_id", "status", "created_at"),
+        Index(
+            "ix_job_uploads_cleanup",
+            "status",
+            "updated_at",
+            "storage_cleaned_at",
+        ),
+        CheckConstraint(
+            "(status = 'cancelled' AND cancelled_at IS NOT NULL "
+            "AND cancellation_reason IN ('user', 'expired')) OR "
+            "(status <> 'cancelled' AND cancelled_at IS NULL "
+            "AND cancellation_reason IS NULL AND storage_cleaned_at IS NULL)",
+            name="ck_job_uploads_cancellation",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
@@ -133,6 +146,11 @@ class JobUpload(Base):
         DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancellation_reason: Mapped[str | None] = mapped_column(String(16))
+    storage_cleaned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
 
     user: Mapped[User] = relationship(back_populates="uploads")
     images: Mapped[list[JobUploadImage]] = relationship(

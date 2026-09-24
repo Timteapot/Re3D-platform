@@ -37,9 +37,17 @@ class UploadResponse(BaseModel):
     image_count: int
     total_bytes: int
     created_at: datetime
+    updated_at: datetime
     submitted_at: datetime | None
+    cancelled_at: datetime | None
+    cancellation_reason: str | None
+    storage_cleaned_at: datetime | None
     images: list[UploadedImageResponse]
     reused: bool = False
+
+
+class UploadCancellationResponse(UploadResponse):
+    storage_removed: bool
 
 
 class SubmittedJobResponse(BaseModel):
@@ -118,6 +126,46 @@ def create_upload_router(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         finally:
             file.file.close()
+
+    @router.delete(
+        "/{upload_id}/images/{image_id}",
+        response_model=UploadResponse,
+    )
+    def delete_image(
+        upload_id: uuid.UUID,
+        image_id: uuid.UUID,
+        user: UserIdentity = Depends(current_user),
+    ) -> UploadResponse:
+        try:
+            snapshot = service.delete_image(
+                upload_id=upload_id,
+                image_id=image_id,
+                user_id=user.id,
+            )
+            return UploadResponse(**snapshot)
+        except UploadNotFoundError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail="upload or image not found",
+            ) from exc
+        except UploadConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @router.post(
+        "/{upload_id}/cancel",
+        response_model=UploadCancellationResponse,
+    )
+    def cancel_upload(
+        upload_id: uuid.UUID,
+        user: UserIdentity = Depends(current_user),
+    ) -> UploadCancellationResponse:
+        try:
+            snapshot = service.cancel(upload_id=upload_id, user_id=user.id)
+            return UploadCancellationResponse(**snapshot)
+        except UploadNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="upload not found") from exc
+        except UploadConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @router.post(
         "/{upload_id}/submit",

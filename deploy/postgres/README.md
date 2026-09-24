@@ -39,6 +39,8 @@ DATABASE_URL=postgresql+psycopg://re3d_app:<URL编码后的密码>@127.0.0.1:543
 
 `0003_job_uploads` 增加归属于用户的上传会话和图片元数据表。它不会扫描、导入或删除 `Re3D-data` 中的已有文件。
 
+`0004_upload_lifecycle` 增加取消时间、取消原因、目录清理完成时间和维护查询索引。迁移本身只修改数据库结构，不删除任何任务目录。
+
 ## 集成测试
 
 集成测试不得复用 `re3d_platform_dev`。使用以下脚本创建无持久卷的临时 PostgreSQL 18 容器：
@@ -47,7 +49,7 @@ DATABASE_URL=postgresql+psycopg://re3d_app:<URL编码后的密码>@127.0.0.1:543
 & deploy/postgres/run-integration-tests.ps1
 ```
 
-脚本会随机生成测试密码和宿主机端口，执行 Alembic、PostgreSQL 租约并发/接管测试，以及认证用户 → API → PostgreSQL → Worker → 三分支产物闭环测试。测试完成后还会执行 `0003 → 0001 → 0003` 迁移往返。成功或失败后都会停止容器；容器使用 `--rm`，不会保留测试数据库。
+脚本会随机生成测试密码和宿主机端口，执行 Alembic、PostgreSQL 租约并发/接管测试，以及认证用户 → 上传生命周期 → API → PostgreSQL → Worker → 三分支产物闭环测试。测试完成后还会执行 `0004 → 0001 → 0004` 迁移往返。成功或失败后都会停止容器；容器使用 `--rm`，不会保留测试数据库。
 
 两个 PostgreSQL 脚本会优先使用仓库内 `.venv\Scripts\python.exe`，没有虚拟环境时才回退到当前 `python`。推荐先按 [`docs/development-api-worker.md`](../../docs/development-api-worker.md) 创建项目虚拟环境。
 

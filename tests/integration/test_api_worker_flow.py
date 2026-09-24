@@ -409,6 +409,72 @@ class ApiWorkerFlowTests(unittest.TestCase):
             [],
         )
 
+    def test_upload_image_delete_cancel_and_owner_scope(self) -> None:
+        created = self.client.post(
+            "/api/v1/uploads",
+            json={"idempotency_key": "cancel-upload-flow-001"},
+            headers=self.auth_headers(self.access_token),
+        )
+        upload_id = created.json()["upload_id"]
+        uploaded = self.client.post(
+            f"/api/v1/uploads/{upload_id}/images",
+            files={
+                "file": (
+                    "removable.png",
+                    self.png_bytes((90, 30, 20)),
+                    "image/png",
+                )
+            },
+            headers=self.auth_headers(self.access_token),
+        )
+        image_id = uploaded.json()["images"][0]["id"]
+
+        _, other_access_token = self.register_and_login(
+            username="upload-delete-outsider",
+            email="upload-delete-outsider@example.com",
+        )
+        hidden = self.client.delete(
+            f"/api/v1/uploads/{upload_id}/images/{image_id}",
+            headers=self.auth_headers(other_access_token),
+        )
+        self.assertEqual(hidden.status_code, 404)
+
+        deleted = self.client.delete(
+            f"/api/v1/uploads/{upload_id}/images/{image_id}",
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(deleted.json()["image_count"], 0)
+
+        cancelled = self.client.post(
+            f"/api/v1/uploads/{upload_id}/cancel",
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(cancelled.status_code, 200)
+        self.assertEqual(cancelled.json()["status"], "cancelled")
+        self.assertTrue(cancelled.json()["storage_removed"])
+        task_root = self.data_root / "jobs" / upload_id
+        self.assertFalse(task_root.exists())
+
+        repeated = self.client.post(
+            f"/api/v1/uploads/{upload_id}/cancel",
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(repeated.status_code, 200)
+        self.assertTrue(repeated.json()["storage_removed"])
+        rejected = self.client.post(
+            f"/api/v1/uploads/{upload_id}/images",
+            files={
+                "file": (
+                    "late.png",
+                    self.png_bytes((20, 30, 90)),
+                    "image/png",
+                )
+            },
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(rejected.status_code, 409)
+
     @staticmethod
     def png_bytes(color: tuple[int, int, int]) -> bytes:
         output = io.BytesIO()

@@ -54,7 +54,7 @@ Re3D v1.1.0 A-v4 / B-v2 / C
 
 ### 上传模块
 
-上传模块使用独立 `job_uploads` 状态，不把半成品放进 `reconstruction_jobs`。它先把文件写入任务内 staging，识别并完整解码 JPEG/PNG，再以平台名称移动到 `input/images`。提交时根据数据库元数据重新核对目录、大小和 SHA-256，写入 `input-manifest.json` 和管线请求，并在同一数据库事务中创建 queued 任务。当前上传图片会进入模拟 Worker；真实执行尚未启用。
+上传模块使用独立 `job_uploads` 状态，不把半成品放进 `reconstruction_jobs`。它先把文件写入任务内 staging，识别并完整解码 JPEG/PNG，再以平台名称移动到 `input/images`。未提交阶段允许删图或取消；取消保留原因和清理审计，维护命令回收超时会话。提交时根据数据库元数据重新核对目录、大小和 SHA-256，写入 `input-manifest.json` 和管线请求，并在同一数据库事务中创建 queued 任务。当前上传图片会进入模拟 Worker；真实执行尚未启用。
 
 ### PostgreSQL 任务状态机
 

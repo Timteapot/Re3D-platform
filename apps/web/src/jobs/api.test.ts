@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createUpload, submitUpload, uploadImage, type UploadSession } from "./api";
+import {
+  cancelUpload,
+  createUpload,
+  deleteUploadedImage,
+  submitUpload,
+  uploadImage,
+  type UploadSession,
+} from "./api";
 
 const upload: UploadSession = {
   upload_id: "2d37c9a2-c086-4c8c-af03-e08ce9fda255",
@@ -8,7 +15,11 @@ const upload: UploadSession = {
   image_count: 0,
   total_bytes: 0,
   created_at: "2026-09-24T00:00:00Z",
+  updated_at: "2026-09-24T00:00:00Z",
   submitted_at: null,
+  cancelled_at: null,
+  cancellation_reason: null,
+  storage_cleaned_at: null,
   images: [],
   reused: false,
 };
@@ -46,6 +57,22 @@ describe("job upload API", () => {
 
     expect(request).toHaveBeenCalledWith(
       `/api/v1/uploads/${upload.upload_id}/submit`,
+      { method: "POST" },
+    );
+  });
+
+  it("deletes one server-side image and cancels the mutable upload", async () => {
+    const request = vi.fn().mockResolvedValue(upload);
+    await deleteUploadedImage(request, upload.upload_id, "image-001");
+    expect(request).toHaveBeenCalledWith(
+      `/api/v1/uploads/${upload.upload_id}/images/image-001`,
+      { method: "DELETE" },
+    );
+
+    request.mockClear();
+    await cancelUpload(request, upload.upload_id);
+    expect(request).toHaveBeenCalledWith(
+      `/api/v1/uploads/${upload.upload_id}/cancel`,
       { method: "POST" },
     );
   });

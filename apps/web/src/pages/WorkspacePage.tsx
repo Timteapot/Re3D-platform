@@ -1,14 +1,17 @@
-import { useMemo, useState, type ChangeEvent } from "react";
+import { useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ApiError } from "../api/http";
 import { useAuth } from "../auth/AuthContext";
 import {
+  cancelUpload,
   createUpload,
+  deleteUploadedImage,
   listJobs,
   submitUpload,
   uploadImage,
   type Job,
+  type UploadSession,
 } from "../jobs/api";
 
 const MAX_IMAGES = 150;
@@ -42,6 +45,9 @@ const statusLabels: Record<string, string> = {
 };
 
 function readableError(error: unknown): string {
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return "上传请求已停止，正在取消上传会话。";
+  }
   if (error instanceof ApiError) {
     if (error.status === 413) return "图片或任务总大小超过后端限制。";
     if (error.status === 409) return `上传冲突：${error.message}`;
@@ -59,9 +65,14 @@ function formatBytes(bytes: number): string {
 export function WorkspacePage() {
   const auth = useAuth();
   const queryClient = useQueryClient();
+  const draftKey = useRef(crypto.randomUUID());
+  const uploadAbort = useRef<AbortController | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [selectionError, setSelectionError] = useState<string | null>(null);
+  const [operationNotice, setOperationNotice] = useState<string | null>(null);
   const [uploadedCount, setUploadedCount] = useState(0);
+  const [batchTotal, setBatchTotal] = useState(0);
+  const [uploadSession, setUploadSession] = useState<UploadSession | null>(null);
   const [latestJob, setLatestJob] = useState<Job | null>(null);
 
   const totalBytes = useMemo(
@@ -79,28 +90,104 @@ export function WorkspacePage() {
     },
   });
 
-  const reconstruction = useMutation({
+  const uploadFiles = useMutation({
     mutationFn: async (selected: File[]) => {
+      const controller = new AbortController();
+      uploadAbort.current = controller;
       setUploadedCount(0);
-      const upload = await createUpload(auth.request, crypto.randomUUID());
-      for (const [index, file] of selected.entries()) {
-        await uploadImage(auth.request, upload.upload_id, file);
-        setUploadedCount(index + 1);
+      setBatchTotal(selected.length);
+      setOperationNotice(null);
+
+      let session = uploadSession;
+      if (session === null) {
+        session = await createUpload(
+          auth.request,
+          draftKey.current,
+          controller.signal,
+        );
+        setUploadSession(session);
       }
-      return submitUpload(auth.request, upload.upload_id);
+      for (const [index, file] of selected.entries()) {
+        session = await uploadImage(
+          auth.request,
+          session.upload_id,
+          file,
+          controller.signal,
+        );
+        setUploadSession(session);
+        setUploadedCount(index + 1);
+        setFiles(selected.slice(index + 1));
+      }
+      return session;
     },
+    onSuccess: (session) => {
+      setUploadSession(session);
+      setFiles([]);
+      setOperationNotice(
+        `已验证 ${session.image_count} 张服务端图片，可继续添加、删除或提交。`,
+      );
+    },
+    onSettled: () => {
+      uploadAbort.current = null;
+      setBatchTotal(0);
+      setUploadedCount(0);
+    },
+  });
+
+  const deleteImage = useMutation({
+    mutationFn: (imageId: string) => {
+      if (uploadSession === null) throw new Error("upload session is missing");
+      return deleteUploadedImage(
+        auth.request,
+        uploadSession.upload_id,
+        imageId,
+      );
+    },
+    onSuccess: (session) => {
+      setUploadSession(session);
+      setOperationNotice("图片已从未提交上传中删除。");
+    },
+  });
+
+  const submitDraft = useMutation({
+    mutationFn: (uploadId: string) => submitUpload(auth.request, uploadId),
     onSuccess: (job) => {
       setLatestJob(job);
+      setUploadSession(null);
       setFiles([]);
+      draftKey.current = crypto.randomUUID();
+      setOperationNotice("输入已冻结，任务已进入模拟队列。");
       void queryClient.invalidateQueries({ queryKey: ["jobs", auth.user?.id] });
+    },
+  });
+
+  const cancelDraft = useMutation({
+    mutationFn: async (uploadId: string) => {
+      uploadAbort.current?.abort();
+      return cancelUpload(auth.request, uploadId);
+    },
+    onSuccess: (cancelled) => {
+      setUploadSession(null);
+      setFiles([]);
+      setBatchTotal(0);
+      setUploadedCount(0);
+      draftKey.current = crypto.randomUUID();
+      uploadFiles.reset();
+      deleteImage.reset();
+      submitDraft.reset();
+      setOperationNotice(
+        cancelled.storage_removed
+          ? "上传已取消，未提交图片目录已经删除。"
+          : "上传已取消，目录将由维护任务再次清理。",
+      );
     },
   });
 
   function selectFiles(event: ChangeEvent<HTMLInputElement>) {
     const selected = Array.from(event.target.files ?? []);
-    reconstruction.reset();
-    setLatestJob(null);
+    uploadFiles.reset();
     setUploadedCount(0);
+    setOperationNotice(null);
     if (selected.length > MAX_IMAGES) {
       setFiles([]);
       setSelectionError(`一次最多选择 ${MAX_IMAGES} 张图片。`);
@@ -115,22 +202,37 @@ export function WorkspacePage() {
       return;
     }
     const selectedBytes = selected.reduce((total, file) => total + file.size, 0);
-    if (selectedBytes > MAX_TOTAL_BYTES) {
+    const existingBytes = uploadSession?.total_bytes ?? 0;
+    if (existingBytes + selectedBytes > MAX_TOTAL_BYTES) {
       setFiles([]);
-      setSelectionError("所选图片合计超过 1 GiB 的开发限制。");
+      setSelectionError("当前会话与所选图片合计超过 1 GiB 的开发限制。");
+      event.target.value = "";
+      return;
+    }
+    const existingCount = uploadSession?.image_count ?? 0;
+    if (existingCount + selected.length > MAX_IMAGES) {
+      setFiles([]);
+      setSelectionError(`当前上传会话累计不能超过 ${MAX_IMAGES} 张图片。`);
       event.target.value = "";
       return;
     }
     setFiles(selected);
-    setSelectionError(
-      selected.length > 0 && selected.length < 3
-        ? "至少需要选择 3 张具有重叠区域的图片。"
-        : null,
-    );
+    setSelectionError(null);
+    event.target.value = "";
   }
 
-  const canSubmit = files.length >= 3 && !reconstruction.isPending;
-  const progress = files.length > 0 ? Math.round((uploadedCount / files.length) * 100) : 0;
+  const operationError =
+    uploadFiles.error ?? deleteImage.error ?? submitDraft.error ?? cancelDraft.error;
+  const busy =
+    uploadFiles.isPending ||
+    deleteImage.isPending ||
+    submitDraft.isPending ||
+    cancelDraft.isPending;
+  const canUpload = files.length > 0 && !busy;
+  const canSubmit =
+    uploadSession !== null && uploadSession.image_count >= 3 && !busy;
+  const progress =
+    batchTotal > 0 ? Math.round((uploadedCount / batchTotal) * 100) : 0;
   const displayedLatestJob = latestJob
     ? jobs.data?.find((job) => job.job_id === latestJob.job_id) ?? latestJob
     : null;
@@ -151,11 +253,11 @@ export function WorkspacePage() {
       <section className="workspace-grid">
         <article className="workspace-card upload-card">
           <div className="card-label">INPUT</div>
-          <h2>选择多视图图片</h2>
-          <p>支持 JPEG、PNG，3–150 张，单张最大 25 MB、合计最大 1 GiB。后端会重新识别格式、完整解码并校验像素数量。</p>
+          <h2>管理多视图输入</h2>
+          <p>支持 JPEG、PNG，3–150 张，单张最大 25 MB、合计最大 1 GiB。图片先验证并保留在可修改上传中，确认后再冻结并入队。</p>
           <label className="file-picker" htmlFor="reconstruction-images">
-            <span>选择图片</span>
-            <small>文件名仅用于显示，磁盘名称由平台生成</small>
+            <span>选择一批图片</span>
+            <small>可分批添加；磁盘名称由平台生成</small>
           </label>
           <input
             className="visually-hidden"
@@ -163,13 +265,13 @@ export function WorkspacePage() {
             type="file"
             accept="image/jpeg,image/png,.jpg,.jpeg,.png"
             multiple
-            disabled={reconstruction.isPending}
+            disabled={busy}
             onChange={selectFiles}
           />
 
           {files.length > 0 ? (
             <div className="selection-summary" aria-live="polite">
-              <strong>{files.length} 张图片</strong>
+              <strong>待上传 {files.length} 张</strong>
               <span>合计 {formatBytes(totalBytes)}</span>
               <ul>
                 {files.slice(0, 4).map((file) => (
@@ -182,32 +284,103 @@ export function WorkspacePage() {
             </div>
           ) : null}
 
+          {uploadSession ? (
+            <div className="server-upload" aria-live="polite">
+              <div>
+                <strong>服务端已验证 {uploadSession.image_count} 张</strong>
+                <span>{formatBytes(uploadSession.total_bytes)}</span>
+              </div>
+              {uploadSession.images.length ? (
+                <ul>
+                  {uploadSession.images.map((image) => (
+                    <li key={image.id}>
+                      <span>
+                        <strong>{image.original_name}</strong>
+                        <small>
+                          {image.width}×{image.height} · {formatBytes(image.size_bytes)}
+                        </small>
+                      </span>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => deleteImage.mutate(image.id)}
+                      >
+                        删除
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p>会话已创建，尚未保存图片。</p>
+              )}
+            </div>
+          ) : null}
+
           {selectionError ? (
             <div className="form-notice error" role="alert">
               {selectionError}
             </div>
           ) : null}
-          {reconstruction.isError ? (
+          {operationError ? (
             <div className="form-notice error" role="alert">
-              {readableError(reconstruction.error)}
+              {readableError(operationError)}
+            </div>
+          ) : null}
+          {operationNotice ? (
+            <div className="form-notice success" role="status">
+              {operationNotice}
             </div>
           ) : null}
 
-          {reconstruction.isPending ? (
+          {uploadFiles.isPending ? (
             <div className="upload-progress" aria-live="polite">
-              <div><span>上传并校验</span><strong>{uploadedCount}/{files.length}</strong></div>
+              <div><span>上传并校验</span><strong>{uploadedCount}/{batchTotal}</strong></div>
               <progress max={100} value={progress}>{progress}%</progress>
             </div>
           ) : null}
 
-          <button
-            className="button primary"
-            type="button"
-            disabled={!canSubmit}
-            onClick={() => reconstruction.mutate(files)}
-          >
-            {reconstruction.isPending ? "正在创建任务…" : "上传并创建模拟任务"}
-          </button>
+          <div className="upload-actions">
+            <button
+              className="button secondary"
+              type="button"
+              disabled={!canUpload}
+              onClick={() => uploadFiles.mutate(files)}
+            >
+              {uploadFiles.isPending ? "正在上传…" : "上传所选图片"}
+            </button>
+            <button
+              className="button primary"
+              type="button"
+              disabled={!canSubmit}
+              onClick={() => {
+                if (uploadSession) submitDraft.mutate(uploadSession.upload_id);
+              }}
+            >
+              {submitDraft.isPending ? "正在提交…" : "冻结输入并创建模拟任务"}
+            </button>
+            {uploadSession ? (
+              <button
+                className="button danger"
+                type="button"
+                disabled={
+                  cancelDraft.isPending ||
+                  deleteImage.isPending ||
+                  submitDraft.isPending
+                }
+                onClick={() => {
+                  const confirmed = window.confirm(
+                    "取消后将删除本次尚未提交的全部图片，是否继续？",
+                  );
+                  if (confirmed) cancelDraft.mutate(uploadSession.upload_id);
+                }}
+              >
+                {cancelDraft.isPending ? "正在取消…" : "取消并删除未提交图片"}
+              </button>
+            ) : null}
+          </div>
+          {uploadSession && uploadSession.image_count < 3 ? (
+            <p className="upload-hint">还需至少 {3 - uploadSession.image_count} 张有效图片才能提交。</p>
+          ) : null}
           <p className="privacy-note">图片可能包含 EXIF 位置信息；当前版本不会主动清除元数据，仅用于本机开发验证。</p>
         </article>
 
@@ -267,7 +440,7 @@ export function WorkspacePage() {
               ))}
             </div>
           ) : (
-            <p className="empty-state">尚无任务。选择至少三张图片后即可建立第一条开发任务。</p>
+            <p className="empty-state">尚无任务。验证至少三张图片后即可建立第一条开发任务。</p>
           )}
         </article>
       </section>

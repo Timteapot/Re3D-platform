@@ -11,6 +11,8 @@ class UploadSettings:
     max_file_bytes: int = 25 * 1024 * 1024
     max_total_bytes: int = 1024 * 1024 * 1024
     max_pixels: int = 50_000_000
+    stale_after_hours: int = 24
+    cleanup_batch_size: int = 100
 
     def __post_init__(self) -> None:
         if not 3 <= self.min_images <= self.max_images <= 150:
@@ -19,6 +21,10 @@ class UploadSettings:
             raise ValueError("upload byte limits are inconsistent")
         if not 1_000_000 <= self.max_pixels <= 80_000_000:
             raise ValueError("UPLOAD_MAX_PIXELS must be between 1M and 80M")
+        if not 1 <= self.stale_after_hours <= 24 * 30:
+            raise ValueError("UPLOAD_STALE_AFTER_HOURS must be between 1 and 720")
+        if not 1 <= self.cleanup_batch_size <= 1000:
+            raise ValueError("UPLOAD_CLEANUP_BATCH_SIZE must be between 1 and 1000")
 
     @classmethod
     def from_environment(cls) -> "UploadSettings":
@@ -32,6 +38,8 @@ class UploadSettings:
                 1024 * 1024 * 1024,
             ),
             max_pixels=_read_int("UPLOAD_MAX_PIXELS", 50_000_000),
+            stale_after_hours=_read_int("UPLOAD_STALE_AFTER_HOURS", 24),
+            cleanup_batch_size=_read_int("UPLOAD_CLEANUP_BATCH_SIZE", 100),
         )
 
 

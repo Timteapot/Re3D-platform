@@ -153,6 +153,8 @@ Re3D-data/jobs/<job_uuid>/
 | POST | `/api/v1/uploads` | 创建或恢复当前用户的幂等上传会话 |
 | GET | `/api/v1/uploads/{upload_id}` | 查询当前用户的上传会话和图片元数据 |
 | POST | `/api/v1/uploads/{upload_id}/images` | 上传并校验一张 JPEG/PNG |
+| DELETE | `/api/v1/uploads/{upload_id}/images/{image_id}` | 删除未提交上传中的一张图片 |
+| POST | `/api/v1/uploads/{upload_id}/cancel` | 取消未提交上传并清理任务目录 |
 | POST | `/api/v1/uploads/{upload_id}/submit` | 复核输入并创建 simulated 队列任务 |
 | GET | `/api/v1/development/jobs` | 列出当前用户最近的任务 |
 | POST | `/api/v1/development/simulated-jobs` | 以当前登录用户创建幂等模拟任务 |
