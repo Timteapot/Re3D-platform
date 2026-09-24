@@ -7,10 +7,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import Engine
 
+from apps.api.auth import create_auth_router
+from backend.auth import AuthService, AuthSettings, UserIdentity
 from backend.db.errors import JobNotFoundError, QueueConflictError
 from backend.db.queue import JobQueue
 from backend.db.runtime import (
@@ -30,16 +32,12 @@ class AppServices:
     engine: Engine
     queue: JobQueue
     development_jobs: DevelopmentJobService
+    auth: AuthService
 
 
 class SimulatedJobCreate(BaseModel):
-    user_id: uuid.UUID
     image_count: int = Field(default=3, ge=3, le=150)
     idempotency_key: str = Field(min_length=8, max_length=128)
-
-
-class JobOwnerRequest(BaseModel):
-    user_id: uuid.UUID
 
 
 class JobResponse(BaseModel):
@@ -83,18 +81,23 @@ class JobResponse(BaseModel):
         )
 
 
-def build_services() -> AppServices:
+def build_services(*, environment: str) -> AppServices:
     database = DatabaseSettings.from_environment()
     configured_data_root = os.environ.get("RE3D_DATA_ROOT")
     if not configured_data_root:
         raise ValueError("RE3D_DATA_ROOT is required")
     engine = create_database_engine(database)
-    queue = JobQueue(create_session_factory(engine))
+    sessions = create_session_factory(engine)
+    queue = JobQueue(sessions)
     development_jobs = DevelopmentJobService(
         queue,
         data_root=Path(configured_data_root),
     )
-    return AppServices(engine, queue, development_jobs)
+    auth = AuthService(
+        sessions,
+        AuthSettings.from_environment(environment=environment),
+    )
+    return AppServices(engine, queue, development_jobs, auth)
 
 
 def create_app(
@@ -113,10 +116,13 @@ def create_app(
             "development_routes_enabled": environment in DEVELOPMENT_ENVIRONMENTS,
         }
 
+    resolved_services = services or build_services(environment=environment)
+    app.state.services = resolved_services
+    auth_router, current_user = create_auth_router(resolved_services.auth)
+    app.include_router(auth_router)
+
     if environment not in DEVELOPMENT_ENVIRONMENTS:
         return app
-    resolved_services = services or build_services()
-    app.state.services = resolved_services
 
     @app.post(
         "/api/v1/development/simulated-jobs",
@@ -127,10 +133,11 @@ def create_app(
     def create_simulated_job(
         payload: SimulatedJobCreate,
         response: Response,
+        user: UserIdentity = Depends(current_user),
     ) -> JobResponse:
         try:
             created = resolved_services.development_jobs.create_simulated_job(
-                user_id=payload.user_id,
+                user_id=user.id,
                 image_count=payload.image_count,
                 idempotency_token=payload.idempotency_key,
             )
@@ -148,9 +155,12 @@ def create_app(
         response_model=JobResponse,
         tags=["development"],
     )
-    def get_job(job_id: uuid.UUID, user_id: uuid.UUID) -> JobResponse:
+    def get_job(
+        job_id: uuid.UUID,
+        user: UserIdentity = Depends(current_user),
+    ) -> JobResponse:
         try:
-            snapshot = resolved_services.queue.get_job(job_id, user_id=user_id)
+            snapshot = resolved_services.queue.get_job(job_id, user_id=user.id)
         except JobNotFoundError as exc:
             raise HTTPException(status_code=404, detail="job not found") from exc
         return JobResponse.from_snapshot(snapshot)
@@ -160,12 +170,15 @@ def create_app(
         response_model=JobResponse,
         tags=["development"],
     )
-    def cancel_job(job_id: uuid.UUID, payload: JobOwnerRequest) -> JobResponse:
+    def cancel_job(
+        job_id: uuid.UUID,
+        user: UserIdentity = Depends(current_user),
+    ) -> JobResponse:
         try:
-            resolved_services.queue.request_cancel(job_id, user_id=payload.user_id)
+            resolved_services.queue.request_cancel(job_id, user_id=user.id)
             snapshot = resolved_services.queue.get_job(
                 job_id,
-                user_id=payload.user_id,
+                user_id=user.id,
             )
         except JobNotFoundError as exc:
             raise HTTPException(status_code=404, detail="job not found") from exc

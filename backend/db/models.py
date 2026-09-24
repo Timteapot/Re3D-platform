@@ -27,6 +27,71 @@ class Base(DeclarativeBase):
 STATUS_VALUES = ", ".join(f"'{status.value}'" for status in JobStatus)
 
 
+class User(Base):
+    __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint("role IN ('user', 'admin')", name="ck_users_role"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    username: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
+    email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True)
+    password_hash: Mapped[str] = mapped_column(String(512), nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False, default="user")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    email_verified: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    jobs: Mapped[list[ReconstructionJob]] = relationship(back_populates="user")
+    refresh_sessions: Mapped[list[RefreshSession]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
+
+class RefreshSession(Base):
+    __tablename__ = "refresh_sessions"
+    __table_args__ = (
+        Index("ix_refresh_sessions_user_expires", "user_id", "expires_at"),
+        Index("ix_refresh_sessions_family_id", "family_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    family_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    token_sha256: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        unique=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    replaced_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("refresh_sessions.id", ondelete="SET NULL"),
+    )
+
+    user: Mapped[User] = relationship(back_populates="refresh_sessions")
+
+
 class ReconstructionJob(Base):
     __tablename__ = "reconstruction_jobs"
     __table_args__ = (
@@ -47,7 +112,12 @@ class ReconstructionJob(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
-    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
     status: Mapped[str] = mapped_column(
         String(32), nullable=False, default=JobStatus.DRAFT.value
     )
@@ -75,6 +145,7 @@ class ReconstructionJob(Base):
     )
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
+    user: Mapped[User] = relationship(back_populates="jobs")
     lease: Mapped[WorkerLease | None] = relationship(back_populates="job")
 
 

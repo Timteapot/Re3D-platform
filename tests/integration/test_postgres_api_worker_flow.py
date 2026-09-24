@@ -14,13 +14,15 @@ from sqlalchemy.orm import sessionmaker
 
 from apps.api.main import AppServices, create_app
 from apps.worker.main import main as worker_main
-from backend.db.models import ReconstructionJob, WorkerLease
+from backend.auth import AuthService, AuthSettings
+from backend.db.models import ReconstructionJob, RefreshSession, User, WorkerLease
 from backend.db.queue import JobQueue
 from backend.jobs.development import DevelopmentJobService
 from tests.integration.postgres_support import validated_test_database_url
 
 
 DATABASE_URL = validated_test_database_url()
+TEST_SECRET = "postgres-api-flow-secret-" + "x" * 64
 
 
 @unittest.skipUnless(DATABASE_URL, "RE3D_TEST_DATABASE_URL is not configured")
@@ -34,13 +36,36 @@ class PostgreSQLApiWorkerFlowTests(unittest.TestCase):
         self.queue = JobQueue(self.sessions)
         self.resource_key = f"gpu:test-api-{uuid.uuid4().hex[:8]}"
         self.queue.ensure_resource(self.resource_key)
-        services = AppServices(
+        self.services = AppServices(
             self.engine,
             self.queue,
             DevelopmentJobService(self.queue, data_root=self.data_root),
+            AuthService(
+                self.sessions,
+                AuthSettings(jwt_secret=TEST_SECRET, cookie_secure=False),
+            ),
         )
-        self.client = TestClient(create_app(services=services, app_env="test"))
-        self.user_id = uuid.uuid4()
+        self.client = TestClient(create_app(services=self.services, app_env="test"))
+        password = "correct horse battery staple"
+        registered = self.client.post(
+            "/api/v1/auth/register",
+            json={
+                "username": f"pg-user-{uuid.uuid4().hex[:8]}",
+                "email": f"pg-{uuid.uuid4().hex[:12]}@example.com",
+                "password": password,
+            },
+        )
+        self.assertEqual(registered.status_code, 201)
+        self.user_id = uuid.UUID(registered.json()["id"])
+        logged_in = self.client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": registered.json()["username"],
+                "password": password,
+            },
+        )
+        self.assertEqual(logged_in.status_code, 200)
+        self.access_token = logged_in.json()["access_token"]
         self.job_ids: list[uuid.UUID] = []
 
     def tearDown(self) -> None:
@@ -60,6 +85,12 @@ class PostgreSQLApiWorkerFlowTests(unittest.TestCase):
                 session.query(ReconstructionJob).filter(
                     ReconstructionJob.id.in_(self.job_ids)
                 ).delete(synchronize_session=False)
+            session.query(RefreshSession).filter(
+                RefreshSession.user_id == self.user_id
+            ).delete(synchronize_session=False)
+            session.query(User).filter(User.id == self.user_id).delete(
+                synchronize_session=False
+            )
         self.engine.dispose()
         self.temporary.cleanup()
 
@@ -67,10 +98,10 @@ class PostgreSQLApiWorkerFlowTests(unittest.TestCase):
         created_response = self.client.post(
             "/api/v1/development/simulated-jobs",
             json={
-                "user_id": str(self.user_id),
                 "image_count": 3,
                 "idempotency_key": "postgres-closed-loop-001",
             },
+            headers={"Authorization": f"Bearer {self.access_token}"},
         )
         self.assertEqual(created_response.status_code, 201)
         created = created_response.json()
@@ -104,7 +135,7 @@ class PostgreSQLApiWorkerFlowTests(unittest.TestCase):
 
         completed_response = self.client.get(
             f"/api/v1/development/jobs/{job_id}",
-            params={"user_id": str(self.user_id)},
+            headers={"Authorization": f"Bearer {self.access_token}"},
         )
         self.assertEqual(completed_response.status_code, 200)
         completed = completed_response.json()

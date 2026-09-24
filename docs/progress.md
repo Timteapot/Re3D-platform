@@ -32,11 +32,19 @@
 - [x] 完成 API → PostgreSQL → Worker → A-v4/B-v2/C GLB → API 终态查询闭环；
 - [x] 为模拟任务生成契约有效、明确不提供真实质量分数的结构健康报告；
 - [x] 使用临时 Docker PostgreSQL 18 验证上述完整闭环，测试结束后自动删除容器。
+- [x] 新增 `users`、`refresh_sessions` 及任务所有者外键迁移；
+- [x] 使用 Argon2id 保存密码哈希，未知用户登录执行 dummy 哈希校验；
+- [x] 实现注册、登录、刷新、退出和当前用户 API；
+- [x] 实现短期 JWT access token、HttpOnly refresh Cookie、轮换和重放族撤销；
+- [x] 将开发任务接口改为 Bearer 认证，不再接受客户端声明的用户 UUID；
+- [x] 在临时 PostgreSQL 18 验证 `0002` 升级、降级和重新升级。
 
 ## 下一步
 
-- [ ] 建立用户表、密码凭据和刷新会话模型；
-- [ ] 实现注册、登录、刷新和退出 API，并以认证主体替代开发接口的显式 `user_id`；
+- [ ] 在本机 `re3d_platform_dev` 应用 `0002_user_auth` 迁移（需本地输入 `re3d_app` 密码）；
+- [ ] 初始化 React、TypeScript 和 Vite 前端骨架；
+- [ ] 实现注册、登录、退出和启动时会话恢复页面；
+- [ ] 增加邮箱验证、密码重置、登录限流和认证审计；
 - [ ] 使用小型图片集执行一次真实重建集成验证；
 - [ ] 将租约 Worker 从模拟执行扩展到受控真实 Re3D 子进程。
 

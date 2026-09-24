@@ -17,7 +17,7 @@
 
 ## 2. 数据模型
 
-`reconstruction_jobs` 保存用户、执行模式、固定管线身份、输入 manifest 摘要、状态、进度、错误码和时间戳。图片、中间文件、日志和模型仍保存在 `Re3D-data/jobs/<job_uuid>`。
+`users` 保存规范化身份、Argon2id 密码哈希和账号状态；`refresh_sessions` 保存 refresh token 摘要、轮换族和撤销状态。`reconstruction_jobs.user_id` 通过外键关联真实用户，并保存执行模式、固定管线身份、输入 manifest 摘要、状态、进度、错误码和时间戳。图片、中间文件、日志和模型仍保存在 `Re3D-data/jobs/<job_uuid>`。
 
 `worker_leases` 每行代表一个可独占资源。首期迁移创建 `gpu:0`：
 
@@ -107,17 +107,17 @@ PostgreSQL 集成测试必须使用临时 Docker 数据库：
 
 - SQLite 单元测试覆盖完整状态机和顺序租约语义；
 - PostgreSQL 18 真实迁移、并发领取、过期接管和旧 token 隔离；
-- Alembic 可从空数据库升级到 `0001_job_queue`。
+- Alembic 可从空数据库升级到 `0002_user_auth`，并完成 `0002 → 0001 → 0002` 往返；
 - 本机开发库使用 `re3d_app` 完成权限探针和首次迁移；
 - 测试库名称保护会拒绝开发库，临时 Docker 测试脚本会自动清理容器。
 - 开发 API 创建任务后，队列 Worker 能在 PostgreSQL 中领取、续租、执行三个模拟分支并提交终态；
-- 任务查询按 `user_id` 做对象范围过滤，取消的排队任务不会被领取；
+- 任务查询按 access token 对应的 `user_id` 做对象范围过滤，取消的排队任务不会被领取；
 - `execution_mode=simulated` 的 Worker 不会领取或接管 real 任务；
 - 模拟评估报告通过 evaluation v1 Schema，并明确不给出真实质量分数。
 
 尚未完成：
 
-- 真实注册/登录和基于会话的对象级权限；
+- 邮箱验证、密码重置、认证限流和审计；
 - 队列消费者执行真实 Re3D；
 - Re3D 子进程取消、超时和租约丢失终止；
 - 事件日志向数据库进度投影；

@@ -77,7 +77,9 @@
 - 已完成 PostgreSQL 最小任务状态机、Alembic 首次迁移、单 GPU 租约和后台心跳基础层；
 - 已完成开发 API → PostgreSQL → 租约 Worker → A-v4/B-v2/C 模拟产物 → 模拟评估报告闭环；
 - 临时 Docker PostgreSQL 端到端测试已覆盖迁移、队列领取、Worker 执行和 API 终态查询；
-- 下一步建立用户数据模型和注册/登录 API，再将开发接口替换为真实认证主体。
+- 已完成用户、刷新会话模型以及注册、登录、刷新、退出和当前用户 API；
+- 开发任务接口已改为从 Bearer token 取得用户身份，不再接受客户端声明 `user_id`；
+- 下一步初始化 React/TypeScript 前端并实现注册、登录和会话恢复页面。
 
 ## 4. 推荐技术架构
 

@@ -5,8 +5,8 @@
 当前开发环境已经形成第一个可执行的后端闭环：
 
 ```text
-开发客户端
-  → FastAPI 创建 simulated 任务
+已登录开发客户端
+  → FastAPI 从 Bearer token 取得用户并创建 simulated 任务
   → 写入 Re3D-data/jobs/<job_uuid> 和 PostgreSQL
   → 独立 Worker 取得 gpu:0 租约
   → 生成 A-v4 / B-v2 / C 三个最小 GLB
@@ -21,7 +21,7 @@ API 进程不执行重建，只负责校验请求、创建任务文件和写队�
 
 当前路由使用 `/api/v1/development` 前缀，只有 `APP_ENV=development` 或 `APP_ENV=test` 时才注册。`APP_ENV=production` 时这些路由返回 404。
 
-开发接口接收显式 `user_id`，目的是在认证模块完成前验证对象范围查询，不构成身份认证。它只能绑定 `127.0.0.1` 用于本机联调，不能暴露到公开互联网。后续注册/登录模块会从已验证会话中取得内部用户 ID，并删除客户端传入身份的方式。
+开发任务接口必须使用 Bearer access token，服务端从令牌和数据库取得内部用户 ID，不再接受客户端提交的 `user_id`。这些任务路由仍只能绑定 `127.0.0.1` 用于本机联调，不能暴露到公开互联网。
 
 模拟输入是平台生成的开发字节，不是真实 JPEG；模拟 GLB 是格式合法的空场景，不包含网格、材质或纹理。评估报告因此将整体状态写为 `not_available`、分数写为 `null`，只把文件完整性标为通过，避免伪造质量结论。
 
@@ -56,9 +56,17 @@ RE3D_GPU_RESOURCE=gpu:0
 RE3D_LEASE_SECONDS=60
 RE3D_HEARTBEAT_SECONDS=20
 RE3D_WORKER_ID=windows-gpu-01
+JWT_SECRET=<至少32字节随机值>
+REFRESH_COOKIE_SECURE=false
 ```
 
-`.env` 已被 Git 忽略。不要把密码放进文档、命令输出、任务 manifest 或提交历史。
+`.env` 已被 Git 忽略。不要把数据库密码、JWT secret 或 token 放进文档、日志、任务 manifest 或提交历史。
+
+首次使用认证接口前，以受限应用用户应用最新迁移：
+
+```powershell
+& deploy/postgres/verify-and-migrate-dev.ps1
+```
 
 ## 5. 启动 API
 
@@ -79,23 +87,23 @@ cd D:\3Dreconstruction\Re3D-platform
 Invoke-RestMethod http://127.0.0.1:8000/health/live
 ```
 
-## 6. 创建并执行模拟任务
+## 6. 登录后创建并执行模拟任务
 
-创建任务：
+先按 [`authentication.md`](authentication.md) 注册并登录，得到 `$login.access_token`。然后创建任务：
 
 ```powershell
-$userId = [Guid]::NewGuid().ToString()
 $body = @{
-    user_id = $userId
     image_count = 3
     idempotency_key = "manual-development-001"
 } | ConvertTo-Json
+$headers = @{ Authorization = "Bearer $($login.access_token)" }
 
 $job = Invoke-RestMethod `
   -Method Post `
   -Uri http://127.0.0.1:8000/api/v1/development/simulated-jobs `
   -ContentType application/json `
-  -Body $body
+  -Body $body `
+  -Headers $headers
 $job
 ```
 
@@ -115,7 +123,8 @@ cd D:\3Dreconstruction\Re3D-platform
 
 ```powershell
 Invoke-RestMethod `
-  -Uri "http://127.0.0.1:8000/api/v1/development/jobs/$($job.job_id)?user_id=$userId"
+  -Uri "http://127.0.0.1:8000/api/v1/development/jobs/$($job.job_id)" `
+  -Headers $headers
 ```
 
 任务目录包含：
@@ -141,11 +150,11 @@ Re3D-data/jobs/<job_uuid>/
 | 方法 | 路径 | 当前作用 |
 |---|---|---|
 | GET | `/health/live` | 进程存活和环境标识 |
-| POST | `/api/v1/development/simulated-jobs` | 创建幂等模拟任务 |
-| GET | `/api/v1/development/jobs/{job_id}` | 按显式用户 UUID 查询任务 |
-| POST | `/api/v1/development/jobs/{job_id}/cancel` | 取消排队任务或标记运行中任务 |
+| POST | `/api/v1/development/simulated-jobs` | 以当前登录用户创建幂等模拟任务 |
+| GET | `/api/v1/development/jobs/{job_id}` | 查询当前用户的任务 |
+| POST | `/api/v1/development/jobs/{job_id}/cancel` | 取消当前用户的任务 |
 
-查询或取消时使用其他用户 UUID 会统一返回 404，避免泄露任务是否存在。这个对象范围检查会在认证接入后保留，但用户 ID 将只能来自服务端会话。
+查询或取消其他用户的任务会统一返回 404，避免泄露任务是否存在。用户 ID 只来自服务端验证后的 access token。
 
 ## 8. 测试方式
 
@@ -165,7 +174,7 @@ Re3D-data/jobs/<job_uuid>/
 
 ## 9. 仍未完成
 
-- 用户注册、登录、邮箱验证和真实会话；
+- 邮箱验证、密码重置和登录限流；
 - 真实图片上传、解码和输入质量校验；
 - API 返回产物和评估报告；
 - SSE 实时进度；

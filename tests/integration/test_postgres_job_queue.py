@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from backend.db.errors import LeaseLostError
-from backend.db.models import ReconstructionJob, WorkerLease
+from backend.db.models import ReconstructionJob, User, WorkerLease
 from backend.db.queue import JobClaim, JobQueue
 from backend.db.state_machine import JobStatus
 from tests.integration.postgres_support import validated_test_database_url
@@ -58,6 +58,19 @@ class PostgreSQLJobQueueIntegrationTests(unittest.TestCase):
         self.queue = JobQueue(self.sessions)
         self.resource_key = f"gpu:test-{uuid.uuid4().hex[:12]}"
         self.queue.ensure_resource(self.resource_key)
+        self.user_id = uuid.uuid4()
+        with self.sessions.begin() as session:
+            session.add(
+                User(
+                    id=self.user_id,
+                    username=f"queue-{self.user_id.hex[:12]}",
+                    email=f"queue-{self.user_id.hex[:12]}@example.com",
+                    password_hash="test-only-not-a-login-hash",
+                    role="user",
+                    is_active=True,
+                    email_verified=False,
+                )
+            )
 
     def tearDown(self) -> None:
         with self.sessions.begin() as session:
@@ -74,6 +87,9 @@ class PostgreSQLJobQueueIntegrationTests(unittest.TestCase):
             session.query(ReconstructionJob).filter(
                 ReconstructionJob.id.in_(getattr(self, "job_ids", []))
             ).delete(synchronize_session=False)
+            session.query(User).filter(User.id == self.user_id).delete(
+                synchronize_session=False
+            )
         self.engine.dispose()
 
     def enqueue(self, priority: int) -> uuid.UUID:
@@ -81,7 +97,7 @@ class PostgreSQLJobQueueIntegrationTests(unittest.TestCase):
         self.job_ids = getattr(self, "job_ids", []) + [job_id]
         self.queue.enqueue(
             job_id=job_id,
-            user_id=uuid.uuid4(),
+            user_id=self.user_id,
             execution_mode="simulated",
             pipeline_tag="re3d-pipeline-v1.1.0",
             pipeline_commit=PIPELINE_COMMIT,

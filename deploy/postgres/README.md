@@ -33,7 +33,9 @@ DATABASE_URL=postgresql+psycopg://re3d_app:<URL编码后的密码>@127.0.0.1:543
 & deploy/postgres/verify-and-migrate-dev.ps1
 ```
 
-验证脚本只在进程内存和子进程环境中临时保存密码，结束前会清除变量。它会创建并立即删除权限探针表，然后执行 Alembic；不会运行测试、清表或回滚迁移。
+验证脚本只在进程内存和子进程环境中临时保存密码，结束前会清除变量。它会创建并立即删除权限探针表，然后执行 Alembic，并显示当前用户数和活动 refresh session 数；不会运行测试、清表或回滚迁移。
+
+`0002_user_auth` 会为任务所有者增加用户外键。如果旧开发库中存在没有对应用户的历史模拟任务，迁移会安全失败，不会伪造用户或删除任务；应先人工确认这些开发记录的处理方式。
 
 ## 集成测试
 
@@ -43,7 +45,7 @@ DATABASE_URL=postgresql+psycopg://re3d_app:<URL编码后的密码>@127.0.0.1:543
 & deploy/postgres/run-integration-tests.ps1
 ```
 
-脚本会随机生成测试密码和宿主机端口，执行 Alembic、PostgreSQL 租约并发/接管测试，以及 API → PostgreSQL → Worker → 三分支产物闭环测试，并在成功或失败后停止容器。容器使用 `--rm`，不会保留测试数据库。
+脚本会随机生成测试密码和宿主机端口，执行 Alembic、PostgreSQL 租约并发/接管测试，以及认证用户 → API → PostgreSQL → Worker → 三分支产物闭环测试。测试完成后还会执行 `0002 → 0001 → 0002` 迁移往返。成功或失败后都会停止容器；容器使用 `--rm`，不会保留测试数据库。
 
 两个 PostgreSQL 脚本会优先使用仓库内 `.venv\Scripts\python.exe`，没有虚拟环境时才回退到当前 `python`。推荐先按 [`docs/development-api-worker.md`](../../docs/development-api-worker.md) 创建项目虚拟环境。
 
