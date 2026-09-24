@@ -2,7 +2,7 @@
 
 ## 1. 作用范围
 
-本模块负责持久化任务状态，并保证同一 GPU 资源在任意时刻只被一个 Worker 租用。它不保存图片或模型正文，也还没有把现有 `simulate` / `real-dry-run` CLI 自动包装成数据库队列消费者。
+本模块负责持久化任务状态，并保证同一 GPU 资源在任意时刻只被一个 Worker 租用。它不保存图片或模型正文。`run-queued-once` 已把模拟器包装成数据库队列消费者；真实 Re3D 仍只支持 dry-run，尚未进入队列执行。
 
 核心代码：
 
@@ -10,7 +10,10 @@
 - `backend/db/models.py`：任务与资源租约模型；
 - `backend/db/queue.py`：入队、原子领取、续租、取消和状态推进；
 - `backend/db/heartbeat.py`：长任务后台周期续租；
-- `backend/db/migrations`：Alembic 数据库迁移。
+- `backend/db/migrations`：Alembic 数据库迁移；
+- `backend/jobs/development.py`：创建开发专用模拟任务和三分支请求；
+- `backend/worker/queued.py`：领取一个 simulated 任务、续租并投影状态；
+- `apps/api/main.py`：开发环境创建、查询和取消接口。
 
 ## 2. 数据模型
 
@@ -74,10 +77,11 @@ draft → uploading → validating_input → queued → preparing → sfm
 
 ## 6. 本地初始化
 
-安装依赖：
+创建隔离环境并安装依赖：
 
 ```powershell
-python -m pip install -r requirements-dev.txt
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 ```
 
 在 Windows 本机创建开发数据库和受限用户：
@@ -106,11 +110,15 @@ PostgreSQL 集成测试必须使用临时 Docker 数据库：
 - Alembic 可从空数据库升级到 `0001_job_queue`。
 - 本机开发库使用 `re3d_app` 完成权限探针和首次迁移；
 - 测试库名称保护会拒绝开发库，临时 Docker 测试脚本会自动清理容器。
+- 开发 API 创建任务后，队列 Worker 能在 PostgreSQL 中领取、续租、执行三个模拟分支并提交终态；
+- 任务查询按 `user_id` 做对象范围过滤，取消的排队任务不会被领取；
+- `execution_mode=simulated` 的 Worker 不会领取或接管 real 任务；
+- 模拟评估报告通过 evaluation v1 Schema，并明确不给出真实质量分数。
 
 尚未完成：
 
-- API 创建任务及用户对象级权限；
-- 队列消费者把租约包裹到模拟和真实 Re3D 执行；
+- 真实注册/登录和基于会话的对象级权限；
+- 队列消费者执行真实 Re3D；
 - Re3D 子进程取消、超时和租约丢失终止；
 - 事件日志向数据库进度投影；
 - 多 GPU 资源注册和调度。

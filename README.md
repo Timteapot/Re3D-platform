@@ -4,7 +4,7 @@ Re3D Platform 是基于 Re3D 三维重建管线的非商业学习与工程实践
 
 ## 当前状态
 
-项目处于阶段 0：基线冻结与平台骨架准备。
+阶段 0 的核心验收闭环已经完成，项目正在进入阶段 1 的平台骨架开发。
 
 - Re3D 活动基线标签：`re3d-pipeline-v1.1.0`
 - Re3D 活动基线提交：`2c5ba174dae9fe53dcec8f7d8466793fdebf0c58`
@@ -15,6 +15,8 @@ Re3D Platform 是基于 Re3D 三维重建管线的非商业学习与工程实践
 - 运行数据目录：`D:\3Dreconstruction\Re3D-data`
 
 基线的完整哈希和验证结果见 [`config/pipeline-baseline.json`](config/pipeline-baseline.json)，总体实施计划见 [`PROJECT_PLAN.md`](PROJECT_PLAN.md)。
+
+当前已经可以在开发环境中通过 FastAPI 创建模拟任务，由 PostgreSQL 租约队列交给独立 Worker，生成 A-v4、B-v2、C 三条模拟 GLB 和不虚构质量分数的模拟评估报告，再通过 API 查询终态。操作说明见 [`docs/development-api-worker.md`](docs/development-api-worker.md)。
 
 ## 仓库边界
 
@@ -54,6 +56,6 @@ tests                    集成、端到端与测试夹具
 
 ## 下一步
 
-运行契约、Windows Worker、三分支模拟器、Re3D 隔离运行目录、真实适配器 dry-run，以及 PostgreSQL 状态机、单 GPU 租约和心跳基础层已完成。下一步将数据库租约接入模拟 Worker，形成 API → PostgreSQL → Worker 最小闭环，再把 dry-run 适配器扩展为受控真实执行。
+运行契约、Windows Worker、三分支模拟器、Re3D 隔离运行目录、真实适配器 dry-run、PostgreSQL 租约队列，以及开发 API → PostgreSQL → Worker → 产物/模拟评估闭环已完成。下一步进入用户数据模型和注册/登录 API；当前开发接口中的显式 `user_id` 只用于联调，不能作为互联网鉴权方案。
 
 数据库队列的设计、初始化和当前边界见 [`docs/database-queue.md`](docs/database-queue.md)。

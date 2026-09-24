@@ -30,21 +30,40 @@ class SchedulerSettings:
     heartbeat_seconds: int
 
     @classmethod
-    def from_environment(cls) -> "SchedulerSettings":
-        resource_key = os.environ.get("RE3D_GPU_RESOURCE", "gpu:0")
-        lease_seconds = _environment_integer("RE3D_LEASE_SECONDS", 60)
-        heartbeat_seconds = _environment_integer("RE3D_HEARTBEAT_SECONDS", 20)
-        if not 5 <= lease_seconds <= 3600:
+    def from_environment(
+        cls,
+        *,
+        resource_key: str | None = None,
+        lease_seconds: int | None = None,
+        heartbeat_seconds: int | None = None,
+    ) -> "SchedulerSettings":
+        configured_resource = resource_key or os.environ.get(
+            "RE3D_GPU_RESOURCE", "gpu:0"
+        )
+        configured_lease = (
+            lease_seconds
+            if lease_seconds is not None
+            else _environment_integer("RE3D_LEASE_SECONDS", 60)
+        )
+        configured_heartbeat = (
+            heartbeat_seconds
+            if heartbeat_seconds is not None
+            else _environment_integer("RE3D_HEARTBEAT_SECONDS", 20)
+        )
+        if not 5 <= configured_lease <= 3600:
             raise ValueError("RE3D_LEASE_SECONDS must be between 5 and 3600")
-        if heartbeat_seconds <= 0 or heartbeat_seconds * 2 >= lease_seconds:
+        if (
+            configured_heartbeat <= 0
+            or configured_heartbeat * 2 >= configured_lease
+        ):
             raise ValueError(
                 "RE3D_HEARTBEAT_SECONDS must be positive and less than half "
                 "the lease TTL"
             )
         return cls(
-            resource_key=resource_key,
-            lease_seconds=lease_seconds,
-            heartbeat_seconds=heartbeat_seconds,
+            resource_key=configured_resource,
+            lease_seconds=configured_lease,
+            heartbeat_seconds=configured_heartbeat,
         )
 
 

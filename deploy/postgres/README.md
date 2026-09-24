@@ -43,7 +43,9 @@ DATABASE_URL=postgresql+psycopg://re3d_app:<URL编码后的密码>@127.0.0.1:543
 & deploy/postgres/run-integration-tests.ps1
 ```
 
-脚本会随机生成测试密码和宿主机端口，执行 Alembic 和 PostgreSQL 租约集成测试，并在成功或失败后停止容器。容器使用 `--rm`，不会保留测试数据库。
+脚本会随机生成测试密码和宿主机端口，执行 Alembic、PostgreSQL 租约并发/接管测试，以及 API → PostgreSQL → Worker → 三分支产物闭环测试，并在成功或失败后停止容器。容器使用 `--rm`，不会保留测试数据库。
+
+两个 PostgreSQL 脚本会优先使用仓库内 `.venv\Scripts\python.exe`，没有虚拟环境时才回退到当前 `python`。推荐先按 [`docs/development-api-worker.md`](../../docs/development-api-worker.md) 创建项目虚拟环境。
 
 测试代码只读取：
 

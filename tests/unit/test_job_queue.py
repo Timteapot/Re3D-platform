@@ -13,6 +13,7 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.db.errors import (
     InvalidTransitionError,
+    JobNotFoundError,
     LeaseLostError,
     QueueConflictError,
 )
@@ -176,12 +177,17 @@ class JobQueueTests(unittest.TestCase):
         self.engine.dispose()
         self.temporary.cleanup()
 
-    def enqueue(self, *, priority: int = 0) -> uuid.UUID:
+    def enqueue(
+        self,
+        *,
+        priority: int = 0,
+        execution_mode: str = "simulated",
+    ) -> uuid.UUID:
         job_id = uuid.uuid4()
         self.queue.enqueue(
             job_id=job_id,
             user_id=uuid.uuid4(),
-            execution_mode="simulated",
+            execution_mode=execution_mode,
             pipeline_tag="re3d-pipeline-v1.1.0",
             pipeline_commit=PIPELINE_COMMIT,
             config_sha256=CONFIG_SHA256,
@@ -203,6 +209,19 @@ class JobQueueTests(unittest.TestCase):
         self.assertFalse(claim.recovered)
         self.assertIsNone(self.queue.claim_next(worker_id="worker-b"))
         self.assertEqual(self.queue.get_job(low_priority)["status"], JobStatus.QUEUED)
+
+    def test_claim_filters_execution_mode_without_stealing_real_job(self) -> None:
+        real_job = self.enqueue(priority=100, execution_mode="real")
+        simulated_job = self.enqueue(priority=0, execution_mode="simulated")
+
+        claim = self.queue.claim_next(
+            worker_id="simulation-worker",
+            execution_mode="simulated",
+        )
+        self.assertIsNotNone(claim)
+        assert claim is not None
+        self.assertEqual(claim.job_id, simulated_job)
+        self.assertEqual(self.queue.get_job(real_job)["status"], JobStatus.QUEUED)
 
     def test_heartbeat_reports_cancellation_and_terminal_releases_slot(self) -> None:
         job_id = self.enqueue()
@@ -300,6 +319,40 @@ class JobQueueTests(unittest.TestCase):
         job_id = self.enqueue()
         self.assertEqual(self.queue.request_cancel(job_id), JobStatus.CANCELLED)
         self.assertIsNone(self.queue.claim_next(worker_id="worker-a"))
+
+    def test_user_scope_hides_jobs_and_finds_idempotent_request(self) -> None:
+        user_id = uuid.uuid4()
+        other_user = uuid.uuid4()
+        job_id = uuid.uuid4()
+        idempotency_key = uuid.uuid4().hex * 2
+        self.queue.enqueue(
+            job_id=job_id,
+            user_id=user_id,
+            execution_mode="simulated",
+            pipeline_tag="re3d-pipeline-v1.1.0",
+            pipeline_commit=PIPELINE_COMMIT,
+            config_sha256=CONFIG_SHA256,
+            input_manifest_sha256="a" * 64,
+            idempotency_key=idempotency_key,
+        )
+
+        found = self.queue.get_job_by_idempotency(
+            user_id=user_id,
+            idempotency_key=idempotency_key,
+        )
+        self.assertIsNotNone(found)
+        assert found is not None
+        self.assertEqual(found["id"], job_id)
+        self.assertIsNone(
+            self.queue.get_job_by_idempotency(
+                user_id=other_user,
+                idempotency_key=idempotency_key,
+            )
+        )
+        with self.assertRaises(JobNotFoundError):
+            self.queue.get_job(job_id, user_id=other_user)
+        with self.assertRaises(JobNotFoundError):
+            self.queue.request_cancel(job_id, user_id=other_user)
 
     def _idempotency_key(self, job_id: uuid.UUID) -> str:
         with self.sessions() as session:

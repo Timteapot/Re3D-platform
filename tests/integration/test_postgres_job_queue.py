@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import threading
 import unittest
 import uuid
@@ -8,28 +7,13 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 from sqlalchemy import create_engine, select
-from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
 
 from backend.db.errors import LeaseLostError
 from backend.db.models import ReconstructionJob, WorkerLease
 from backend.db.queue import JobClaim, JobQueue
 from backend.db.state_machine import JobStatus
-
-
-def validated_test_database_url() -> str | None:
-    configured = os.environ.get("RE3D_TEST_DATABASE_URL")
-    if not configured:
-        return None
-    parsed = make_url(configured)
-    if parsed.get_backend_name() != "postgresql":
-        raise RuntimeError("RE3D_TEST_DATABASE_URL must use PostgreSQL")
-    database = parsed.database or ""
-    if database == "re3d_platform_dev" or not database.endswith("_test"):
-        raise RuntimeError(
-            "RE3D_TEST_DATABASE_URL must target a disposable database ending in _test"
-        )
-    return configured
+from tests.integration.postgres_support import validated_test_database_url
 
 
 DATABASE_URL = validated_test_database_url()

@@ -1,6 +1,6 @@
 # Re3D Web 三维重建平台项目计划
 
-文档版本：1.1
+文档版本：1.2
 编制日期：2026-09-23
 活动算法基线：Re3D 标签 `re3d-pipeline-v1.1.0`，提交 `2c5ba174dae9fe53dcec8f7d8466793fdebf0c58`
 平台目录：`D:\3Dreconstruction\Re3D-platform`
@@ -75,7 +75,9 @@
 - 已完成 Windows Worker 目录边界、事件日志、模拟执行、原子结果和检查点恢复；
 - 已完成 Re3D v1.1.0 隔离运行目录和平台真实适配器 dry-run；
 - 已完成 PostgreSQL 最小任务状态机、Alembic 首次迁移、单 GPU 租约和后台心跳基础层；
-- 下一步将数据库租约接入模拟 Worker，完成 API → PostgreSQL → Worker 最小闭环。
+- 已完成开发 API → PostgreSQL → 租约 Worker → A-v4/B-v2/C 模拟产物 → 模拟评估报告闭环；
+- 临时 Docker PostgreSQL 端到端测试已覆盖迁移、队列领取、Worker 执行和 API 终态查询；
+- 下一步建立用户数据模型和注册/登录 API，再将开发接口替换为真实认证主体。
 
 ## 4. 推荐技术架构
 

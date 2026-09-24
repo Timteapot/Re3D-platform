@@ -2,7 +2,7 @@
 
 ## 当前实现范围
 
-当前 Worker 是真实 GPU 执行前的可执行骨架。它既能模拟共享阶段和 A-v4、B-v2、C 三条分支，也能验证已安装 Re3D v1.1.0 并通过真实入口执行不启动子进程的 dry-run。
+当前 Worker 是真实 GPU 执行前的可执行骨架。它既能直接模拟共享阶段和 A-v4、B-v2、C 三条分支，也能从 PostgreSQL 领取一个模拟任务并在租约保护下执行，还能验证已安装 Re3D v1.1.0 并通过真实入口执行不启动子进程的 dry-run。
 
 模拟器不会启动 Re3D、不会占用 GPU，也不会把模拟指标解释为真实重建质量。请求和结果都必须包含 `execution_mode: simulated`，避免模拟数据进入真实任务统计。
 
@@ -20,6 +20,8 @@
 | `simulation.py` | 模拟阶段、生成三分支 GLB、恢复检查点并汇总结果 |
 | `real.py` | 校验 Re3D Git/配置身份、构建隔离命令、执行 dry-run 并映射步骤 |
 | `settings.py` | 从参数或环境变量读取数据根目录、Worker 与 Re3D 位置 |
+| `backend/worker/queued.py` | 领取 simulated 任务、维持租约、推进数据库状态并执行模拟评估 |
+| `backend/evaluation/simulation.py` | 生成不虚构几何质量分数的开发评估报告 |
 | `apps/worker/main.py` | Windows 命令行入口和稳定退出码 |
 
 ## 输入前置条件
@@ -50,10 +52,11 @@ Re3D-data/jobs/<job_uuid>/
 
 ```powershell
 cd D:\3Dreconstruction\Re3D-platform
-python -m pip install -r requirements-worker.txt
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 $env:RE3D_DATA_ROOT = "D:\3Dreconstruction\Re3D-data"
 $env:RE3D_WORKER_ID = "windows-gpu-01"
-python -m apps.worker.main simulate --job-id <job_uuid>
+.\.venv\Scripts\python.exe -m apps.worker.main simulate --job-id <job_uuid>
 ```
 
 也可以显式传入 `--data-root` 和 `--worker-id`，命令行参数优先于环境变量。
@@ -62,7 +65,7 @@ python -m apps.worker.main simulate --job-id <job_uuid>
 
 ```powershell
 $env:RE3D_ROOT = "D:\3Dreconstruction\Re3D"
-python -m apps.worker.main real-dry-run --job-id <job_uuid>
+.\.venv\Scripts\python.exe -m apps.worker.main real-dry-run --job-id <job_uuid>
 ```
 
 未设置 `RE3D_DRIVER_PYTHON` 时，适配器从 Re3D 的 `configs/paths.local.json` 读取 `mapanything_python`。
@@ -92,7 +95,13 @@ python -m apps.worker.main real-dry-run --job-id <job_uuid>
 
 产物清单、输出校验和最终结果先写入目标目录内的随机临时文件，刷新并关闭后通过 `os.replace` 替换目标文件。因此 API 不会读取到只写了一部分的 JSON。
 
-事件文件采用追加模式，依赖数据库任务租约保证同一任务只有一个 Worker 写入。租约、心跳和过期接管基础层已经实现，但当前 `simulate` / `real-dry-run` CLI 尚未自动取得租约，所以仍不能把这两个命令直接作为多进程生产队列使用。
+事件文件采用追加模式，依赖数据库任务租约保证同一任务只有一个 Worker 写入。开发队列消费者使用：
+
+```powershell
+.\.venv\Scripts\python.exe -m apps.worker.main run-queued-once
+```
+
+它只领取 `execution_mode=simulated` 的任务，持有租约时运行模拟器和模拟评估器，并在成功后释放资源槽。独立的 `simulate` 与 `real-dry-run` 命令仍是开发诊断入口，不会自动取得租约。
 
 ## 模拟 GLB
 
@@ -108,16 +117,15 @@ python -m apps.worker.main real-dry-run --job-id <job_uuid>
 
 ## 尚未实现
 
-- 数据库租约与现有 Worker CLI 的执行控制器集成；
 - 真实 Re3D 非 dry-run 执行和产物归一化；
 - GPU/CPU/磁盘资源采样；
 - 用户取消和超时终止子进程；
 - 失败任务目录清理；
-- 评估器执行；
+- 基于真实 SfM、深度和网格指标的正式评估器；
 - 任意时刻进程崩溃后的部分文件修复。
 
 因此当前结果证明的是平台协议、目录边界、Re3D 安装身份和真实命令编排可用，不代表真实 GPU 重建已经接入。
 
 ## 下一步
 
-下一步实现 API → PostgreSQL → 模拟 Worker 最小闭环。真实执行必须先取得租约，再由适配器启动 Re3D；API 只读取数据库投影和受控产物，不直接运行管线。
+API → PostgreSQL → 模拟 Worker 最小闭环已经完成。下一步先建立真实用户和会话边界；真实执行仍必须先取得租约，再由适配器启动 Re3D，API 只读取数据库投影和受控产物，不直接运行管线。

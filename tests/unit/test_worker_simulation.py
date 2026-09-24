@@ -10,6 +10,7 @@ import uuid
 from pathlib import Path
 
 from apps.worker.main import main as worker_main
+from backend.evaluation import SimulationEvaluator
 from backend.re3d_adapter.contracts import load_json_contract, validate_contract
 from backend.re3d_adapter.errors import (
     ContractValidationError,
@@ -259,6 +260,46 @@ class SimulationRunnerTests(unittest.TestCase):
             self.assertEqual(response["job_id"], request["job_id"])
             self.assertEqual(response["status"], "succeeded")
             self.assertEqual(response["execution_mode"], "simulated")
+
+
+class SimulationEvaluatorTests(unittest.TestCase):
+    def test_writes_contract_valid_report_without_fake_quality_score(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            layout, request = create_task(Path(temporary))
+            SimulationRunner(layout, worker_id="test-worker").run()
+
+            first = SimulationEvaluator(layout).run()
+            second = SimulationEvaluator(layout).run()
+
+            self.assertFalse(first.reused)
+            self.assertTrue(second.reused)
+            self.assertEqual(first.report["job_id"], request["job_id"])
+            self.assertEqual(first.report["overall"]["status"], "not_available")
+            self.assertIsNone(first.report["overall"]["score"])
+            load_json_contract(first.report_path, "evaluation")
+
+    def test_rejects_evaluation_reuse_after_result_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            layout, _ = create_task(Path(temporary))
+            SimulationRunner(layout, worker_id="test-worker").run()
+            evaluator = SimulationEvaluator(layout)
+            evaluator.run()
+
+            result = json.loads(layout.result_path.read_text(encoding="utf-8"))
+            result["duration_seconds"] += 1
+            atomic_write_json(layout.result_path, result)
+
+            with self.assertRaises(IntegrityError):
+                evaluator.run()
+
+    def test_rejects_tampered_artifact_before_reporting_integrity_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            layout, _ = create_task(Path(temporary))
+            SimulationRunner(layout, worker_id="test-worker").run()
+            layout.resolve("output/A-v4/mesh.glb").write_bytes(b"tampered")
+
+            with self.assertRaises(IntegrityError):
+                SimulationEvaluator(layout).run()
 
 
 if __name__ == "__main__":

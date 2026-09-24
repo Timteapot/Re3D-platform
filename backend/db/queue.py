@@ -113,10 +113,13 @@ class JobQueue:
         worker_id: str,
         resource_key: str = "gpu:0",
         lease_seconds: int = 60,
+        execution_mode: str | None = None,
     ) -> JobClaim | None:
         _validate_worker_id(worker_id)
         _validate_resource_key(resource_key)
         _validate_lease_seconds(lease_seconds)
+        if execution_mode not in {None, "simulated", "real"}:
+            raise ValueError("execution_mode must be simulated, real, or None")
         with self.session_factory.begin() as session:
             now = _database_now(session)
             lease = session.execute(
@@ -132,9 +135,15 @@ class JobQueue:
                 return None
 
             recovered_job = self._recover_expired_job(session, lease)
+            if (
+                recovered_job is not None
+                and execution_mode is not None
+                and recovered_job.execution_mode != execution_mode
+            ):
+                return None
             recovered = recovered_job is not None
             job = recovered_job or session.execute(
-                _queued_job_query(session).limit(1)
+                _queued_job_query(session, execution_mode=execution_mode).limit(1)
             ).scalar_one_or_none()
             if job is None:
                 _clear_lease(lease, now)
@@ -196,7 +205,9 @@ class JobQueue:
         target_status = JobStatus(target)
         if progress is not None and not 0 <= progress <= 100:
             raise ValueError("progress must be between 0 and 100")
-        if error_code is not None and not re.fullmatch(r"[A-Z][A-Z0-9_]{2,63}", error_code):
+        if error_code is not None and not re.fullmatch(
+            r"[A-Z][A-Z0-9_]{2,63}", error_code
+        ):
             raise ValueError("error_code must be a stable uppercase code")
         failure_statuses = {
             JobStatus.FAILED_INPUT,
@@ -227,14 +238,18 @@ class JobQueue:
                 _clear_lease(lease, now)
             return target_status
 
-    def request_cancel(self, job_id: uuid.UUID) -> JobStatus:
+    def request_cancel(
+        self,
+        job_id: uuid.UUID,
+        *,
+        user_id: uuid.UUID | None = None,
+    ) -> JobStatus:
         with self.session_factory.begin() as session:
             now = _database_now(session)
-            job = session.execute(
-                select(ReconstructionJob)
-                .where(ReconstructionJob.id == job_id)
-                .with_for_update()
-            ).scalar_one_or_none()
+            query = select(ReconstructionJob).where(ReconstructionJob.id == job_id)
+            if user_id is not None:
+                query = query.where(ReconstructionJob.user_id == user_id)
+            job = session.execute(query.with_for_update()).scalar_one_or_none()
             if job is None:
                 raise JobNotFoundError(f"job {job_id} does not exist")
             status = JobStatus(job.status)
@@ -255,22 +270,36 @@ class JobQueue:
             job.version += 1
             return JobStatus(job.status)
 
-    def get_job(self, job_id: uuid.UUID) -> dict[str, Any]:
+    def get_job(
+        self,
+        job_id: uuid.UUID,
+        *,
+        user_id: uuid.UUID | None = None,
+    ) -> dict[str, Any]:
         with self.session_factory() as session:
-            job = session.get(ReconstructionJob, job_id)
+            query = select(ReconstructionJob).where(ReconstructionJob.id == job_id)
+            if user_id is not None:
+                query = query.where(ReconstructionJob.user_id == user_id)
+            job = session.execute(query).scalar_one_or_none()
             if job is None:
                 raise JobNotFoundError(f"job {job_id} does not exist")
-            return {
-                "id": job.id,
-                "user_id": job.user_id,
-                "status": JobStatus(job.status),
-                "execution_mode": job.execution_mode,
-                "attempt": job.attempt,
-                "progress": job.progress,
-                "cancel_requested": job.cancel_requested,
-                "error_code": job.error_code,
-                "version": job.version,
-            }
+            return _job_snapshot(job)
+
+    def get_job_by_idempotency(
+        self,
+        *,
+        user_id: uuid.UUID,
+        idempotency_key: str,
+    ) -> dict[str, Any] | None:
+        _validate_sha256("idempotency_key", idempotency_key)
+        with self.session_factory() as session:
+            job = session.execute(
+                select(ReconstructionJob).where(
+                    ReconstructionJob.user_id == user_id,
+                    ReconstructionJob.idempotency_key == idempotency_key,
+                )
+            ).scalar_one_or_none()
+            return _job_snapshot(job) if job is not None else None
 
     @staticmethod
     def _recover_expired_job(
@@ -289,7 +318,11 @@ class JobQueue:
         return job
 
 
-def _queued_job_query(session: Session) -> Select[tuple[ReconstructionJob]]:
+def _queued_job_query(
+    session: Session,
+    *,
+    execution_mode: str | None,
+) -> Select[tuple[ReconstructionJob]]:
     query = (
         select(ReconstructionJob)
         .where(
@@ -302,9 +335,29 @@ def _queued_job_query(session: Session) -> Select[tuple[ReconstructionJob]]:
             ReconstructionJob.created_at,
         )
     )
+    if execution_mode is not None:
+        query = query.where(ReconstructionJob.execution_mode == execution_mode)
     return query.with_for_update(
         skip_locked=session.get_bind().dialect.name == "postgresql"
     )
+
+
+def _job_snapshot(job: ReconstructionJob) -> dict[str, Any]:
+    return {
+        "id": job.id,
+        "user_id": job.user_id,
+        "status": JobStatus(job.status),
+        "execution_mode": job.execution_mode,
+        "attempt": job.attempt,
+        "progress": job.progress,
+        "cancel_requested": job.cancel_requested,
+        "error_code": job.error_code,
+        "created_at": job.created_at,
+        "queued_at": job.queued_at,
+        "started_at": job.started_at,
+        "finished_at": job.finished_at,
+        "version": job.version,
+    }
 
 
 def _lock_owned_lease(

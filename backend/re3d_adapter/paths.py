@@ -69,6 +69,10 @@ class TaskLayout:
     def output_validation_path(self) -> Path:
         return self.resolve("manifests/output-validation.json")
 
+    @property
+    def evaluation_path(self) -> Path:
+        return self.resolve("reports/evaluation.json")
+
     def ensure_worker_directories(self) -> None:
         for relative in ("runtime/work", "runtime/logs", "output", "reports", "manifests"):
             self.resolve(relative).mkdir(parents=True, exist_ok=True)

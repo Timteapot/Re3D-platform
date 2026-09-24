@@ -1,6 +1,12 @@
 $ErrorActionPreference = "Stop"
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$venvPython = Join-Path $projectRoot ".venv\Scripts\python.exe"
+$python = if (Test-Path -LiteralPath $venvPython -PathType Leaf) {
+    $venvPython
+} else {
+    (Get-Command python -ErrorAction Stop).Source
+}
 $installedDocker = (
     Get-Command docker -ErrorAction SilentlyContinue | Select-Object -First 1
 ).Source
@@ -66,11 +72,14 @@ try {
 
     Push-Location $projectRoot
     try {
-        python -m alembic -c alembic.ini upgrade head
+        & $python -m alembic -c alembic.ini upgrade head
         if ($LASTEXITCODE -ne 0) {
             throw "Alembic failed against the disposable test database."
         }
-        python -m unittest tests.integration.test_postgres_job_queue -v
+        & $python -m unittest `
+            tests.integration.test_postgres_job_queue `
+            tests.integration.test_postgres_api_worker_flow `
+            -v
         if ($LASTEXITCODE -ne 0) {
             throw "PostgreSQL integration tests failed."
         }

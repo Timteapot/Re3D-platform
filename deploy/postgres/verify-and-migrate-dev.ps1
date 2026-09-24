@@ -2,6 +2,12 @@ $ErrorActionPreference = "Stop"
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $psql = "C:\Program Files\PostgreSQL\18\bin\psql.exe"
+$venvPython = Join-Path $projectRoot ".venv\Scripts\python.exe"
+$python = if (Test-Path -LiteralPath $venvPython -PathType Leaf) {
+    $venvPython
+} else {
+    (Get-Command python -ErrorAction Stop).Source
+}
 
 if (-not (Test-Path -LiteralPath $psql -PathType Leaf)) {
     throw "PostgreSQL 18 psql.exe was not found at: $psql"
@@ -64,7 +70,7 @@ DROP TABLE public.__re3d_permission_probe;
     Write-Host "Applying Alembic migrations as re3d_app..."
     Push-Location $projectRoot
     try {
-        python -m alembic -c alembic.ini upgrade head
+        & $python -m alembic -c alembic.ini upgrade head
         if ($LASTEXITCODE -ne 0) {
             throw "Alembic migration failed with exit code $LASTEXITCODE"
         }
