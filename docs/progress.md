@@ -38,12 +38,16 @@
 - [x] 实现短期 JWT access token、HttpOnly refresh Cookie、轮换和重放族撤销；
 - [x] 将开发任务接口改为 Bearer 认证，不再接受客户端声明的用户 UUID；
 - [x] 在临时 PostgreSQL 18 验证 `0002` 升级、降级和重新升级。
+- [x] 初始化 React、TypeScript、Vite、React Router 和 TanStack Query 前端；
+- [x] 实现主页、项目说明、注册、登录和受保护的重建工作台骨架；
+- [x] 实现 access token 内存保存、HttpOnly Cookie 会话恢复、退出和刷新请求合并；
+- [x] 完成前端类型检查、单元测试、生产构建、依赖安全审计和浏览器布局检查。
 
 ## 下一步
 
 - [ ] 在本机 `re3d_platform_dev` 应用 `0002_user_auth` 迁移（需本地输入 `re3d_app` 密码）；
-- [ ] 初始化 React、TypeScript 和 Vite 前端骨架；
-- [ ] 实现注册、登录、退出和启动时会话恢复页面；
+- [ ] 实现图片上传、输入校验和任务创建 API；
+- [ ] 将工作台接入任务列表、详情、状态和取消接口；
 - [ ] 增加邮箱验证、密码重置、登录限流和认证审计；
 - [ ] 使用小型图片集执行一次真实重建集成验证；
 - [ ] 将租约 Worker 从模拟执行扩展到受控真实 Re3D 子进程。

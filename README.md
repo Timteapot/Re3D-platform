@@ -16,7 +16,7 @@ Re3D Platform 是基于 Re3D 三维重建管线的非商业学习与工程实践
 
 基线的完整哈希和验证结果见 [`config/pipeline-baseline.json`](config/pipeline-baseline.json)，总体实施计划见 [`PROJECT_PLAN.md`](PROJECT_PLAN.md)，平台直接依赖声明见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
 
-当前已经可以注册、登录和轮换会话，并在开发环境中通过认证后的 FastAPI 创建模拟任务。任务由 PostgreSQL 租约队列交给独立 Worker，生成 A-v4、B-v2、C 三条模拟 GLB 和不虚构质量分数的模拟评估报告，再通过 API 查询终态。认证设计见 [`docs/authentication.md`](docs/authentication.md)，完整操作见 [`docs/development-api-worker.md`](docs/development-api-worker.md)。
+当前已经可以通过 React 页面注册、登录、退出和恢复会话，并在开发环境中通过认证后的 FastAPI 创建模拟任务。任务由 PostgreSQL 租约队列交给独立 Worker，生成 A-v4、B-v2、C 三条模拟 GLB 和不虚构质量分数的模拟评估报告，再通过 API 查询终态。前端说明见 [`docs/frontend.md`](docs/frontend.md)，认证设计见 [`docs/authentication.md`](docs/authentication.md)，后端完整操作见 [`docs/development-api-worker.md`](docs/development-api-worker.md)。
 
 ## 仓库边界
 
@@ -45,6 +45,17 @@ tests                    集成、端到端与测试夹具
 
 `.env`、用户数据、模型权重和运行产物不得提交到 Git。
 
+前端首次安装和启动：
+
+```powershell
+cd D:\3Dreconstruction\Re3D-platform\apps\web
+Copy-Item .env.example .env
+npm ci
+npm run dev
+```
+
+Vite 开发服务器只绑定 `127.0.0.1:5173`，并将 `/api` 代理到本机 FastAPI；它不能用作公开部署服务器。
+
 ## 已固定的首期规则
 
 - 用户必须登录且验证邮箱后才能提交任务。
@@ -56,6 +67,6 @@ tests                    集成、端到端与测试夹具
 
 ## 下一步
 
-运行契约、Windows Worker、三分支模拟器、Re3D 隔离运行目录、真实适配器 dry-run、PostgreSQL 租约队列、认证 API，以及登录用户 → API → Worker → 产物/模拟评估闭环已完成。下一步初始化 React/TypeScript 前端骨架并实现注册、登录和会话恢复页面；邮箱验证、限流和真实 Re3D 执行仍是公开部署前置条件。
+运行契约、Windows Worker、三分支模拟器、Re3D 隔离运行目录、真实适配器 dry-run、PostgreSQL 租约队列、认证 API，以及 React 注册/登录/会话恢复页面已完成。下一步实现图片上传和任务编排 API，并把工作台从边界占位页接入真实任务数据；邮箱验证、限流和真实 Re3D 执行仍是公开部署前置条件。
 
 数据库队列的设计、初始化和当前边界见 [`docs/database-queue.md`](docs/database-queue.md)。

@@ -20,6 +20,7 @@ dist/
 coverage/
 .vite/
 .playwright/
+*.tsbuildinfo
 
 # Editors and operating systems
 .idea/
