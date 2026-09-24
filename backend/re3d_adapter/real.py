@@ -197,14 +197,24 @@ def verify_re3d_installation(re3d_root: Path, pipeline: dict[str, Any]) -> None:
 
 
 def _git_value(re3d_root: Path, *arguments: str) -> str:
-    completed = subprocess.run(
-        ["git", "-C", str(re3d_root), *arguments],
-        check=False,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
+    try:
+        completed = subprocess.run(
+            [
+                "git",
+                "-c",
+                f"safe.directory={re3d_root}",
+                "-C",
+                str(re3d_root),
+                *arguments,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except OSError as exc:
+        raise IntegrityError("cannot start Git to verify the Re3D installation") from exc
     if completed.returncode != 0:
         raise IntegrityError("cannot verify installed Re3D Git identity")
     return completed.stdout.strip()

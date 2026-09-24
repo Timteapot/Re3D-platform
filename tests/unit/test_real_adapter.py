@@ -7,6 +7,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from backend.evaluation import RealEvaluator
 from backend.re3d_adapter.contracts import load_json_contract
@@ -20,6 +21,7 @@ from backend.re3d_adapter.process import run_managed_process
 from backend.re3d_adapter.real import (
     RealDryRunRunner,
     RealPipelineRunner,
+    _git_value,
     build_re3d_environment,
     map_re3d_step,
     parse_dry_run_steps,
@@ -115,6 +117,28 @@ def create_fake_real_re3d(root: Path, *, slow: bool = False) -> None:
 
 
 class RealAdapterTests(unittest.TestCase):
+    def test_git_identity_check_trusts_only_configured_re3d_root(self) -> None:
+        re3d_root = Path("D:/configured/Re3D")
+        with patch("backend.re3d_adapter.real.subprocess.run") as run:
+            run.return_value.returncode = 0
+            run.return_value.stdout = "abc123\n"
+
+            self.assertEqual(_git_value(re3d_root, "rev-parse", "HEAD"), "abc123")
+
+        command = run.call_args.args[0]
+        self.assertEqual(
+            command,
+            [
+                "git",
+                "-c",
+                f"safe.directory={re3d_root}",
+                "-C",
+                str(re3d_root),
+                "rev-parse",
+                "HEAD",
+            ],
+        )
+
     def test_maps_re3d_steps_to_platform_stages(self) -> None:
         self.assertEqual(map_re3d_step("00-prepare-input"), ("preparing", "shared"))
         self.assertEqual(map_re3d_step("11-c-densify"), ("c_geometry", "C"))

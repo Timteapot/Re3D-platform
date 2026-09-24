@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -115,6 +116,33 @@ class AuthServiceTests(unittest.TestCase):
         )
         with self.assertRaises(InvalidTokenError):
             self.auth.current_user(tampered)
+
+    def test_access_token_allows_only_small_database_clock_skew(self) -> None:
+        self.register_user()
+        now = datetime.now(timezone.utc)
+        with patch(
+            "backend.auth.service._database_now",
+            return_value=now + timedelta(seconds=4),
+        ):
+            within_tolerance = self.auth.login(
+                identifier="alice.example",
+                password="correct horse battery staple",
+            )
+        self.assertEqual(
+            self.auth.current_user(within_tolerance.access_token).username,
+            "alice.example",
+        )
+
+        with patch(
+            "backend.auth.service._database_now",
+            return_value=now + timedelta(seconds=10),
+        ):
+            outside_tolerance = self.auth.login(
+                identifier="alice.example",
+                password="correct horse battery staple",
+            )
+        with self.assertRaises(InvalidTokenError):
+            self.auth.current_user(outside_tolerance.access_token)
 
 
 class AuthSettingsTests(unittest.TestCase):

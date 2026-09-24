@@ -30,6 +30,7 @@ USERNAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_.-]{2,31}$")
 PASSWORD_HASH = PasswordHash.recommended()
 DUMMY_PASSWORD_HASH = PASSWORD_HASH.hash("not-a-real-re3d-user-password")
 JWT_ALGORITHM = "HS256"
+JWT_CLOCK_SKEW_SECONDS = 5
 
 
 @dataclass(frozen=True)
@@ -238,6 +239,7 @@ class AuthService:
                 algorithms=[JWT_ALGORITHM],
                 audience=self.settings.jwt_audience,
                 issuer=self.settings.jwt_issuer,
+                leeway=JWT_CLOCK_SKEW_SECONDS,
                 options={
                     "require": ["sub", "jti", "token_use", "iss", "aud", "iat", "exp"]
                 },
