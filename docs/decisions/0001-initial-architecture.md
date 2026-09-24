@@ -31,3 +31,5 @@
 2026-09-23 发布 `re3d-pipeline-v1.1.0`，只增加按任务指定 work/output/log 目录的集成接口，活动平台基线随之升级；本 ADR 记录的首个 `v1.0.0` 冻结标签保持不变。
 
 2026-09-24 首个数据库迁移建立 `reconstruction_jobs` 和 `worker_leases`。首期用唯一资源槽 `gpu:0` 强制单 GPU 并发为 1；领取事务先锁资源槽，再使用 `FOR UPDATE SKIP LOCKED` 选择任务。每次领取生成新的 fencing token，心跳、状态推进和终态提交均必须持有有效 token。租约过期优先恢复原 job/attempt，不自动创建新的重试 attempt。
+
+同日建立本机开发库 `re3d_platform_dev` 和受限角色 `re3d_app`。数据库集成测试只允许连接名称以 `_test` 结尾的 PostgreSQL 数据库，并由无持久卷的临时 Docker 容器提供，禁止复用开发库。

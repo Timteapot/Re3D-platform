@@ -24,6 +24,8 @@
 - [x] 建立 PostgreSQL 任务状态机、Alembic 首次迁移和固定 `gpu:0` 资源槽；
 - [x] 实现原子领取、优先级排序、租约续期、过期接管、取消标记和 fencing token；
 - [x] 实现 Worker 后台心跳控制器，并使用 PostgreSQL 18 验证并发领取和接管。
+- [x] 创建本机 `re3d_platform_dev` 和受限角色 `re3d_app`，以应用角色完成首次迁移；
+- [x] 强制 PostgreSQL 集成测试仅使用名称以 `_test` 结尾的临时 Docker 数据库。
 
 ## 下一步
 

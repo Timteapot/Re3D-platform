@@ -5,8 +5,10 @@ import threading
 import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 from sqlalchemy import create_engine, select
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
 
 from backend.db.errors import LeaseLostError
@@ -15,9 +17,52 @@ from backend.db.queue import JobClaim, JobQueue
 from backend.db.state_machine import JobStatus
 
 
-DATABASE_URL = os.environ.get("RE3D_TEST_DATABASE_URL")
+def validated_test_database_url() -> str | None:
+    configured = os.environ.get("RE3D_TEST_DATABASE_URL")
+    if not configured:
+        return None
+    parsed = make_url(configured)
+    if parsed.get_backend_name() != "postgresql":
+        raise RuntimeError("RE3D_TEST_DATABASE_URL must use PostgreSQL")
+    database = parsed.database or ""
+    if database == "re3d_platform_dev" or not database.endswith("_test"):
+        raise RuntimeError(
+            "RE3D_TEST_DATABASE_URL must target a disposable database ending in _test"
+        )
+    return configured
+
+
+DATABASE_URL = validated_test_database_url()
 PIPELINE_COMMIT = "2c5ba174dae9fe53dcec8f7d8466793fdebf0c58"
 CONFIG_SHA256 = "e0b7ff8b5613884dba4eb6e86ff66419c4b5df96f3d89fa4b7756184fb055c69"
+
+
+class TestDatabaseGuardTests(unittest.TestCase):
+    def test_rejects_development_database(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "RE3D_TEST_DATABASE_URL": (
+                    "postgresql+psycopg://re3d_app:secret@127.0.0.1:5432/"
+                    "re3d_platform_dev"
+                )
+            },
+            clear=True,
+        ):
+            with self.assertRaises(RuntimeError):
+                validated_test_database_url()
+
+    def test_accepts_disposable_postgresql_test_database(self) -> None:
+        expected = (
+            "postgresql+psycopg://re3d_test:secret@127.0.0.1:55432/"
+            "re3d_platform_test"
+        )
+        with patch.dict(
+            "os.environ",
+            {"RE3D_TEST_DATABASE_URL": expected},
+            clear=True,
+        ):
+            self.assertEqual(validated_test_database_url(), expected)
 
 
 @unittest.skipUnless(DATABASE_URL, "RE3D_TEST_DATABASE_URL is not configured")

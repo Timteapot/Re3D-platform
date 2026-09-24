@@ -1,0 +1,71 @@
+\set ON_ERROR_STOP on
+
+\echo 'Creating or restricting role re3d_app...'
+DO $bootstrap$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 're3d_app') THEN
+        CREATE ROLE re3d_app NOLOGIN;
+    END IF;
+END
+$bootstrap$;
+
+ALTER ROLE re3d_app
+    NOSUPERUSER
+    NOCREATEDB
+    NOCREATEROLE
+    NOINHERIT
+    NOREPLICATION
+    NOBYPASSRLS
+    CONNECTION LIMIT 10;
+
+DO $bootstrap$
+DECLARE
+    granted_role record;
+BEGIN
+    FOR granted_role IN
+        SELECT parent.rolname
+        FROM pg_auth_members AS membership
+        JOIN pg_roles AS member ON member.oid = membership.member
+        JOIN pg_roles AS parent ON parent.oid = membership.roleid
+        WHERE member.rolname = 're3d_app'
+    LOOP
+        EXECUTE format('REVOKE %I FROM re3d_app', granted_role.rolname);
+    END LOOP;
+END
+$bootstrap$;
+
+\echo 'Set a new password for re3d_app. Input is handled by psql and is not stored in this file.'
+\password re3d_app
+ALTER ROLE re3d_app LOGIN;
+
+\echo 'Creating database re3d_platform_dev when it does not already exist...'
+SELECT format(
+    'CREATE DATABASE %I WITH OWNER = postgres ENCODING = %L TEMPLATE = template0',
+    're3d_platform_dev',
+    'UTF8'
+)
+WHERE NOT EXISTS (
+    SELECT 1 FROM pg_database WHERE datname = 're3d_platform_dev'
+) \gexec
+
+REVOKE ALL ON DATABASE re3d_platform_dev FROM PUBLIC;
+GRANT CONNECT, TEMPORARY ON DATABASE re3d_platform_dev TO re3d_app;
+
+\connect re3d_platform_dev
+
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+GRANT USAGE, CREATE ON SCHEMA public TO re3d_app;
+ALTER ROLE re3d_app IN DATABASE re3d_platform_dev SET search_path = public;
+
+\echo 'Development database and restricted application role are ready.'
+SELECT
+    current_database() AS database_name,
+    r.rolname,
+    r.rolsuper,
+    r.rolcreatedb,
+    r.rolcreaterole,
+    r.rolreplication,
+    r.rolbypassrls,
+    r.rolconnlimit
+FROM pg_roles AS r
+WHERE r.rolname = 're3d_app';

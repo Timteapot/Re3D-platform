@@ -80,14 +80,22 @@ draft → uploading → validating_input → queued → preparing → sfm
 python -m pip install -r requirements-dev.txt
 ```
 
-设置开发数据库连接并执行迁移：
+在 Windows 本机创建开发数据库和受限用户：
 
 ```powershell
-$env:DATABASE_URL = 'postgresql+psycopg://<user>:<password>@127.0.0.1:5432/re3d_platform'
-python -m alembic -c alembic.ini upgrade head
+& deploy/postgres/bootstrap-dev.ps1
+& deploy/postgres/verify-and-migrate-dev.ps1
 ```
 
-数据库密码只放在未提交的 `.env` 或系统秘密存储中，不写入仓库、日志或任务 manifest。
+第一条命令以管理员身份创建 `re3d_platform_dev` 和受限角色 `re3d_app`；第二条命令以应用角色验证权限并执行迁移。数据库密码只放在未提交的 `.env` 或系统秘密存储中，不写入仓库、日志或任务 manifest。
+
+PostgreSQL 集成测试必须使用临时 Docker 数据库：
+
+```powershell
+& deploy/postgres/run-integration-tests.ps1
+```
+
+测试数据库名称必须以 `_test` 结尾，测试代码会主动拒绝 `re3d_platform_dev`。临时容器不挂载持久卷，脚本结束时自动删除。
 
 ## 7. 已验证与尚未完成
 
@@ -96,6 +104,8 @@ python -m alembic -c alembic.ini upgrade head
 - SQLite 单元测试覆盖完整状态机和顺序租约语义；
 - PostgreSQL 18 真实迁移、并发领取、过期接管和旧 token 隔离；
 - Alembic 可从空数据库升级到 `0001_job_queue`。
+- 本机开发库使用 `re3d_app` 完成权限探针和首次迁移；
+- 测试库名称保护会拒绝开发库，临时 Docker 测试脚本会自动清理容器。
 
 尚未完成：
 
