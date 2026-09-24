@@ -29,11 +29,73 @@ export interface UploadCancellation extends UploadSession {
 
 export interface Job {
   job_id: string;
+  user_id: string;
   status: string;
   execution_mode: "simulated" | "real";
+  attempt: number;
   progress: number;
+  cancel_requested: boolean;
+  error_code: string | null;
   created_at: string;
   queued_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  version: number;
+  reused: boolean;
+}
+
+export interface JobInputSummary {
+  image_count: number;
+  total_bytes: number;
+  branches: string[];
+}
+
+export interface ArtifactSummary {
+  kind: string;
+  size_bytes: number;
+  content_type: string;
+}
+
+export interface ResultBranchSummary {
+  name: string;
+  status: string;
+  duration_seconds: number;
+  artifacts: ArtifactSummary[];
+  metrics: Record<string, number | boolean>;
+}
+
+export interface ResultSummary {
+  status: string;
+  execution_mode: "simulated" | "real";
+  duration_seconds: number;
+  branches: ResultBranchSummary[];
+}
+
+export interface EvaluationBranchSummary {
+  name: string;
+  status: string;
+  score: number | null;
+  summary: string;
+  artifact_status: string | null;
+}
+
+export interface EvaluationSummary {
+  scope: string;
+  rules_version: string;
+  overall_status: string;
+  score: number | null;
+  summary: string;
+  branches: EvaluationBranchSummary[];
+  limitations: string[];
+}
+
+export interface JobDetail {
+  job: Job;
+  detail_state: "pending" | "available" | "not_available" | "missing" | "invalid";
+  warning_code: string | null;
+  input: JobInputSummary | null;
+  result: ResultSummary | null;
+  evaluation: EvaluationSummary | null;
 }
 
 export type AuthorizedRequest = <T>(
@@ -99,4 +161,20 @@ export function submitUpload(
 
 export function listJobs(request: AuthorizedRequest): Promise<Job[]> {
   return request<Job[]>("/api/v1/development/jobs?limit=20");
+}
+
+export function getJobDetail(
+  request: AuthorizedRequest,
+  jobId: string,
+): Promise<JobDetail> {
+  return request<JobDetail>(`/api/v1/development/jobs/${jobId}/detail`);
+}
+
+export function cancelJob(
+  request: AuthorizedRequest,
+  jobId: string,
+): Promise<Job> {
+  return request<Job>(`/api/v1/development/jobs/${jobId}/cancel`, {
+    method: "POST",
+  });
 }

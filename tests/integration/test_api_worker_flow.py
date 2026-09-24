@@ -133,6 +133,33 @@ class ApiWorkerFlowTests(unittest.TestCase):
         completed = response.json()
         self.assertEqual(completed["status"], "succeeded")
         self.assertEqual(completed["progress"], 100)
+
+        detail_response = self.client.get(
+            f"/api/v1/development/jobs/{job_id}/detail",
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(detail_response.status_code, 200)
+        detail = detail_response.json()
+        self.assertEqual(detail["job"]["status"], "succeeded")
+        self.assertEqual(detail["detail_state"], "available")
+        self.assertEqual(detail["input"]["image_count"], 3)
+        self.assertEqual(
+            [branch["name"] for branch in detail["result"]["branches"]],
+            ["A-v4", "B-v2", "C"],
+        )
+        self.assertEqual(detail["evaluation"]["overall_status"], "not_available")
+        self.assertIsNone(detail["evaluation"]["score"])
+        self.assertNotIn("path", detail["result"]["branches"][0]["artifacts"][0])
+        self.assertNotIn("sha256", detail["result"]["branches"][0]["artifacts"][0])
+
+        stream = self.client.get(
+            f"/api/v1/development/jobs/{job_id}/events",
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(stream.status_code, 200)
+        self.assertEqual(stream.headers["content-type"], "text/event-stream; charset=utf-8")
+        self.assertIn("event: job", stream.text)
+        self.assertIn(f'"job_id": "{job_id}"', stream.text)
         for branch in ("A-v4", "B-v2", "C"):
             artifact = self.data_root / "jobs" / job_id / "output" / branch / "mesh.glb"
             self.assertEqual(artifact.read_bytes()[:4], b"glTF")
@@ -174,6 +201,16 @@ class ApiWorkerFlowTests(unittest.TestCase):
             headers=self.auth_headers(other_access_token),
         )
         self.assertEqual(hidden.status_code, 404)
+        hidden_detail = self.client.get(
+            f"/api/v1/development/jobs/{job_id}/detail",
+            headers=self.auth_headers(other_access_token),
+        )
+        self.assertEqual(hidden_detail.status_code, 404)
+        hidden_stream = self.client.get(
+            f"/api/v1/development/jobs/{job_id}/events",
+            headers=self.auth_headers(other_access_token),
+        )
+        self.assertEqual(hidden_stream.status_code, 404)
         cancelled = self.client.post(
             f"/api/v1/development/jobs/{job_id}/cancel",
             headers=self.auth_headers(self.access_token),

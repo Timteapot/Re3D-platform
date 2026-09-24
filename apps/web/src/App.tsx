@@ -5,6 +5,7 @@ import { AppShell } from "./components/AppShell";
 import { AboutPage } from "./pages/AboutPage";
 import { AuthPage } from "./pages/AuthPage";
 import { HomePage } from "./pages/HomePage";
+import { JobDetailPage } from "./pages/JobDetailPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { WorkspacePage } from "./pages/WorkspacePage";
 
@@ -16,6 +17,7 @@ export function App() {
         <Route path="about" element={<AboutPage />} />
         <Route element={<ProtectedRoute />}>
           <Route path="workspace" element={<WorkspacePage />} />
+          <Route path="workspace/jobs/:jobId" element={<JobDetailPage />} />
         </Route>
         <Route path="*" element={<NotFoundPage />} />
       </Route>

@@ -174,6 +174,15 @@ class PostgreSQLApiWorkerFlowTests(unittest.TestCase):
         completed = completed_response.json()
         self.assertEqual(completed["status"], "succeeded")
         self.assertEqual(completed["progress"], 100)
+        detail_response = self.client.get(
+            f"/api/v1/development/jobs/{job_id}/detail",
+            headers={"Authorization": f"Bearer {self.access_token}"},
+        )
+        self.assertEqual(detail_response.status_code, 200)
+        detail = detail_response.json()
+        self.assertEqual(detail["detail_state"], "available")
+        self.assertEqual(detail["evaluation"]["overall_status"], "not_available")
+        self.assertEqual(len(detail["result"]["branches"]), 3)
         for branch in ("A-v4", "B-v2", "C"):
             artifact = (
                 self.data_root

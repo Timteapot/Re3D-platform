@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 
 import { ApiError } from "../api/http";
 import { useAuth } from "../auth/AuthContext";
@@ -394,6 +395,7 @@ export function WorkspacePage() {
               </span>
               <strong>{displayedLatestJob.job_id}</strong>
               <p>任务已进入数据库队列。启动独立模拟 Worker 后，页面会定期读取最新状态。</p>
+              <Link className="text-link" to={`/workspace/jobs/${displayedLatestJob.job_id}`}>查看任务详情</Link>
             </div>
           ) : (
             <ol className="stage-list">
@@ -435,6 +437,7 @@ export function WorkspacePage() {
                     <span>{job.execution_mode === "simulated" ? "模拟" : "真实"}</span>
                     <strong>{statusLabels[job.status] ?? job.status}</strong>
                     <small>{job.progress}%</small>
+                    <Link to={`/workspace/jobs/${job.job_id}`}>查看详情</Link>
                   </div>
                 </article>
               ))}

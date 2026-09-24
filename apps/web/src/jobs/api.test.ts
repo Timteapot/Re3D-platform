@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   cancelUpload,
+  cancelJob,
   createUpload,
   deleteUploadedImage,
+  getJobDetail,
   submitUpload,
   uploadImage,
   type UploadSession,
@@ -73,6 +75,23 @@ describe("job upload API", () => {
     await cancelUpload(request, upload.upload_id);
     expect(request).toHaveBeenCalledWith(
       `/api/v1/uploads/${upload.upload_id}/cancel`,
+      { method: "POST" },
+    );
+  });
+
+  it("loads the summarized job detail and requests job cancellation", async () => {
+    const request = vi.fn().mockResolvedValue({ job: { status: "queued" } });
+    const jobId = "a43a63ce-b317-4ef4-bfea-8bff2a5f8341";
+
+    await getJobDetail(request, jobId);
+    expect(request).toHaveBeenCalledWith(
+      `/api/v1/development/jobs/${jobId}/detail`,
+    );
+
+    request.mockClear();
+    await cancelJob(request, jobId);
+    expect(request).toHaveBeenCalledWith(
+      `/api/v1/development/jobs/${jobId}/cancel`,
       { method: "POST" },
     );
   });

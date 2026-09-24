@@ -8,11 +8,24 @@ export class ApiError extends Error {
   }
 }
 
-export async function requestJson<T>(
+export async function readApiError(response: Response): Promise<ApiError> {
+  let message = `请求失败（HTTP ${response.status}）`;
+  try {
+    const payload = (await response.json()) as { detail?: unknown };
+    if (typeof payload.detail === "string" && payload.detail.trim()) {
+      message = payload.detail;
+    }
+  } catch {
+    // Keep the status-based fallback when the response is not JSON.
+  }
+  return new ApiError(response.status, message);
+}
+
+export function requestResponse(
   path: string,
   init: RequestInit = {},
   accessToken?: string,
-): Promise<T> {
+): Promise<Response> {
   const headers = new Headers(init.headers);
   if (typeof init.body === "string") {
     headers.set("Content-Type", "application/json");
@@ -21,23 +34,22 @@ export async function requestJson<T>(
     headers.set("Authorization", `Bearer ${accessToken}`);
   }
 
-  const response = await fetch(path, {
+  return fetch(path, {
     ...init,
     credentials: "include",
     headers,
   });
+}
+
+export async function requestJson<T>(
+  path: string,
+  init: RequestInit = {},
+  accessToken?: string,
+): Promise<T> {
+  const response = await requestResponse(path, init, accessToken);
 
   if (!response.ok) {
-    let message = `请求失败（HTTP ${response.status}）`;
-    try {
-      const payload = (await response.json()) as { detail?: unknown };
-      if (typeof payload.detail === "string" && payload.detail.trim()) {
-        message = payload.detail;
-      }
-    } catch {
-      // Keep the status-based fallback when the response is not JSON.
-    }
-    throw new ApiError(response.status, message);
+    throw await readApiError(response);
   }
 
   if (response.status === 204) {

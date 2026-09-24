@@ -16,7 +16,7 @@ Re3D Platform 是基于 Re3D 三维重建管线的非商业学习与工程实践
 
 基线的完整哈希和验证结果见 [`config/pipeline-baseline.json`](config/pipeline-baseline.json)，总体实施计划见 [`PROJECT_PLAN.md`](PROJECT_PLAN.md)，平台直接依赖声明见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
 
-当前已经可以通过 React 页面注册、登录、恢复会话、上传真实 JPEG/PNG 输入并创建开发任务。任务由 PostgreSQL 租约队列交给独立 Worker，生成 A-v4、B-v2、C 三条模拟 GLB 和不虚构质量分数的模拟评估报告，再通过工作台查询状态。上传边界见 [`docs/image-uploads.md`](docs/image-uploads.md)，前端说明见 [`docs/frontend.md`](docs/frontend.md)，认证设计见 [`docs/authentication.md`](docs/authentication.md)。
+当前已经可以通过 React 页面注册、登录、恢复会话、上传真实 JPEG/PNG 输入并创建开发任务。任务由 PostgreSQL 租约队列交给独立 Worker，生成 A-v4、B-v2、C 三条模拟 GLB 和不虚构质量分数的模拟评估报告；任务详情页通过带身份认证的 SSE 接收进度，并提供轮询降级、任务取消、三分支结果摘要和评估摘要。上传边界见 [`docs/image-uploads.md`](docs/image-uploads.md)，前端说明见 [`docs/frontend.md`](docs/frontend.md)，认证设计见 [`docs/authentication.md`](docs/authentication.md)。
 
 ## 仓库边界
 
@@ -67,6 +67,6 @@ Vite 开发服务器只绑定 `127.0.0.1:5173`，并将 `/api` 代理到本机 F
 
 ## 下一步
 
-运行契约、Windows Worker、三分支模拟器、PostgreSQL 租约队列、认证、真实图片上传、输入哈希校验、上传取消/超时清理和 React 工作台任务创建已经完成。下一步实现任务详情、任务取消与 SSE 进度，再将租约 Worker 接入受控真实 Re3D 子进程；邮箱验证、配额和限流仍是公开部署前置条件。
+运行契约、Windows Worker、三分支模拟器、PostgreSQL 租约队列、认证、真实图片上传、输入哈希校验、上传取消/超时清理、任务详情/取消和 SSE 进度已经完成。下一步将租约 Worker 接入受控真实 Re3D 子进程，并补充产物授权下载；邮箱验证、配额、限流和数据保留策略仍是公开部署前置条件。
 
 数据库队列的设计、初始化和当前边界见 [`docs/database-queue.md`](docs/database-queue.md)。

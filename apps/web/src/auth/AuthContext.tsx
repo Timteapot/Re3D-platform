@@ -15,7 +15,7 @@ import {
   refreshSession,
   register as registerRequest,
 } from "./api";
-import { requestJson } from "../api/http";
+import { requestJson, requestResponse } from "../api/http";
 import type { LoginInput, RegisterInput, User } from "./types";
 
 type AuthStatus = "loading" | "anonymous" | "authenticated";
@@ -30,6 +30,7 @@ interface AuthContextValue {
   logout: () => Promise<void>;
   retryRestore: () => Promise<void>;
   request: <T>(path: string, init?: RequestInit) => Promise<T>;
+  fetchAuthorized: (path: string, init?: RequestInit) => Promise<Response>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -117,6 +118,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [accessToken, clearSession],
   );
 
+  const fetchAuthorized = useCallback(
+    async (path: string, init: RequestInit = {}): Promise<Response> => {
+      if (accessToken === null) {
+        throw new ApiError(401, "当前会话没有可用的访问令牌");
+      }
+      let response = await requestResponse(path, init, accessToken);
+      if (response.status !== 401) return response;
+      try {
+        const session = await refreshSession();
+        setUser(session.user);
+        setAccessToken(session.access_token);
+        setStatus("authenticated");
+        response = await requestResponse(path, init, session.access_token);
+        return response;
+      } catch (refreshError) {
+        clearSession();
+        throw refreshError;
+      }
+    },
+    [accessToken, clearSession],
+  );
+
   const value = useMemo<AuthContextValue>(
     () => ({
       status,
@@ -128,8 +151,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       retryRestore,
       request,
+      fetchAuthorized,
     }),
-    [accessToken, login, logout, register, request, restoreError, retryRestore, status, user],
+    [accessToken, fetchAuthorized, login, logout, register, request, restoreError, retryRestore, status, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

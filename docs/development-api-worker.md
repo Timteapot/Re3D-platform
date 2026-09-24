@@ -127,6 +127,18 @@ Invoke-RestMethod `
   -Headers $headers
 ```
 
+查询经过契约校验和字段裁剪的任务详情：
+
+```powershell
+Invoke-RestMethod `
+  -Uri "http://127.0.0.1:8000/api/v1/development/jobs/$($job.job_id)/detail" `
+  -Headers $headers
+```
+
+详情响应不会返回服务器路径、产物 SHA 或任意诊断文件内容。API 先按 Bearer token 校验任务所有权，再从固定的 `RE3D_DATA_ROOT/jobs/<job_uuid>` 读取请求、结果与评估契约；身份、执行模式或评估来源哈希不一致时，只返回稳定的警告码，不继续展示文件内容。
+
+浏览器任务详情页使用 `GET /api/v1/development/jobs/{job_id}/events` 接收 SSE。由于访问令牌不放在 URL 中，前端使用带 `Authorization` 请求头的 Fetch 流读取事件，而不是原生 `EventSource`；连接失败时保留 5 秒轮询作为降级路径。终态任务发送最后一个状态事件后主动关闭流。
+
 任务目录包含：
 
 ```text
@@ -159,6 +171,8 @@ Re3D-data/jobs/<job_uuid>/
 | GET | `/api/v1/development/jobs` | 列出当前用户最近的任务 |
 | POST | `/api/v1/development/simulated-jobs` | 以当前登录用户创建幂等模拟任务 |
 | GET | `/api/v1/development/jobs/{job_id}` | 查询当前用户的任务 |
+| GET | `/api/v1/development/jobs/{job_id}/detail` | 返回契约校验后的输入、三分支结果和评估摘要 |
+| GET | `/api/v1/development/jobs/{job_id}/events` | 返回当前用户任务的 SSE 状态流 |
 | POST | `/api/v1/development/jobs/{job_id}/cancel` | 取消当前用户的任务 |
 
 查询或取消其他用户的任务会统一返回 404，避免泄露任务是否存在。用户 ID 只来自服务端验证后的 access token。
@@ -184,8 +198,7 @@ Re3D-data/jobs/<job_uuid>/
 ## 9. 仍未完成
 
 - 邮箱验证、密码重置和登录限流；
-- API 返回产物和评估报告；
-- SSE 实时进度；
+- 产物授权下载和在线三维查看；
 - 真实 Re3D 子进程、取消、超时和租约丢失终止；
 - 真实 SfM、深度、网格和纹理评估；
 - 失败任务目录自动清理；
