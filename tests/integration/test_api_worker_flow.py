@@ -9,6 +9,7 @@ import uuid
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 
@@ -18,6 +19,7 @@ from backend.auth import AuthService, AuthSettings
 from backend.db.models import Base, ReconstructionJob
 from backend.db.queue import JobQueue
 from backend.jobs.development import DevelopmentJobService
+from backend.uploads import UploadService
 
 
 TEST_SECRET = "api-flow-test-secret-" + "x" * 64
@@ -46,6 +48,7 @@ class ApiWorkerFlowTests(unittest.TestCase):
                 self.sessions,
                 AuthSettings(jwt_secret=TEST_SECRET, cookie_secure=False),
             ),
+            UploadService(self.sessions, self.queue, data_root=self.data_root),
         )
         self.client = TestClient(create_app(services=self.services, app_env="test"))
         self.user_id, self.access_token = self.register_and_login(
@@ -211,6 +214,12 @@ class ApiWorkerFlowTests(unittest.TestCase):
                 headers=self.auth_headers(self.access_token),
             )
             self.assertEqual(response.status_code, 404)
+            upload_response = production.post(
+                "/api/v1/uploads",
+                json={"idempotency_key": "must-not-upload"},
+                headers=self.auth_headers(self.access_token),
+            )
+            self.assertEqual(upload_response.status_code, 404)
             self.assertEqual(production.get("/api/v1/auth/me").status_code, 401)
         finally:
             production.close()
@@ -252,6 +261,159 @@ class ApiWorkerFlowTests(unittest.TestCase):
         self.assertEqual(logged_out.status_code, 204)
         self.assertIsNone(self.client.cookies.get(cookie_name))
         self.assertEqual(self.client.post("/api/v1/auth/refresh").status_code, 401)
+
+    def test_authenticated_image_upload_submission_and_user_scope(self) -> None:
+        created = self.client.post(
+            "/api/v1/uploads",
+            json={"idempotency_key": "browser-upload-flow-001"},
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(created.status_code, 201)
+        upload_id = created.json()["upload_id"]
+        first_payload = self.png_bytes((190, 40, 30))
+
+        for index, payload in enumerate(
+            (
+                first_payload,
+                self.png_bytes((30, 160, 90)),
+                self.png_bytes((50, 90, 210)),
+            )
+        ):
+            uploaded = self.client.post(
+                f"/api/v1/uploads/{upload_id}/images",
+                files={
+                    "file": (
+                        f"../../camera-{index}.png",
+                        payload,
+                        "image/png",
+                    )
+                },
+                headers=self.auth_headers(self.access_token),
+            )
+            self.assertEqual(uploaded.status_code, 201)
+            self.assertEqual(uploaded.json()["image_count"], index + 1)
+
+        duplicate = self.client.post(
+            f"/api/v1/uploads/{upload_id}/images",
+            files={"file": ("duplicate.png", first_payload, "image/png")},
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(duplicate.status_code, 409)
+
+        _, other_access_token = self.register_and_login(
+            username="upload-outsider",
+            email="upload-outsider@example.com",
+        )
+        hidden = self.client.get(
+            f"/api/v1/uploads/{upload_id}",
+            headers=self.auth_headers(other_access_token),
+        )
+        self.assertEqual(hidden.status_code, 404)
+
+        submitted = self.client.post(
+            f"/api/v1/uploads/{upload_id}/submit",
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(submitted.status_code, 202)
+        self.assertEqual(submitted.json()["job_id"], upload_id)
+        self.assertEqual(submitted.json()["status"], "queued")
+        self.assertEqual(submitted.json()["execution_mode"], "simulated")
+
+        resubmitted = self.client.post(
+            f"/api/v1/uploads/{upload_id}/submit",
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(resubmitted.status_code, 202)
+        self.assertEqual(resubmitted.json()["job_id"], upload_id)
+        late_image = self.client.post(
+            f"/api/v1/uploads/{upload_id}/images",
+            files={
+                "file": (
+                    "late.png",
+                    self.png_bytes((10, 10, 10)),
+                    "image/png",
+                )
+            },
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(late_image.status_code, 409)
+
+        listed = self.client.get(
+            "/api/v1/development/jobs",
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(listed.status_code, 200)
+        self.assertIn(upload_id, [job["job_id"] for job in listed.json()])
+
+        task_root = self.data_root / "jobs" / upload_id
+        manifest = json.loads(
+            (task_root / "input" / "input-manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(manifest["source"], "user_upload")
+        self.assertFalse(manifest["simulation"])
+        self.assertEqual(len(manifest["images"]), 3)
+        self.assertTrue(
+            all("/" not in image["original_name"] for image in manifest["images"])
+        )
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = worker_main(
+                [
+                    "run-queued-once",
+                    "--database-url",
+                    self.database_url,
+                    "--data-root",
+                    str(self.data_root),
+                    "--worker-id",
+                    "uploaded-input-worker",
+                    "--lease-seconds",
+                    "5",
+                    "--heartbeat-seconds",
+                    "1",
+                ]
+            )
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(json.loads(stdout.getvalue())["status"], "succeeded")
+
+    def test_invalid_or_incomplete_upload_is_not_queued(self) -> None:
+        created = self.client.post(
+            "/api/v1/uploads",
+            json={"idempotency_key": "invalid-upload-flow-001"},
+            headers=self.auth_headers(self.access_token),
+        )
+        upload_id = created.json()["upload_id"]
+        invalid = self.client.post(
+            f"/api/v1/uploads/{upload_id}/images",
+            files={"file": ("not-image.jpg", b"not an image", "image/jpeg")},
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(invalid.status_code, 422)
+        current = self.client.get(
+            f"/api/v1/uploads/{upload_id}",
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(current.json()["image_count"], 0)
+        submitted = self.client.post(
+            f"/api/v1/uploads/{upload_id}/submit",
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(submitted.status_code, 422)
+        self.assertEqual(
+            self.client.get(
+                "/api/v1/development/jobs",
+                headers=self.auth_headers(self.access_token),
+            ).json(),
+            [],
+        )
+
+    @staticmethod
+    def png_bytes(color: tuple[int, int, int]) -> bytes:
+        output = io.BytesIO()
+        Image.new("RGB", (64, 48), color).save(output, format="PNG")
+        return output.getvalue()
 
 
 if __name__ == "__main__":

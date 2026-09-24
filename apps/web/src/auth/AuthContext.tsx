@@ -15,6 +15,7 @@ import {
   refreshSession,
   register as registerRequest,
 } from "./api";
+import { requestJson } from "../api/http";
 import type { LoginInput, RegisterInput, User } from "./types";
 
 type AuthStatus = "loading" | "anonymous" | "authenticated";
@@ -28,6 +29,7 @@ interface AuthContextValue {
   register: (input: RegisterInput) => Promise<User>;
   logout: () => Promise<void>;
   retryRestore: () => Promise<void>;
+  request: <T>(path: string, init?: RequestInit) => Promise<T>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -89,6 +91,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [clearSession]);
 
+  const request = useCallback(
+    async <T,>(path: string, init: RequestInit = {}): Promise<T> => {
+      if (accessToken === null) {
+        throw new ApiError(401, "当前会话没有可用的访问令牌");
+      }
+      try {
+        return await requestJson<T>(path, init, accessToken);
+      } catch (error) {
+        if (!(error instanceof ApiError && error.status === 401)) {
+          throw error;
+        }
+        try {
+          const session = await refreshSession();
+          setUser(session.user);
+          setAccessToken(session.access_token);
+          setStatus("authenticated");
+          return await requestJson<T>(path, init, session.access_token);
+        } catch (refreshError) {
+          clearSession();
+          throw refreshError;
+        }
+      }
+    },
+    [accessToken, clearSession],
+  );
+
   const value = useMemo<AuthContextValue>(
     () => ({
       status,
@@ -99,8 +127,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       register,
       logout,
       retryRestore,
+      request,
     }),
-    [accessToken, login, logout, register, restoreError, retryRestore, status, user],
+    [accessToken, login, logout, register, request, restoreError, retryRestore, status, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

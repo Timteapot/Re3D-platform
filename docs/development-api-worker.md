@@ -23,7 +23,7 @@ API 进程不执行重建，只负责校验请求、创建任务文件和写队�
 
 开发任务接口必须使用 Bearer access token，服务端从令牌和数据库取得内部用户 ID，不再接受客户端提交的 `user_id`。这些任务路由仍只能绑定 `127.0.0.1` 用于本机联调，不能暴露到公开互联网。
 
-模拟输入是平台生成的开发字节，不是真实 JPEG；模拟 GLB 是格式合法的空场景，不包含网格、材质或纹理。评估报告因此将整体状态写为 `not_available`、分数写为 `null`，只把文件完整性标为通过，避免伪造质量结论。
+旧的 `simulated-jobs` 接口仍生成平台开发字节；新的上传接口会保存并校验真实 JPEG/PNG。两者进入的仍是 simulated Worker：模拟 GLB 是格式合法的空场景，不包含网格、材质或纹理。评估报告因此将整体状态写为 `not_available`、分数写为 `null`，只把文件完整性标为通过，避免伪造质量结论。
 
 ## 3. 初始化项目虚拟环境
 
@@ -150,6 +150,11 @@ Re3D-data/jobs/<job_uuid>/
 | 方法 | 路径 | 当前作用 |
 |---|---|---|
 | GET | `/health/live` | 进程存活和环境标识 |
+| POST | `/api/v1/uploads` | 创建或恢复当前用户的幂等上传会话 |
+| GET | `/api/v1/uploads/{upload_id}` | 查询当前用户的上传会话和图片元数据 |
+| POST | `/api/v1/uploads/{upload_id}/images` | 上传并校验一张 JPEG/PNG |
+| POST | `/api/v1/uploads/{upload_id}/submit` | 复核输入并创建 simulated 队列任务 |
+| GET | `/api/v1/development/jobs` | 列出当前用户最近的任务 |
 | POST | `/api/v1/development/simulated-jobs` | 以当前登录用户创建幂等模拟任务 |
 | GET | `/api/v1/development/jobs/{job_id}` | 查询当前用户的任务 |
 | POST | `/api/v1/development/jobs/{job_id}/cancel` | 取消当前用户的任务 |
@@ -172,15 +177,16 @@ Re3D-data/jobs/<job_uuid>/
 
 后一个脚本只使用随机临时 Docker PostgreSQL 18。测试数据库必须以 `_test` 结尾；代码会拒绝 `re3d_platform_dev`。脚本不挂载数据卷，结束后删除容器，因此不会清理或回滚开发数据。
 
+真实图片工作流的请求示例、安全限制和目录结构见 [`image-uploads.md`](image-uploads.md)。
+
 ## 9. 仍未完成
 
 - 邮箱验证、密码重置和登录限流；
-- 真实图片上传、解码和输入质量校验；
 - API 返回产物和评估报告；
 - SSE 实时进度；
 - 真实 Re3D 子进程、取消、超时和租约丢失终止；
 - 真实 SfM、深度、网格和纹理评估；
 - 失败任务目录自动清理；
-- 前端页面和三维查看器。
+- 三维查看器。
 
 因此该闭环证明的是“平台编排边界可工作”，不代表系统已具备公开部署条件。

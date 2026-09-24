@@ -15,8 +15,10 @@ Re3D Platform 是仅用于学习、研究和实践真实项目流程的非商业
 | Pydantic | 2.13.5 | API 数据校验 | MIT | [pydantic/pydantic](https://github.com/pydantic/pydantic) |
 | Uvicorn | 0.53.0 | ASGI 服务 | BSD-3-Clause | [encode/uvicorn](https://github.com/encode/uvicorn) |
 | email-validator | 2.3.0 | 邮箱语法与规范化 | Unlicense | [JoshData/python-email-validator](https://github.com/JoshData/python-email-validator) |
+| Pillow | 12.3.0 | 上传图片格式识别、解码和尺寸校验 | MIT-CMU | [python-pillow/Pillow](https://github.com/python-pillow/Pillow) |
 | pwdlib | 0.3.1 | Argon2id 密码哈希封装 | MIT | [frankie567/pwdlib](https://github.com/frankie567/pwdlib) |
 | PyJWT | 2.15.0 | JWT 签发与校验 | MIT | [jpadilla/pyjwt](https://github.com/jpadilla/pyjwt) |
+| python-multipart | 0.0.32 | multipart 图片上传解析 | Apache-2.0 | [Kludex/python-multipart](https://github.com/Kludex/python-multipart) |
 | Alembic | 1.13.3 | 数据库迁移 | MIT | [sqlalchemy/alembic](https://github.com/sqlalchemy/alembic) |
 | httpx2 | 2.13.1 | 开发测试 HTTP 客户端 | BSD-3-Clause | [PyPI](https://pypi.org/project/httpx2/) |
 

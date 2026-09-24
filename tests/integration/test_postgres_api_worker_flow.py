@@ -9,6 +9,7 @@ import uuid
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -18,6 +19,7 @@ from backend.auth import AuthService, AuthSettings
 from backend.db.models import ReconstructionJob, RefreshSession, User, WorkerLease
 from backend.db.queue import JobQueue
 from backend.jobs.development import DevelopmentJobService
+from backend.uploads import UploadService
 from tests.integration.postgres_support import validated_test_database_url
 
 
@@ -44,6 +46,7 @@ class PostgreSQLApiWorkerFlowTests(unittest.TestCase):
                 self.sessions,
                 AuthSettings(jwt_secret=TEST_SECRET, cookie_secure=False),
             ),
+            UploadService(self.sessions, self.queue, data_root=self.data_root),
         )
         self.client = TestClient(create_app(services=self.services, app_env="test"))
         password = "correct horse battery staple"
@@ -95,15 +98,34 @@ class PostgreSQLApiWorkerFlowTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def test_api_postgresql_worker_and_artifacts_form_a_closed_loop(self) -> None:
-        created_response = self.client.post(
-            "/api/v1/development/simulated-jobs",
-            json={
-                "image_count": 3,
-                "idempotency_key": "postgres-closed-loop-001",
-            },
+        upload_response = self.client.post(
+            "/api/v1/uploads",
+            json={"idempotency_key": "postgres-upload-loop-001"},
             headers={"Authorization": f"Bearer {self.access_token}"},
         )
-        self.assertEqual(created_response.status_code, 201)
+        self.assertEqual(upload_response.status_code, 201)
+        upload_id = upload_response.json()["upload_id"]
+        for index, color in enumerate(
+            ((180, 30, 20), (20, 170, 60), (40, 80, 200))
+        ):
+            image_response = self.client.post(
+                f"/api/v1/uploads/{upload_id}/images",
+                files={
+                    "file": (
+                        f"postgres-{index}.png",
+                        self.png_bytes(color),
+                        "image/png",
+                    )
+                },
+                headers={"Authorization": f"Bearer {self.access_token}"},
+            )
+            self.assertEqual(image_response.status_code, 201)
+
+        created_response = self.client.post(
+            f"/api/v1/uploads/{upload_id}/submit",
+            headers={"Authorization": f"Bearer {self.access_token}"},
+        )
+        self.assertEqual(created_response.status_code, 202)
         created = created_response.json()
         job_id = uuid.UUID(created["job_id"])
         self.job_ids.append(job_id)
@@ -162,6 +184,12 @@ class PostgreSQLApiWorkerFlowTests(unittest.TestCase):
         )
         self.assertEqual(evaluation["job_id"], str(job_id))
         self.assertEqual(evaluation["overall"]["status"], "not_available")
+
+    @staticmethod
+    def png_bytes(color: tuple[int, int, int]) -> bytes:
+        output = io.BytesIO()
+        Image.new("RGB", (64, 48), color).save(output, format="PNG")
+        return output.getvalue()
 
 
 if __name__ == "__main__":

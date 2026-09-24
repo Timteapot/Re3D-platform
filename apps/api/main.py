@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import Engine
 
 from apps.api.auth import create_auth_router
+from apps.api.uploads import create_upload_router
 from backend.auth import AuthService, AuthSettings, UserIdentity
 from backend.db.errors import JobNotFoundError, QueueConflictError
 from backend.db.queue import JobQueue
@@ -22,6 +23,7 @@ from backend.db.runtime import (
 )
 from backend.db.state_machine import JobStatus
 from backend.jobs.development import DevelopmentJobService
+from backend.uploads import UploadService, UploadSettings
 
 
 DEVELOPMENT_ENVIRONMENTS = {"development", "test"}
@@ -33,6 +35,7 @@ class AppServices:
     queue: JobQueue
     development_jobs: DevelopmentJobService
     auth: AuthService
+    uploads: UploadService
 
 
 class SimulatedJobCreate(BaseModel):
@@ -97,7 +100,13 @@ def build_services(*, environment: str) -> AppServices:
         sessions,
         AuthSettings.from_environment(environment=environment),
     )
-    return AppServices(engine, queue, development_jobs, auth)
+    uploads = UploadService(
+        sessions,
+        queue,
+        data_root=Path(configured_data_root),
+        settings=UploadSettings.from_environment(),
+    )
+    return AppServices(engine, queue, development_jobs, auth, uploads)
 
 
 def create_app(
@@ -124,6 +133,8 @@ def create_app(
     if environment not in DEVELOPMENT_ENVIRONMENTS:
         return app
 
+    app.include_router(create_upload_router(resolved_services.uploads, current_user))
+
     @app.post(
         "/api/v1/development/simulated-jobs",
         response_model=JobResponse,
@@ -149,6 +160,28 @@ def create_app(
             created.snapshot,
             reused=created.reused,
         )
+
+    @app.get(
+        "/api/v1/development/jobs",
+        response_model=list[JobResponse],
+        tags=["development"],
+    )
+    def list_jobs(
+        limit: int = 50,
+        user: UserIdentity = Depends(current_user),
+    ) -> list[JobResponse]:
+        if not 1 <= limit <= 100:
+            raise HTTPException(
+                status_code=422,
+                detail="limit must be between 1 and 100",
+            )
+        return [
+            JobResponse.from_snapshot(snapshot)
+            for snapshot in resolved_services.queue.list_jobs(
+                user_id=user.id,
+                limit=limit,
+            )
+        ]
 
     @app.get(
         "/api/v1/development/jobs/{job_id}",

@@ -68,6 +68,46 @@ class JobQueue:
         priority: int = 0,
         attempt: int = 1,
     ) -> None:
+        try:
+            with self.session_factory.begin() as session:
+                self.enqueue_in_session(
+                    session,
+                    job_id=job_id,
+                    user_id=user_id,
+                    execution_mode=execution_mode,
+                    pipeline_tag=pipeline_tag,
+                    pipeline_commit=pipeline_commit,
+                    config_sha256=config_sha256,
+                    input_manifest_sha256=input_manifest_sha256,
+                    idempotency_key=idempotency_key,
+                    priority=priority,
+                    attempt=attempt,
+                )
+        except DatabaseIntegrityError as exc:
+            raise QueueConflictError(
+                "job id or idempotency key already exists"
+            ) from exc
+
+    def enqueue_in_session(
+        self,
+        session: Session,
+        *,
+        job_id: uuid.UUID,
+        user_id: uuid.UUID,
+        execution_mode: str,
+        pipeline_tag: str,
+        pipeline_commit: str,
+        config_sha256: str,
+        input_manifest_sha256: str,
+        idempotency_key: str,
+        priority: int = 0,
+        attempt: int = 1,
+    ) -> None:
+        """Add a queued job to an existing transaction.
+
+        Upload submission uses this method so the upload state and queue row commit
+        atomically. The caller owns commit and translates database integrity errors.
+        """
         if execution_mode not in {"simulated", "real"}:
             raise ValueError("execution_mode must be simulated or real")
         if attempt < 1:
@@ -81,31 +121,25 @@ class JobQueue:
         if not re.fullmatch(r"[a-f0-9]{40}", pipeline_commit):
             raise ValueError("pipeline_commit must be a lowercase 40-character Git SHA")
 
-        try:
-            with self.session_factory.begin() as session:
-                now = _database_now(session)
-                session.add(
-                    ReconstructionJob(
-                        id=job_id,
-                        user_id=user_id,
-                        status=JobStatus.QUEUED.value,
-                        execution_mode=execution_mode,
-                        priority=priority,
-                        attempt=attempt,
-                        progress=0,
-                        pipeline_tag=pipeline_tag,
-                        pipeline_commit=pipeline_commit,
-                        config_sha256=config_sha256,
-                        input_manifest_sha256=input_manifest_sha256,
-                        idempotency_key=idempotency_key,
-                        queued_at=now,
-                        updated_at=now,
-                    )
-                )
-        except DatabaseIntegrityError as exc:
-            raise QueueConflictError(
-                "job id or idempotency key already exists"
-            ) from exc
+        now = _database_now(session)
+        session.add(
+            ReconstructionJob(
+                id=job_id,
+                user_id=user_id,
+                status=JobStatus.QUEUED.value,
+                execution_mode=execution_mode,
+                priority=priority,
+                attempt=attempt,
+                progress=0,
+                pipeline_tag=pipeline_tag,
+                pipeline_commit=pipeline_commit,
+                config_sha256=config_sha256,
+                input_manifest_sha256=input_manifest_sha256,
+                idempotency_key=idempotency_key,
+                queued_at=now,
+                updated_at=now,
+            )
+        )
 
     def claim_next(
         self,
@@ -300,6 +334,26 @@ class JobQueue:
                 )
             ).scalar_one_or_none()
             return _job_snapshot(job) if job is not None else None
+
+    def list_jobs(
+        self,
+        *,
+        user_id: uuid.UUID,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        if not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        with self.session_factory() as session:
+            jobs = session.execute(
+                select(ReconstructionJob)
+                .where(ReconstructionJob.user_id == user_id)
+                .order_by(
+                    ReconstructionJob.created_at.desc(),
+                    ReconstructionJob.id.desc(),
+                )
+                .limit(limit)
+            ).scalars()
+            return [_job_snapshot(job) for job in jobs]
 
     @staticmethod
     def _recover_expired_job(

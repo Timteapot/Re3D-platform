@@ -354,6 +354,12 @@ class JobQueueTests(unittest.TestCase):
         with self.assertRaises(JobNotFoundError):
             self.queue.request_cancel(job_id, user_id=other_user)
 
+        listed = self.queue.list_jobs(user_id=user_id)
+        self.assertEqual([job["id"] for job in listed], [job_id])
+        self.assertEqual(self.queue.list_jobs(user_id=other_user), [])
+        with self.assertRaises(ValueError):
+            self.queue.list_jobs(user_id=user_id, limit=0)
+
     def _idempotency_key(self, job_id: uuid.UUID) -> str:
         with self.sessions() as session:
             from backend.db.models import ReconstructionJob

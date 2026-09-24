@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -57,6 +58,10 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    uploads: Mapped[list[JobUpload]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
 
 class RefreshSession(Base):
@@ -90,6 +95,87 @@ class RefreshSession(Base):
     )
 
     user: Mapped[User] = relationship(back_populates="refresh_sessions")
+
+
+class JobUpload(Base):
+    __tablename__ = "job_uploads"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('uploading', 'submitted', 'cancelled')",
+            name="ck_job_uploads_status",
+        ),
+        CheckConstraint(
+            "image_count >= 0 AND image_count <= 150",
+            name="ck_job_uploads_image_count",
+        ),
+        CheckConstraint("total_bytes >= 0", name="ck_job_uploads_total_bytes"),
+        Index("ix_job_uploads_user_status", "user_id", "status", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        unique=True,
+    )
+    image_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    user: Mapped[User] = relationship(back_populates="uploads")
+    images: Mapped[list[JobUploadImage]] = relationship(
+        back_populates="upload",
+        cascade="all, delete-orphan",
+        order_by="JobUploadImage.sequence",
+    )
+
+
+class JobUploadImage(Base):
+    __tablename__ = "job_upload_images"
+    __table_args__ = (
+        UniqueConstraint("upload_id", "sequence", name="uq_upload_images_sequence"),
+        UniqueConstraint("upload_id", "stored_name", name="uq_upload_images_name"),
+        UniqueConstraint("upload_id", "sha256", name="uq_upload_images_sha256"),
+        CheckConstraint("sequence >= 0", name="ck_upload_images_sequence"),
+        CheckConstraint("size_bytes > 0", name="ck_upload_images_size"),
+        CheckConstraint(
+            "width > 0 AND height > 0",
+            name="ck_upload_images_dimensions",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    upload_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("job_uploads.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    stored_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    original_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    width: Mapped[int] = mapped_column(Integer, nullable=False)
+    height: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+    upload: Mapped[JobUpload] = relationship(back_populates="images")
 
 
 class ReconstructionJob(Base):

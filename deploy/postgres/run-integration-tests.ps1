@@ -85,11 +85,11 @@ try {
         }
         & $python -m alembic -c alembic.ini downgrade 0001_job_queue
         if ($LASTEXITCODE -ne 0) {
-            throw "Authentication migration downgrade test failed."
+            throw "Upload and authentication migration downgrade test failed."
         }
         & $python -m alembic -c alembic.ini upgrade head
         if ($LASTEXITCODE -ne 0) {
-            throw "Authentication migration re-upgrade test failed."
+            throw "Upload and authentication migration re-upgrade test failed."
         }
     } finally {
         Pop-Location
