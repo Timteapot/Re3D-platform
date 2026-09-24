@@ -1,1 +1,2 @@
 -r requirements-worker.txt
+alembic==1.13.3

@@ -74,7 +74,8 @@
 - 已完成契约有效样例、负向校验和跨文件一致性测试；
 - 已完成 Windows Worker 目录边界、事件日志、模拟执行、原子结果和检查点恢复；
 - 已完成 Re3D v1.1.0 隔离运行目录和平台真实适配器 dry-run；
-- 下一步实现 PostgreSQL 最小任务状态机、Worker 租约和心跳。
+- 已完成 PostgreSQL 最小任务状态机、Alembic 首次迁移、单 GPU 租约和后台心跳基础层；
+- 下一步将数据库租约接入模拟 Worker，完成 API → PostgreSQL → Worker 最小闭环。
 
 ## 4. 推荐技术架构
 

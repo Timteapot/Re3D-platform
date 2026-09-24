@@ -54,4 +54,6 @@ tests                    集成、端到端与测试夹具
 
 ## 下一步
 
-运行契约、Windows Worker、三分支模拟器、Re3D 隔离运行目录和真实适配器 dry-run 已完成。下一步实现 PostgreSQL 最小任务状态机、Worker 租约和心跳，再把 dry-run 适配器扩展为受控真实执行。
+运行契约、Windows Worker、三分支模拟器、Re3D 隔离运行目录、真实适配器 dry-run，以及 PostgreSQL 状态机、单 GPU 租约和心跳基础层已完成。下一步将数据库租约接入模拟 Worker，形成 API → PostgreSQL → Worker 最小闭环，再把 dry-run 适配器扩展为受控真实执行。
+
+数据库队列的设计、初始化和当前边界见 [`docs/database-queue.md`](docs/database-queue.md)。

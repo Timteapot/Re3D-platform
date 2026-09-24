@@ -92,7 +92,7 @@ python -m apps.worker.main real-dry-run --job-id <job_uuid>
 
 产物清单、输出校验和最终结果先写入目标目录内的随机临时文件，刷新并关闭后通过 `os.replace` 替换目标文件。因此 API 不会读取到只写了一部分的 JSON。
 
-事件文件采用追加模式，依赖数据库任务租约保证同一任务只有一个 Worker 写入。当前模拟器尚未实现数据库租约，所以不能把它直接作为多进程生产队列使用。
+事件文件采用追加模式，依赖数据库任务租约保证同一任务只有一个 Worker 写入。租约、心跳和过期接管基础层已经实现，但当前 `simulate` / `real-dry-run` CLI 尚未自动取得租约，所以仍不能把这两个命令直接作为多进程生产队列使用。
 
 ## 模拟 GLB
 
@@ -108,7 +108,7 @@ python -m apps.worker.main real-dry-run --job-id <job_uuid>
 
 ## 尚未实现
 
-- PostgreSQL 任务领取、租约和心跳；
+- 数据库租约与现有 Worker CLI 的执行控制器集成；
 - 真实 Re3D 非 dry-run 执行和产物归一化；
 - GPU/CPU/磁盘资源采样；
 - 用户取消和超时终止子进程；
@@ -120,4 +120,4 @@ python -m apps.worker.main real-dry-run --job-id <job_uuid>
 
 ## 下一步
 
-下一步实现 PostgreSQL 最小任务状态机、Worker 租约和心跳。真实执行必须先取得租约，再由适配器启动 Re3D；API 只读取数据库投影和受控产物，不直接运行管线。
+下一步实现 API → PostgreSQL → 模拟 Worker 最小闭环。真实执行必须先取得租约，再由适配器启动 Re3D；API 只读取数据库投影和受控产物，不直接运行管线。
