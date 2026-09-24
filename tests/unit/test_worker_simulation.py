@@ -58,7 +58,13 @@ def create_task(base: Path, *, image_count: int = 3) -> tuple[TaskLayout, dict]:
         payload = f"simulated-image-{index}".encode("ascii")
         image_path.write_bytes(payload)
         total_bytes += len(payload)
-        image_records.append({"name": image_path.name})
+        image_records.append(
+            {
+                "name": image_path.name,
+                "sha256": sha256_file(image_path),
+                "size_bytes": len(payload),
+            }
+        )
     manifest_path = layout.resolve("input/input-manifest.json")
     atomic_write_json(manifest_path, {"images": image_records})
 
@@ -215,6 +221,15 @@ class SimulationRunnerTests(unittest.TestCase):
             layout, _ = create_task(Path(temporary))
             first_image = layout.resolve("input/images/000000.jpg")
             first_image.write_bytes(first_image.read_bytes() + b"changed")
+            with self.assertRaises(IntegrityError):
+                SimulationRunner(layout, worker_id="test-worker").run()
+
+    def test_rejects_equal_size_input_content_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            layout, _ = create_task(Path(temporary))
+            first_image = layout.resolve("input/images/000000.jpg")
+            original = first_image.read_bytes()
+            first_image.write_bytes(b"x" * len(original))
             with self.assertRaises(IntegrityError):
                 SimulationRunner(layout, worker_id="test-worker").run()
 

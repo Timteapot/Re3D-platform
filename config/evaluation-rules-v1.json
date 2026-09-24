@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "rules_version": "1.0.0",
+  "registration_rate": {
+    "pass_minimum": 0.9,
+    "warning_minimum": 0.7
+  },
+  "mean_reprojection_error_px": {
+    "pass_maximum": 1.5,
+    "warning_maximum": 3.0
+  },
+  "retained_valid_fraction": {
+    "pass_minimum": 0.5,
+    "warning_minimum": 0.3
+  },
+  "mesh_faces": {
+    "minimum": 1
+  }
+}

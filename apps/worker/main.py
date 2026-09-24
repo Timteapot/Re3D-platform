@@ -21,7 +21,7 @@ from backend.re3d_adapter import (
 )
 from backend.re3d_adapter.settings import Re3DSettings, WorkerSettings
 from backend.uploads import UploadService, UploadSettings
-from backend.worker import QueuedSimulationWorker
+from backend.worker import QueuedRealWorker, QueuedSimulationWorker
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -57,6 +57,18 @@ def build_parser() -> argparse.ArgumentParser:
     queued.add_argument("--resource-key")
     queued.add_argument("--lease-seconds", type=int)
     queued.add_argument("--heartbeat-seconds", type=int)
+    queued_real = subparsers.add_parser(
+        "run-real-queued-once",
+        description="Claim and supervise at most one real PostgreSQL Re3D job",
+    )
+    queued_real.add_argument("--data-root")
+    queued_real.add_argument("--worker-id")
+    queued_real.add_argument("--database-url")
+    queued_real.add_argument("--resource-key")
+    queued_real.add_argument("--lease-seconds", type=int)
+    queued_real.add_argument("--heartbeat-seconds", type=int)
+    queued_real.add_argument("--re3d-root")
+    queued_real.add_argument("--driver-python")
     cleanup = subparsers.add_parser(
         "cleanup-stale-uploads",
         description="Cancel stale uploads and remove their task directories",
@@ -126,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
                 }
             finally:
                 engine.dispose()
-        else:
+        elif args.command in {"run-queued-once", "run-real-queued-once"}:
             database = DatabaseSettings.from_environment(args.database_url)
             scheduler = SchedulerSettings.from_environment(
                 resource_key=args.resource_key,
@@ -136,14 +148,31 @@ def main(argv: list[str] | None = None) -> int:
             engine = create_database_engine(database)
             try:
                 queue = JobQueue(create_session_factory(engine))
-                outcome = QueuedSimulationWorker(
-                    queue,
-                    data_root=settings.data_root,
-                    worker_id=settings.worker_id,
-                    resource_key=scheduler.resource_key,
-                    lease_seconds=scheduler.lease_seconds,
-                    heartbeat_seconds=scheduler.heartbeat_seconds,
-                ).run_once()
+                if args.command == "run-real-queued-once":
+                    re3d = Re3DSettings.from_environment(
+                        root=args.re3d_root,
+                        driver_python=args.driver_python,
+                    )
+                    worker = QueuedRealWorker(
+                        queue,
+                        data_root=settings.data_root,
+                        re3d_root=re3d.root,
+                        driver_python=re3d.driver_python,
+                        worker_id=settings.worker_id,
+                        resource_key=scheduler.resource_key,
+                        lease_seconds=scheduler.lease_seconds,
+                        heartbeat_seconds=scheduler.heartbeat_seconds,
+                    )
+                else:
+                    worker = QueuedSimulationWorker(
+                        queue,
+                        data_root=settings.data_root,
+                        worker_id=settings.worker_id,
+                        resource_key=scheduler.resource_key,
+                        lease_seconds=scheduler.lease_seconds,
+                        heartbeat_seconds=scheduler.heartbeat_seconds,
+                    )
+                outcome = worker.run_once()
             finally:
                 engine.dispose()
             response = {
@@ -152,6 +181,8 @@ def main(argv: list[str] | None = None) -> int:
                 "status": outcome.status,
                 "recovered": outcome.recovered,
             }
+        else:
+            raise ValueError(f"unsupported worker command: {args.command}")
     except SimulatedCrash as exc:
         print(str(exc), file=sys.stderr)
         return 75

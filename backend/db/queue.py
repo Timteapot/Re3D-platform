@@ -272,6 +272,26 @@ class JobQueue:
                 _clear_lease(lease, now)
             return target_status
 
+    def update_progress(
+        self,
+        claim: JobClaim,
+        progress: int,
+    ) -> int:
+        """Update progress without changing the current pipeline state."""
+        if not 0 <= progress < 100:
+            raise ValueError("non-terminal progress must be between 0 and 99")
+        with self.session_factory.begin() as session:
+            now = _database_now(session)
+            _, job = _lock_owned_lease(session, claim, now)
+            if progress < job.progress:
+                raise ValueError("job progress cannot decrease")
+            if progress == job.progress:
+                return job.progress
+            job.progress = progress
+            job.updated_at = now
+            job.version += 1
+            return job.progress
+
     def request_cancel(
         self,
         job_id: uuid.UUID,

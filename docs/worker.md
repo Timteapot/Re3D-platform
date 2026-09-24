@@ -1,12 +1,14 @@
-# Windows Worker、模拟执行与真实 dry-run
+# Windows Worker、模拟执行与受控真实 Re3D
 
 ## 当前实现范围
 
-当前 Worker 是真实 GPU 执行前的可执行骨架。它既能直接模拟共享阶段和 A-v4、B-v2、C 三条分支，也能从 PostgreSQL 领取一个模拟任务并在租约保护下执行，还能验证已安装 Re3D v1.1.0 并通过真实入口执行不启动子进程的 dry-run。
+当前 Worker 包含相互隔离的模拟消费者和真实消费者。模拟消费者用于日常前后端联调；真实消费者只领取 `execution_mode=real` 的任务，在 PostgreSQL 租约下启动固定 Re3D v1.1.0，并在运行期间监督心跳、取消、总超时和子进程树。
 
 模拟器不会启动 Re3D、不会占用 GPU，也不会把模拟指标解释为真实重建质量。请求和结果都必须包含 `execution_mode: simulated`，避免模拟数据进入真实任务统计。
 
 真实 dry-run 要求 `execution_mode: real`，会调用 Re3D `scripts/run_pipeline.py --dry-run`，但只打印预期命令，不运行 COLMAP、模型或 OpenMVS。它生成预检报告，不生成 `pipeline-result.json`，因此不能被解释为重建成功。
+
+真实队列执行使用独立命令 `run-real-queued-once`。没有该显式命令时，默认模拟 Worker 不会领取 real 任务。当前网页仍固定提交 simulated，real 模式只通过开发 API 显式请求，防止误启动耗时 GPU 作业。
 
 ## 模块职责
 
@@ -18,10 +20,12 @@
 | `io.py` | 文件 SHA-256 和同目录临时文件加 `os.replace` 的原子写入 |
 | `input_validation.py` | 共享的 manifest、文件名、数量、字节数和符号链接检查 |
 | `simulation.py` | 模拟阶段、生成三分支 GLB、恢复检查点并汇总结果 |
-| `real.py` | 校验 Re3D Git/配置身份、构建隔离命令、执行 dry-run 并映射步骤 |
+| `real.py` | 校验 Re3D Git/配置身份、执行 dry-run/真实管线、映射步骤并汇总产物 |
+| `process.py` | 以独立进程组运行 Re3D，监督取消、超时、租约健康并终止整棵子进程树 |
 | `settings.py` | 从参数或环境变量读取数据根目录、Worker 与 Re3D 位置 |
-| `backend/worker/queued.py` | 领取 simulated 任务、维持租约、推进数据库状态并执行模拟评估 |
+| `backend/worker/queued.py` | 按 execution mode 领取任务、维持租约并推进数据库状态 |
 | `backend/evaluation/simulation.py` | 生成不虚构几何质量分数的开发评估报告 |
+| `backend/evaluation/real.py` | 使用版本化阈值评估 SfM、深度保留率、网格和产物完整性 |
 | `apps/worker/main.py` | Windows 命令行入口和稳定退出码 |
 
 ## 输入前置条件
@@ -70,6 +74,16 @@ $env:RE3D_ROOT = "D:\3Dreconstruction\Re3D"
 
 未设置 `RE3D_DRIVER_PYTHON` 时，适配器从 Re3D 的 `configs/paths.local.json` 读取 `mapanything_python`。
 
+显式创建 real 任务后，使用真实队列消费者：
+
+```powershell
+.\.venv\Scripts\python.exe -m apps.worker.main run-real-queued-once
+```
+
+该命令会重新核对数据库任务所有者、attempt、执行模式、输入 manifest、Re3D Git 提交和配置哈希。运行完成后验证 `output/validation.json`，为 A-v4、B-v2、C 的 GLB、OBJ、MTL 和纹理计算大小与 SHA-256，并原子写入 `pipeline-result.json` 和 `evaluation.json`。
+
+真实子进程只继承 Windows/PATH、CUDA/NVIDIA 和明确允许的 Re3D 运行变量，不继承 `DATABASE_URL`、JWT、SMTP 密码或测试数据库地址。Windows 使用 `taskkill /T /F` 终止进程树；Linux 迁移后使用独立进程组的 TERM/KILL 两阶段终止。
+
 成功时标准输出只包含一个 JSON 摘要，不输出图片路径、用户信息或内部 traceback。退出码约定：
 
 - `0`：成功或安全复用已有结果；
@@ -101,7 +115,9 @@ $env:RE3D_ROOT = "D:\3Dreconstruction\Re3D"
 .\.venv\Scripts\python.exe -m apps.worker.main run-queued-once
 ```
 
-它只领取 `execution_mode=simulated` 的任务，持有租约时运行模拟器和模拟评估器，并在成功后释放资源槽。独立的 `simulate` 与 `real-dry-run` 命令仍是开发诊断入口，不会自动取得租约。
+`run-queued-once` 只领取 `execution_mode=simulated`；`run-real-queued-once` 只领取 `execution_mode=real`。两者共享同一资源槽，因此不会在同一 GPU 上并发执行。独立的 `simulate` 与 `real-dry-run` 命令仍是开发诊断入口，不会自动取得租约。
+
+真实管线的细粒度 Re3D 步骤写入 `pipeline-events.jsonl`。数据库状态机保持单调，分支交错执行期间主要停留在 `dense_reconstruction`，同时持续增加进度；管线退出后再完成产物校验和评估状态。取消最迟在下一次数据库心跳后被进程监督器观察到。
 
 ## 模拟 GLB
 
@@ -115,17 +131,16 @@ $env:RE3D_ROOT = "D:\3Dreconstruction\Re3D"
 
 它不包含网格、材质或纹理，不能作为重建质量样例。
 
-## 尚未实现
+## 尚未实现或尚未验收
 
-- 真实 Re3D 非 dry-run 执行和产物归一化；
 - GPU/CPU/磁盘资源采样；
-- 用户取消和超时终止子进程；
 - 失败任务目录清理；
-- 基于真实 SfM、深度和网格指标的正式评估器；
+- handoff、连通分量、非流形边等更完整的真实评估指标；
 - 任意时刻进程崩溃后的部分文件修复。
+- 使用真实 Re3D 和小型图片集完成一次从 real 入队到终态的 GPU 验收。
 
-因此当前结果证明的是平台协议、目录边界、Re3D 安装身份和真实命令编排可用，不代表真实 GPU 重建已经接入。
+因此当前代码已经具备真实执行控制路径，但在小型真实数据集验收完成前，不能宣称真实网页重建已经可用。
 
 ## 下一步
 
-API → PostgreSQL → 模拟 Worker 最小闭环、真实用户边界和上传生命周期已经完成。下一步实现任务详情/取消与 SSE，然后加入受租约保护的真实 Re3D 子进程控制器；API 仍只读取数据库投影和受控产物，不直接运行管线。
+下一步使用小型有效图片集显式创建 real 任务，运行一次受租约保护的真实 Re3D 验收，并根据实际耗时、日志和评估报告修正错误分类；之后实现经过鉴权的产物下载。API 仍只读取数据库投影和受控产物，不直接运行管线。

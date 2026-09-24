@@ -155,6 +155,43 @@ class UploadServiceTests(unittest.TestCase):
         )
         self.assertEqual(current["status"], "uploading")
 
+    def test_submission_can_explicitly_create_a_real_queue_job(self) -> None:
+        upload, _ = self.service.create(
+            user_id=self.user_id,
+            idempotency_token="upload-unit-real-mode",
+        )
+        for index, color in enumerate(((90, 10, 10), (10, 90, 10), (10, 10, 90))):
+            self.service.add_image(
+                upload_id=upload["upload_id"],
+                user_id=self.user_id,
+                source=io.BytesIO(self.png_bytes(color)),
+                original_name=f"real-{index}.png",
+            )
+
+        job = self.service.submit(
+            upload_id=upload["upload_id"],
+            user_id=self.user_id,
+            execution_mode="real",
+        )
+
+        self.assertEqual(job["execution_mode"], "real")
+        request = json.loads(
+            (
+                self.data_root
+                / "jobs"
+                / str(upload["upload_id"])
+                / "manifests"
+                / "pipeline-request.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(request["execution_mode"], "real")
+        with self.assertRaises(UploadConflictError):
+            self.service.submit(
+                upload_id=upload["upload_id"],
+                user_id=self.user_id,
+                execution_mode="simulated",
+            )
+
     def test_delete_image_and_cancel_remove_mutable_upload_storage(self) -> None:
         upload, _ = self.service.create(
             user_id=self.user_id,

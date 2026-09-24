@@ -289,6 +289,23 @@ class JobQueueTests(unittest.TestCase):
         assert next_claim is not None
         self.assertEqual(next_claim.job_id, second)
 
+    def test_progress_updates_are_monotonic_without_state_transition(self) -> None:
+        job_id = self.enqueue()
+        claim = self.queue.claim_next(worker_id="worker-progress")
+        assert claim is not None
+
+        self.assertEqual(self.queue.update_progress(claim, 7), 7)
+        snapshot = self.queue.get_job(job_id)
+        self.assertEqual(snapshot["status"], JobStatus.PREPARING)
+        self.assertEqual(snapshot["progress"], 7)
+        version = snapshot["version"]
+        self.assertEqual(self.queue.update_progress(claim, 7), 7)
+        self.assertEqual(self.queue.get_job(job_id)["version"], version)
+        with self.assertRaises(ValueError):
+            self.queue.update_progress(claim, 6)
+        with self.assertRaises(ValueError):
+            self.queue.update_progress(claim, 100)
+
     def test_rejects_progress_regression_and_duplicate_idempotency(self) -> None:
         job_id = self.enqueue()
         claim = self.queue.claim_next(worker_id="worker-a")

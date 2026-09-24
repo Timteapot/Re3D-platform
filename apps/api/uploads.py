@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel, Field
@@ -57,6 +58,10 @@ class SubmittedJobResponse(BaseModel):
     progress: int
     created_at: datetime
     queued_at: datetime
+
+
+class UploadSubmitRequest(BaseModel):
+    execution_mode: Literal["simulated", "real"] = "simulated"
 
 
 def create_upload_router(
@@ -174,10 +179,17 @@ def create_upload_router(
     )
     def submit_upload(
         upload_id: uuid.UUID,
+        payload: UploadSubmitRequest | None = None,
         user: UserIdentity = Depends(current_user),
     ) -> SubmittedJobResponse:
         try:
-            job = service.submit(upload_id=upload_id, user_id=user.id)
+            job = service.submit(
+                upload_id=upload_id,
+                user_id=user.id,
+                execution_mode=(
+                    payload.execution_mode if payload is not None else "simulated"
+                ),
+            )
         except UploadNotFoundError as exc:
             raise HTTPException(status_code=404, detail="upload not found") from exc
         except UploadConflictError as exc:

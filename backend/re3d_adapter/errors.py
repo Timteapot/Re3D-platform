@@ -19,3 +19,11 @@ class IntegrityError(AdapterError):
 
 class SimulatedCrash(AdapterError):
     """Development-only interruption used to verify recovery behavior."""
+
+
+class PipelineCancelled(AdapterError):
+    """A managed Re3D process was stopped after a user cancellation request."""
+
+
+class PipelineTimedOut(AdapterError):
+    """A managed Re3D process exceeded the task timeout."""

@@ -446,6 +446,59 @@ class ApiWorkerFlowTests(unittest.TestCase):
             [],
         )
 
+    def test_real_submission_is_explicit_and_simulation_worker_does_not_claim_it(self) -> None:
+        created = self.client.post(
+            "/api/v1/uploads",
+            json={"idempotency_key": "real-upload-flow-001"},
+            headers=self.auth_headers(self.access_token),
+        )
+        upload_id = created.json()["upload_id"]
+        for index, color in enumerate(((120, 30, 20), (20, 120, 30), (30, 20, 120))):
+            uploaded = self.client.post(
+                f"/api/v1/uploads/{upload_id}/images",
+                files={
+                    "file": (
+                        f"real-{index}.png",
+                        self.png_bytes(color),
+                        "image/png",
+                    )
+                },
+                headers=self.auth_headers(self.access_token),
+            )
+            self.assertEqual(uploaded.status_code, 201)
+
+        submitted = self.client.post(
+            f"/api/v1/uploads/{upload_id}/submit",
+            json={"execution_mode": "real"},
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(submitted.status_code, 202)
+        self.assertEqual(submitted.json()["execution_mode"], "real")
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = worker_main(
+                [
+                    "run-queued-once",
+                    "--database-url",
+                    self.database_url,
+                    "--data-root",
+                    str(self.data_root),
+                    "--worker-id",
+                    "simulation-only-worker",
+                    "--lease-seconds",
+                    "5",
+                    "--heartbeat-seconds",
+                    "1",
+                ]
+            )
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(json.loads(stdout.getvalue())["status"], "idle")
+        self.assertEqual(
+            self.queue.get_job(uuid.UUID(upload_id))["status"],
+            "queued",
+        )
+
     def test_upload_image_delete_cancel_and_owner_scope(self) -> None:
         created = self.client.post(
             "/api/v1/uploads",

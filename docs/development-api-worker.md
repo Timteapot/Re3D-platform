@@ -167,7 +167,7 @@ Re3D-data/jobs/<job_uuid>/
 | POST | `/api/v1/uploads/{upload_id}/images` | 上传并校验一张 JPEG/PNG |
 | DELETE | `/api/v1/uploads/{upload_id}/images/{image_id}` | 删除未提交上传中的一张图片 |
 | POST | `/api/v1/uploads/{upload_id}/cancel` | 取消未提交上传并清理任务目录 |
-| POST | `/api/v1/uploads/{upload_id}/submit` | 复核输入并创建 simulated 队列任务 |
+| POST | `/api/v1/uploads/{upload_id}/submit` | 复核输入并创建队列任务；无请求体时默认 simulated，开发验证可显式提交 `{"execution_mode":"real"}` |
 | GET | `/api/v1/development/jobs` | 列出当前用户最近的任务 |
 | POST | `/api/v1/development/simulated-jobs` | 以当前登录用户创建幂等模拟任务 |
 | GET | `/api/v1/development/jobs/{job_id}` | 查询当前用户的任务 |
@@ -199,9 +199,10 @@ Re3D-data/jobs/<job_uuid>/
 
 - 邮箱验证、密码重置和登录限流；
 - 产物授权下载和在线三维查看；
-- 真实 Re3D 子进程、取消、超时和租约丢失终止；
-- 真实 SfM、深度、网格和纹理评估；
+- 使用小型真实图片集完成 Re3D GPU 验收；
+- GPU、显存和磁盘资源采样；
+- 基于真值或人工标注校准真实评估阈值；
 - 失败任务目录自动清理；
 - 三维查看器。
 
-因此该闭环证明的是“平台编排边界可工作”，不代表系统已具备公开部署条件。
+因此当前闭环证明的是“平台编排和真实进程控制边界可工作”，不代表系统已具备公开部署条件。

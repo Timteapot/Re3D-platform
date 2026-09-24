@@ -58,7 +58,13 @@ class RealRe3DDryRunIntegrationTests(unittest.TestCase):
             for source in candidates:
                 target = target_images / source.name
                 shutil.copy2(source, target)
-                records.append({"name": target.name})
+                records.append(
+                    {
+                        "name": target.name,
+                        "sha256": sha256_file(target),
+                        "size_bytes": target.stat().st_size,
+                    }
+                )
                 total_bytes += target.stat().st_size
             manifest_path = layout.resolve("input/input-manifest.json")
             atomic_write_json(manifest_path, {"images": records})

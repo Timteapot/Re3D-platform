@@ -411,7 +411,12 @@ class UploadService:
         *,
         upload_id: uuid.UUID,
         user_id: uuid.UUID,
+        execution_mode: str = "simulated",
     ) -> dict[str, Any]:
+        if execution_mode not in {"simulated", "real"}:
+            raise UploadValidationError(
+                "execution_mode must be simulated or real"
+            )
         try:
             with self.sessions.begin() as session:
                 upload = _locked_upload(session, upload_id, user_id)
@@ -420,6 +425,10 @@ class UploadService:
                     if existing is None:
                         raise UploadConflictError(
                             "submitted upload is missing its queued job"
+                        )
+                    if existing.execution_mode != execution_mode:
+                        raise UploadConflictError(
+                            "upload was already submitted with a different execution mode"
                         )
                     return _job_snapshot(existing)
                 if upload.status != "uploading":
@@ -450,6 +459,7 @@ class UploadService:
                     upload=upload,
                     manifest_sha256=manifest_sha256,
                     queue_key=queue_key,
+                    execution_mode=execution_mode,
                 )
                 validate_contract("pipeline-request", request)
                 atomic_write_json(layout.request_path, request)
@@ -457,7 +467,7 @@ class UploadService:
                     session,
                     job_id=upload.id,
                     user_id=user_id,
-                    execution_mode="simulated",
+                    execution_mode=execution_mode,
                     pipeline_tag=request["pipeline"]["tag"],
                     pipeline_commit=request["pipeline"]["commit"],
                     config_sha256=request["pipeline"]["config_sha256"],
@@ -479,10 +489,11 @@ class UploadService:
         upload: JobUpload,
         manifest_sha256: str,
         queue_key: str,
+        execution_mode: str,
     ) -> dict[str, Any]:
         return {
             "contract_version": "1.0",
-            "execution_mode": "simulated",
+            "execution_mode": execution_mode,
             "request_id": str(uuid.uuid4()),
             "job_id": str(upload.id),
             "attempt": 1,

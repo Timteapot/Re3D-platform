@@ -2,7 +2,7 @@
 
 ## 1. 作用范围
 
-本模块负责持久化任务状态，并保证同一 GPU 资源在任意时刻只被一个 Worker 租用。它不保存图片或模型正文。`run-queued-once` 已把模拟器包装成数据库队列消费者；真实 Re3D 仍只支持 dry-run，尚未进入队列执行。
+本模块负责持久化任务状态，并保证同一 GPU 资源在任意时刻只被一个 Worker 租用。它不保存图片或模型正文。`run-queued-once` 只消费模拟任务；`run-real-queued-once` 独立消费 real 任务，并在同一资源租约下监督真实 Re3D 子进程。
 
 核心代码：
 
@@ -12,7 +12,7 @@
 - `backend/db/heartbeat.py`：长任务后台周期续租；
 - `backend/db/migrations`：Alembic 数据库迁移；
 - `backend/jobs/development.py`：创建开发专用模拟任务和三分支请求；
-- `backend/worker/queued.py`：领取一个 simulated 任务、续租并投影状态；
+- `backend/worker/queued.py`：分别领取 simulated/real 任务、续租并投影状态；
 - `apps/api/main.py`：开发环境创建、查询和取消接口。
 
 ## 2. 数据模型
@@ -56,7 +56,7 @@ PostgreSQL 事务按以下顺序执行：
 - `cancel_requested`：API 已请求取消，执行控制器应终止子进程并把任务转为 `cancelled`；
 - 心跳异常：`raise_if_failed()` 抛出错误，执行控制器不得再提交进度或成功结果。
 
-租约 token 只能隔离数据库写入。真实 Re3D 接入时还必须用进程控制器终止失去租约的子进程，否则旧进程仍可能继续写任务目录。
+租约 token 隔离数据库写入；真实执行控制器同时监听心跳状态，并在失去租约时终止整个子进程树，避免旧进程继续写任务目录。恢复后的 Worker 仍会重新校验已有结果的任务身份、文件大小和 SHA-256，不能仅凭文件存在就跳过执行。
 
 ## 5. 状态机边界
 
@@ -114,16 +114,17 @@ PostgreSQL 集成测试必须使用临时 Docker 数据库：
 - 测试库名称保护会拒绝开发库，临时 Docker 测试脚本会自动清理容器。
 - 开发 API 创建任务后，队列 Worker 能在 PostgreSQL 中领取、续租、执行三个模拟分支并提交终态；
 - 任务查询按 access token 对应的 `user_id` 做对象范围过滤，取消的排队任务不会被领取；
-- `execution_mode=simulated` 的 Worker 不会领取或接管 real 任务；
+- `execution_mode=simulated` 的 Worker 不会领取或接管 real 任务，real Worker 也只领取 real 任务；
 - 模拟评估报告通过 evaluation v1 Schema，并明确不给出真实质量分数。
 - 已认证用户可以上传并完整解码 JPEG/PNG；提交前会复核文件集合、大小和摘要，然后原子创建队列任务。
 - 未提交上传支持单张删除、用户取消和超时回收；取消记录保留原因和存储清理完成时间。
+- real Worker 已实现子进程树终止、总超时、步骤事件、单调数据库进度、三分支产物哈希校验和结构健康评估，并通过轻量伪管线闭环测试。
 
 尚未完成：
 
 - 邮箱验证、密码重置、认证限流和审计；
 - 图片 EXIF 清除；
-- 队列消费者执行真实 Re3D；
-- Re3D 子进程取消、超时和租约丢失终止；
-- 事件日志向数据库进度投影；
+- 使用小型真实图片集完成 Re3D GPU 验收；
+- GPU、显存和磁盘资源采样；
+- 失败任务目录清理和成功任务保留策略；
 - 多 GPU 资源注册和调度。

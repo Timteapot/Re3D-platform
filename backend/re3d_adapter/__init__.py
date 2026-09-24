@@ -5,10 +5,17 @@ from .errors import (
     ContractValidationError,
     IntegrityError,
     PathBoundaryError,
+    PipelineCancelled,
+    PipelineTimedOut,
     SimulatedCrash,
 )
 from .paths import TaskLayout
-from .real import RealDryRunOutcome, RealDryRunRunner
+from .real import (
+    RealDryRunOutcome,
+    RealDryRunRunner,
+    RealPipelineOutcome,
+    RealPipelineRunner,
+)
 from .simulation import SimulationOutcome, SimulationRunner
 
 __all__ = [
@@ -16,8 +23,12 @@ __all__ = [
     "ContractValidationError",
     "IntegrityError",
     "PathBoundaryError",
+    "PipelineCancelled",
+    "PipelineTimedOut",
     "RealDryRunOutcome",
     "RealDryRunRunner",
+    "RealPipelineOutcome",
+    "RealPipelineRunner",
     "SimulatedCrash",
     "SimulationOutcome",
     "SimulationRunner",
