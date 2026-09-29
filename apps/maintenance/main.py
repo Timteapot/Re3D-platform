@@ -21,6 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     cleanup.add_argument("--database-url")
     cleanup.add_argument("--event-retention-days", type=int)
+    cleanup.add_argument("--action-token-retention-days", type=int)
     cleanup.add_argument("--throttle-retention-days", type=int)
     cleanup.add_argument("--limit", type=int)
     return parser
@@ -42,6 +43,7 @@ def main(argv: list[str] | None = None) -> int:
                 "operation": "cleanup-auth-security",
                 **maintenance.cleanup(
                     event_retention_days=args.event_retention_days,
+                    action_token_retention_days=args.action_token_retention_days,
                     throttle_retention_days=args.throttle_retention_days,
                     limit=args.limit,
                 ),

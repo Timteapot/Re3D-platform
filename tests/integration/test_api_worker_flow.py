@@ -25,6 +25,18 @@ from backend.uploads import UploadService
 TEST_SECRET = "api-flow-test-secret-" + "x" * 64
 
 
+class RecordingEmailSender:
+    def __init__(self) -> None:
+        self.verification: list[tuple[str, str]] = []
+        self.password_resets: list[tuple[str, str]] = []
+
+    def send_email_verification(self, *, recipient: str, token: str) -> None:
+        self.verification.append((recipient, token))
+
+    def send_password_reset(self, *, recipient: str, token: str) -> None:
+        self.password_resets.append((recipient, token))
+
+
 class ApiWorkerFlowTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
@@ -40,6 +52,7 @@ class ApiWorkerFlowTests(unittest.TestCase):
         self.sessions = sessionmaker(bind=self.engine, expire_on_commit=False)
         self.queue = JobQueue(self.sessions)
         self.queue.ensure_resource("gpu:0")
+        self.email_sender = RecordingEmailSender()
         self.services = AppServices(
             self.engine,
             self.queue,
@@ -47,6 +60,7 @@ class ApiWorkerFlowTests(unittest.TestCase):
             AuthService(
                 self.sessions,
                 AuthSettings(jwt_secret=TEST_SECRET, cookie_secure=False),
+                self.email_sender,
             ),
             UploadService(self.sessions, self.queue, data_root=self.data_root),
         )
@@ -434,6 +448,67 @@ class ApiWorkerFlowTests(unittest.TestCase):
                 )
             ).scalars().all()
         self.assertEqual(len(blocked_events), 1)
+
+    def test_email_verification_and_password_reset_api_flow(self) -> None:
+        verification_request = self.client.post(
+            "/api/v1/auth/email-verification/request",
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(verification_request.status_code, 202)
+        self.assertEqual(len(self.email_sender.verification), 1)
+        verification_token = self.email_sender.verification[0][1]
+
+        verified = self.client.post(
+            "/api/v1/auth/email-verification/confirm",
+            json={"token": verification_token},
+        )
+        self.assertEqual(verified.status_code, 200)
+        self.assertTrue(verified.json()["email_verified"])
+        replayed = self.client.post(
+            "/api/v1/auth/email-verification/confirm",
+            json={"token": verification_token},
+        )
+        self.assertEqual(replayed.status_code, 400)
+
+        unknown = self.client.post(
+            "/api/v1/auth/password-reset/request",
+            json={"email": "missing-reset@example.com"},
+        )
+        known = self.client.post(
+            "/api/v1/auth/password-reset/request",
+            json={"email": "api-owner@example.com"},
+        )
+        self.assertEqual(unknown.status_code, 202)
+        self.assertEqual(known.status_code, 202)
+        self.assertEqual(unknown.json(), known.json())
+        self.assertEqual(len(self.email_sender.password_resets), 1)
+
+        reset_token = self.email_sender.password_resets[0][1]
+        reset = self.client.post(
+            "/api/v1/auth/password-reset/confirm",
+            json={
+                "token": reset_token,
+                "new_password": "new correct horse battery staple",
+            },
+        )
+        self.assertEqual(reset.status_code, 204)
+        self.assertEqual(self.client.post("/api/v1/auth/refresh").status_code, 401)
+        old_password = self.client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "api-owner",
+                "password": "correct horse battery staple",
+            },
+        )
+        self.assertEqual(old_password.status_code, 401)
+        new_password = self.client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "api-owner",
+                "password": "new correct horse battery staple",
+            },
+        )
+        self.assertEqual(new_password.status_code, 200)
 
     def test_authenticated_image_upload_submission_and_user_scope(self) -> None:
         created = self.client.post(

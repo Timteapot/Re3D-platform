@@ -59,6 +59,10 @@ class User(Base):
         cascade="all, delete-orphan",
     )
     auth_events: Mapped[list[AuthEvent]] = relationship(back_populates="user")
+    auth_action_tokens: Mapped[list[AuthActionToken]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
     uploads: Mapped[list[JobUpload]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
@@ -102,7 +106,8 @@ class AuthEvent(Base):
     __tablename__ = "auth_events"
     __table_args__ = (
         CheckConstraint(
-            "action IN ('register', 'login', 'refresh', 'logout')",
+            "action IN ('register', 'login', 'refresh', 'logout', "
+            "'email_verification', 'password_reset')",
             name="ck_auth_events_action",
         ),
         CheckConstraint(
@@ -124,7 +129,7 @@ class AuthEvent(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
-    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    action: Mapped[str] = mapped_column(String(24), nullable=False)
     outcome: Mapped[str] = mapped_column(String(16), nullable=False)
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid,
@@ -183,6 +188,75 @@ class AuthRegistrationBucket(Base):
     )
 
     key_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    dimension: Mapped[str] = mapped_column(String(16), nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    window_started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    blocked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
+class AuthActionToken(Base):
+    __tablename__ = "auth_action_tokens"
+    __table_args__ = (
+        CheckConstraint(
+            "purpose IN ('email_verification', 'password_reset')",
+            name="ck_auth_action_tokens_purpose",
+        ),
+        Index(
+            "ix_auth_action_tokens_user_purpose",
+            "user_id",
+            "purpose",
+            "created_at",
+        ),
+        Index("ix_auth_action_tokens_expires", "expires_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    purpose: Mapped[str] = mapped_column(String(24), nullable=False)
+    token_sha256: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        unique=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    user: Mapped[User] = relationship(back_populates="auth_action_tokens")
+
+
+class AuthActionRequestBucket(Base):
+    __tablename__ = "auth_action_request_buckets"
+    __table_args__ = (
+        CheckConstraint(
+            "purpose IN ('email_verification', 'password_reset')",
+            name="ck_auth_action_request_purpose",
+        ),
+        CheckConstraint(
+            "dimension IN ('identity', 'ip')",
+            name="ck_auth_action_request_dimension",
+        ),
+        CheckConstraint(
+            "attempt_count >= 0",
+            name="ck_auth_action_request_attempt_count",
+        ),
+        Index("ix_auth_action_request_blocked_until", "blocked_until"),
+    )
+
+    key_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    purpose: Mapped[str] = mapped_column(String(24), nullable=False)
     dimension: Mapped[str] = mapped_column(String(16), nullable=False)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     window_started_at: Mapped[datetime] = mapped_column(

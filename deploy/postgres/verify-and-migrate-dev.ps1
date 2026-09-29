@@ -101,6 +101,14 @@ WHERE blocked_until > CURRENT_TIMESTAMP;
 SELECT count(*) AS blocked_registration_bucket_count
 FROM auth_registration_buckets
 WHERE blocked_until > CURRENT_TIMESTAMP;
+SELECT count(*) AS active_auth_action_token_count
+FROM auth_action_tokens
+WHERE consumed_at IS NULL
+  AND revoked_at IS NULL
+  AND expires_at > CURRENT_TIMESTAMP;
+SELECT count(*) AS blocked_auth_action_request_bucket_count
+FROM auth_action_request_buckets
+WHERE blocked_until > CURRENT_TIMESTAMP;
 "@
     & $psql `
         -X `

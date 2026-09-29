@@ -26,6 +26,12 @@ class AuthSettings:
     registration_identity_max_attempts: int = 3
     registration_ip_max_attempts: int = 10
     registration_block_minutes: int = 60
+    action_request_window_minutes: int = 60
+    action_request_identity_max_attempts: int = 3
+    action_request_ip_max_attempts: int = 10
+    action_request_block_minutes: int = 60
+    email_verification_ttl_hours: int = 24
+    password_reset_ttl_minutes: int = 30
     trusted_proxy_cidrs: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -73,6 +79,35 @@ class AuthSettings:
         if not 1 <= self.registration_block_minutes <= 1440:
             raise ValueError(
                 "AUTH_REGISTRATION_BLOCK_MINUTES must be between 1 and 1440"
+            )
+        if not 1 <= self.action_request_window_minutes <= 1440:
+            raise ValueError(
+                "AUTH_ACTION_REQUEST_WINDOW_MINUTES must be between 1 and 1440"
+            )
+        if not 1 <= self.action_request_identity_max_attempts <= 100:
+            raise ValueError(
+                "AUTH_ACTION_REQUEST_IDENTITY_MAX_ATTEMPTS must be between 1 and 100"
+            )
+        if not (
+            self.action_request_identity_max_attempts
+            <= self.action_request_ip_max_attempts
+            <= 1000
+        ):
+            raise ValueError(
+                "AUTH_ACTION_REQUEST_IP_MAX_ATTEMPTS must be between the identity "
+                "limit and 1000"
+            )
+        if not 1 <= self.action_request_block_minutes <= 1440:
+            raise ValueError(
+                "AUTH_ACTION_REQUEST_BLOCK_MINUTES must be between 1 and 1440"
+            )
+        if not 1 <= self.email_verification_ttl_hours <= 168:
+            raise ValueError(
+                "AUTH_EMAIL_VERIFICATION_TTL_HOURS must be between 1 and 168"
+            )
+        if not 5 <= self.password_reset_ttl_minutes <= 1440:
+            raise ValueError(
+                "AUTH_PASSWORD_RESET_TTL_MINUTES must be between 5 and 1440"
             )
         for cidr in self.trusted_proxy_cidrs:
             try:
@@ -145,6 +180,30 @@ class AuthSettings:
             registration_block_minutes=_environment_integer(
                 "AUTH_REGISTRATION_BLOCK_MINUTES",
                 60,
+            ),
+            action_request_window_minutes=_environment_integer(
+                "AUTH_ACTION_REQUEST_WINDOW_MINUTES",
+                60,
+            ),
+            action_request_identity_max_attempts=_environment_integer(
+                "AUTH_ACTION_REQUEST_IDENTITY_MAX_ATTEMPTS",
+                3,
+            ),
+            action_request_ip_max_attempts=_environment_integer(
+                "AUTH_ACTION_REQUEST_IP_MAX_ATTEMPTS",
+                10,
+            ),
+            action_request_block_minutes=_environment_integer(
+                "AUTH_ACTION_REQUEST_BLOCK_MINUTES",
+                60,
+            ),
+            email_verification_ttl_hours=_environment_integer(
+                "AUTH_EMAIL_VERIFICATION_TTL_HOURS",
+                24,
+            ),
+            password_reset_ttl_minutes=_environment_integer(
+                "AUTH_PASSWORD_RESET_TTL_MINUTES",
+                30,
             ),
             trusted_proxy_cidrs=trusted_proxy_cidrs,
         )

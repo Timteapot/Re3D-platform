@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -14,12 +15,16 @@ from backend.auth import (
     AuthService,
     AuthSettings,
     DuplicateIdentityError,
+    EmailDeliveryError,
     InvalidCredentialsError,
+    InvalidActionTokenError,
     InvalidTokenError,
     RateLimitExceededError,
     resolve_client_ip,
 )
 from backend.db.models import (
+    AuthActionRequestBucket,
+    AuthActionToken,
     AuthEvent,
     AuthRegistrationBucket,
     AuthThrottleBucket,
@@ -30,6 +35,26 @@ from backend.db.models import (
 
 
 TEST_SECRET = "auth-test-secret-" + "x" * 64
+
+
+class RecordingEmailSender:
+    def __init__(self) -> None:
+        self.verification: list[tuple[str, str]] = []
+        self.password_resets: list[tuple[str, str]] = []
+
+    def send_email_verification(self, *, recipient: str, token: str) -> None:
+        self.verification.append((recipient, token))
+
+    def send_password_reset(self, *, recipient: str, token: str) -> None:
+        self.password_resets.append((recipient, token))
+
+
+class FailingEmailSender:
+    def send_email_verification(self, *, recipient: str, token: str) -> None:
+        raise EmailDeliveryError("simulated delivery failure")
+
+    def send_password_reset(self, *, recipient: str, token: str) -> None:
+        raise EmailDeliveryError("simulated delivery failure")
 
 
 class AuthServiceTests(unittest.TestCase):
@@ -387,6 +412,136 @@ class AuthServiceTests(unittest.TestCase):
                 context=context,
             )
 
+    def test_email_verification_tokens_are_hashed_rotated_and_single_use(self) -> None:
+        sender = RecordingEmailSender()
+        auth = AuthService(self.sessions, self.settings, sender)
+        user = auth.register(
+            username="verify-user",
+            email="verify-user@example.com",
+            password="correct horse battery staple",
+        )
+        first = auth.request_email_verification(user_id=user.id)
+        assert first is not None
+        auth.deliver_auth_email(first)
+        second = auth.request_email_verification(user_id=user.id)
+        assert second is not None
+        auth.deliver_auth_email(second)
+
+        self.assertEqual(len(sender.verification), 2)
+        self.assertNotIn(second.token, repr(second))
+        with self.sessions() as session:
+            tokens = session.execute(
+                select(AuthActionToken).where(
+                    AuthActionToken.purpose == "email_verification"
+                )
+            ).scalars().all()
+        self.assertEqual(len(tokens), 2)
+        self.assertTrue(any(token.revoked_at is not None for token in tokens))
+        self.assertNotIn(second.token, {token.token_sha256 for token in tokens})
+        self.assertIn(
+            hashlib.sha256(second.token.encode("utf-8")).hexdigest(),
+            {token.token_sha256 for token in tokens},
+        )
+        with self.assertRaises(InvalidActionTokenError):
+            auth.confirm_email_verification(first.token)
+
+        verified = auth.confirm_email_verification(second.token)
+        self.assertTrue(verified.email_verified)
+        with self.assertRaises(InvalidActionTokenError):
+            auth.confirm_email_verification(second.token)
+
+    def test_password_reset_revokes_sessions_and_verifies_email(self) -> None:
+        sender = RecordingEmailSender()
+        auth = AuthService(self.sessions, self.settings, sender)
+        user = auth.register(
+            username="reset-user",
+            email="reset-user@example.com",
+            password="correct horse battery staple",
+        )
+        issued = auth.login(
+            identifier="reset-user",
+            password="correct horse battery staple",
+        )
+        self.assertIsNone(
+            auth.request_password_reset(email="missing-user@example.com")
+        )
+        pending = auth.request_password_reset(email="RESET-USER@example.com")
+        assert pending is not None
+        auth.deliver_auth_email(pending)
+        self.assertEqual(sender.password_resets[0][0], "reset-user@example.com")
+
+        auth.confirm_password_reset(
+            token=pending.token,
+            new_password="a different secure password",
+        )
+        with self.assertRaises(InvalidCredentialsError):
+            auth.login(
+                identifier="reset-user",
+                password="correct horse battery staple",
+            )
+        logged_in = auth.login(
+            identifier="reset-user",
+            password="a different secure password",
+        )
+        self.assertTrue(logged_in.user.email_verified)
+        with self.assertRaises(InvalidTokenError):
+            auth.refresh(issued.refresh_token)
+        with self.assertRaises(InvalidActionTokenError):
+            auth.confirm_password_reset(
+                token=pending.token,
+                new_password="another different password",
+            )
+
+    def test_failed_email_delivery_revokes_action_token(self) -> None:
+        auth = AuthService(self.sessions, self.settings, FailingEmailSender())
+        user = auth.register(
+            username="mail-failure",
+            email="mail-failure@example.com",
+            password="correct horse battery staple",
+        )
+        pending = auth.request_email_verification(user_id=user.id)
+        assert pending is not None
+        with self.assertLogs("backend.auth.service", level="ERROR"):
+            auth.deliver_auth_email(pending)
+        with self.assertRaises(InvalidActionTokenError):
+            auth.confirm_email_verification(pending.token)
+        with self.sessions() as session:
+            stored = session.get(AuthActionToken, pending.token_id)
+            assert stored is not None
+            self.assertIsNotNone(stored.revoked_at)
+
+    def test_auth_email_request_limit_is_shared_by_identity_and_ip(self) -> None:
+        settings = AuthSettings(
+            jwt_secret=TEST_SECRET,
+            cookie_secure=False,
+            action_request_identity_max_attempts=2,
+            action_request_ip_max_attempts=2,
+        )
+        auth = AuthService(self.sessions, settings, RecordingEmailSender())
+        user = auth.register(
+            username="action-limit",
+            email="action-limit@example.com",
+            password="correct horse battery staple",
+        )
+        context = AuthRequestContext(client_ip="203.0.113.90")
+        for _ in range(2):
+            pending = auth.request_email_verification(
+                user_id=user.id,
+                context=context,
+            )
+            self.assertIsNotNone(pending)
+        with self.assertRaises(RateLimitExceededError):
+            auth.request_email_verification(
+                user_id=user.id,
+                context=context,
+            )
+        with self.sessions() as session:
+            buckets = list(
+                session.execute(select(AuthActionRequestBucket)).scalars()
+            )
+        self.assertEqual(len(buckets), 2)
+        self.assertTrue(all(bucket.blocked_until is not None for bucket in buckets))
+
 
 class AuthRequestContextTests(unittest.TestCase):
     def test_ignores_forwarded_header_from_untrusted_peer(self) -> None:
@@ -468,6 +623,17 @@ class AuthSettingsTests(unittest.TestCase):
                 jwt_secret=TEST_SECRET,
                 registration_identity_max_attempts=10,
                 registration_ip_max_attempts=5,
+            )
+        with self.assertRaises(ValueError):
+            AuthSettings(
+                jwt_secret=TEST_SECRET,
+                action_request_identity_max_attempts=10,
+                action_request_ip_max_attempts=5,
+            )
+        with self.assertRaises(ValueError):
+            AuthSettings(
+                jwt_secret=TEST_SECRET,
+                password_reset_ttl_minutes=1,
             )
 
 

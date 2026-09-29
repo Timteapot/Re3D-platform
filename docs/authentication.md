@@ -11,6 +11,10 @@
 | POST | `/api/v1/auth/refresh` | 原子轮换 refresh token 并签发新 access token |
 | POST | `/api/v1/auth/logout` | 撤销当前 refresh session 并清除 Cookie |
 | GET | `/api/v1/auth/me` | 使用 Bearer access token 返回当前用户 |
+| POST | `/api/v1/auth/email-verification/request` | 登录后申请邮箱验证邮件 |
+| POST | `/api/v1/auth/email-verification/confirm` | 消费一次性令牌并确认邮箱 |
+| POST | `/api/v1/auth/password-reset/request` | 使用统一响应申请密码重置邮件 |
+| POST | `/api/v1/auth/password-reset/confirm` | 消费一次性令牌、更新密码并撤销刷新会话 |
 
 认证路由和稳定 `/api/v1/jobs` 任务访问路由在 development、test 和 production 环境均注册。开发模拟任务创建路由仍只在 development/test 注册，但也必须提供合法 Bearer token；客户端不能通过请求体或查询参数声明 `user_id`。
 
@@ -31,6 +35,12 @@
 
 - `auth_registration_buckets`：跨 API 进程共享的用户名、邮箱和 IP 注册尝试计数及阻断期限。
 
+`0007_auth_action_tokens` 增加：
+
+- `auth_action_tokens`：邮箱验证和密码重置令牌的 SHA-256、用途、到期、消费和撤销状态；
+- `auth_action_request_buckets`：验证邮件和密码重置请求的身份/IP 共享限流；
+- 将认证事件扩展到 `email_verification` 和 `password_reset`。
+
 数据库从不保存明文密码或明文 refresh token。审计表不保存原始用户名、邮箱、IP 或 User-Agent：登录标识符和 IP 使用 JWT secret 做带域分离的 HMAC-SHA-256，User-Agent 只保存 SHA-256。Access token 只包含用户 UUID、token 类型、签发/到期时间、issuer、audience 和随机 `jti`，不包含邮箱、用户名或密码信息。轮换 JWT secret 会同时改变后续审计指纹，因此跨轮换周期不能直接用指纹关联事件；正式密钥轮换方案需同时定义审计关联边界。
 
 ## 3. Token 流程
@@ -48,6 +58,13 @@
 
 旧 token 重放
   └─ 撤销该 family 尚未撤销的所有 refresh session
+
+邮箱验证/密码重置
+  ├─ 生成 48 字节随机一次性令牌
+  ├─ 数据库只保存 SHA-256，原令牌只进入待发送邮件
+  ├─ 新请求撤销同一用户、同一用途的旧令牌
+  ├─ 邮件链接把令牌放在 URL fragment，避免随首个页面请求发送给服务器
+  └─ 成功消费后立即失效；密码重置同时确认邮箱并撤销该用户全部 refresh session
 ```
 
 Access token 不存数据库，退出后可能继续有效至短 TTL 结束；退出会立即阻止继续刷新。需要即时撤销 access token 时，应另行引入 token version 或短期 denylist，当前首期采用 15 分钟窗口。
@@ -82,13 +99,15 @@ JWT 验证允许最多 5 秒的主机时钟偏差，用于容纳 API 与 Postgre
 
 注册默认使用 60 分钟窗口：同一规范化用户名或邮箱允许 3 次有效注册尝试，同一客户端 IP 允许 10 次。成功注册、重复用户名/邮箱等通过请求模型和服务校验的尝试都会计数，因此不能通过批量创建不同账户或重复触发唯一约束绕过；达到阈值后的后续请求返回 429 和 `Retry-After`。请求模型直接拒绝的畸形请求不写数据库，仍应由反向代理承担连接级和通用请求速率限制。
 
-认证维护命令默认删除 90 天前的认证事件，并删除 7 天未更新且不在阻断期的登录/注册限流桶。每张表每次最多处理 1000 行，重复运行直到删除数为零即可完成积压清理：
+验证邮件和密码重置申请也使用 60 分钟窗口：同一用户/邮箱允许 3 次、同一 IP 允许 10 次。登录用户请求验证邮件超过限制时返回 429；密码重置申请无论邮箱是否存在、是否受限都返回相同 202 文本，降低账户枚举风险。已知账户的邮件通过响应后的后台任务发送，SMTP 延迟不进入客户端响应主体。
+
+认证维护命令默认删除 90 天前的认证事件、已终止或过期 7 天的一次性令牌，并删除 7 天未更新且不在阻断期的登录/注册/认证邮件请求限流桶。每张表每次最多处理 1000 行，重复运行直到删除数为零即可完成积压清理：
 
 ```powershell
 .\.venv\Scripts\python.exe -m apps.maintenance.main cleanup-auth-security
 ```
 
-可通过 `--event-retention-days`、`--throttle-retention-days` 和 `--limit` 临时覆盖配置。该命令只清理认证安全表，不删除用户、refresh session、重建任务或任务文件。正式部署时应由计划任务定期运行并监控返回的 JSON 结果。当前尚未实现受管理员权限保护的审计查询后台。
+可通过 `--event-retention-days`、`--action-token-retention-days`、`--throttle-retention-days` 和 `--limit` 临时覆盖配置。该命令只清理认证安全表，不删除用户、refresh session、重建任务或任务文件。正式部署时应由计划任务定期运行并监控返回的 JSON 结果。当前尚未实现受管理员权限保护的审计查询后台。
 
 ## 6. Cookie 与环境约束
 
@@ -128,13 +147,28 @@ AUTH_REGISTRATION_WINDOW_MINUTES=60
 AUTH_REGISTRATION_IDENTITY_MAX_ATTEMPTS=3
 AUTH_REGISTRATION_IP_MAX_ATTEMPTS=10
 AUTH_REGISTRATION_BLOCK_MINUTES=60
+AUTH_ACTION_REQUEST_WINDOW_MINUTES=60
+AUTH_ACTION_REQUEST_IDENTITY_MAX_ATTEMPTS=3
+AUTH_ACTION_REQUEST_IP_MAX_ATTEMPTS=10
+AUTH_ACTION_REQUEST_BLOCK_MINUTES=60
+AUTH_EMAIL_VERIFICATION_TTL_HOURS=24
+AUTH_PASSWORD_RESET_TTL_MINUTES=30
 AUTH_TRUSTED_PROXY_CIDRS=
 AUTH_EVENT_RETENTION_DAYS=90
+AUTH_ACTION_TOKEN_RETENTION_DAYS=7
 AUTH_THROTTLE_RETENTION_DAYS=7
 AUTH_CLEANUP_BATCH_SIZE=1000
+APP_PUBLIC_BASE_URL=http://localhost:5173
+SMTP_HOST=localhost
+SMTP_PORT=1025
+SMTP_FROM=no-reply@example.invalid
+SMTP_USERNAME=
+SMTP_PASSWORD=
+SMTP_STARTTLS=false
+SMTP_TIMEOUT_SECONDS=10
 ```
 
-production 环境如果设置 `REFRESH_COOKIE_SECURE=false`、未配置 `AUTH_TRUSTED_PROXY_CIDRS`、使用示例占位 JWT secret 或不足 32 字节的 secret，应用都会拒绝启动。开发环境直连 FastAPI 时可信代理列表可保持为空。
+development/test 允许不配置 `SMTP_HOST`，此时请求仍创建随后会被标记投递失败的令牌，不会把明文令牌输出到响应或日志。要完成本地人工联调，必须配置本地 SMTP 捕获服务。production 除既有 Cookie、可信代理和 JWT secret 检查外，还强制要求 SMTP 主机、STARTTLS、非 `.invalid` 发件地址和 HTTPS `APP_PUBLIC_BASE_URL`，否则应用拒绝启动。
 
 ## 8. 本地调用示例
 
@@ -174,10 +208,10 @@ Invoke-RestMethod `
 
 ## 9. 尚未完成
 
-- 邮箱验证令牌和邮件发送；
-- 密码重置和修改密码后撤销全部会话；
 - 验证码和审计查询权限；
-- 邮箱验证状态与前端提交权限联动；
+- 邮箱验证/密码重置前端页面；
+- 邮箱验证状态与前端及任务提交权限联动；
+- 生产 SMTP 提供商选择、退信处理和邮件送达监控；
 - 管理员停用用户的受保护接口；
 - 多设备会话列表与单独撤销；
 - 生产环境密钥管理和 JWT secret 轮换。

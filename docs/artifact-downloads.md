@@ -13,7 +13,7 @@ GET /api/v1/jobs/{job_id}/artifacts/{branch}/{kind}
 - `branch`：`A-v4`、`B-v2`、`C`；
 - `kind`：`glb`、`obj`、`mtl`、`texture`。
 
-该路由与任务列表、详情、取消和 SSE 一样，在 development、test 和 production 环境注册。旧 `/api/v1/development/jobs/...` 路径仅在 development/test 保留为迁移兼容入口，并从 OpenAPI 隐藏。路由可在 production 注册只表示接口边界已经稳定，不代表邮箱验证、限流、配额、保留期和部署加固已经完成。
+该路由与任务列表、详情、取消和 SSE 一样，在 development、test 和 production 环境注册。旧 `/api/v1/development/jobs/...` 路径仅在 development/test 保留为迁移兼容入口，并从 OpenAPI 隐藏。路由可在 production 注册只表示接口边界已经稳定，不代表邮箱验证状态已接入任务权限，也不代表任务限流、配额、保留期和部署加固已经完成。
 
 ## 服务端判定顺序
 

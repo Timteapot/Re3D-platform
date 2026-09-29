@@ -15,7 +15,12 @@ from apps.api.jobs import (
     create_job_router,
 )
 from apps.api.uploads import create_upload_router
-from backend.auth import AuthService, AuthSettings
+from backend.auth import (
+    AuthEmailSettings,
+    AuthService,
+    AuthSettings,
+    build_auth_email_sender,
+)
 from backend.db.queue import JobQueue
 from backend.db.runtime import (
     DatabaseSettings,
@@ -53,6 +58,9 @@ def build_services(*, environment: str) -> AppServices:
     auth = AuthService(
         sessions,
         AuthSettings.from_environment(environment=environment),
+        build_auth_email_sender(
+            AuthEmailSettings.from_environment(environment=environment)
+        ),
     )
     uploads = UploadService(
         sessions,

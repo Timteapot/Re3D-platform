@@ -27,3 +27,11 @@ class RateLimitExceededError(AuthError):
     def __init__(self, retry_after_seconds: int) -> None:
         super().__init__("too many login attempts")
         self.retry_after_seconds = max(1, retry_after_seconds)
+
+
+class InvalidActionTokenError(AuthError):
+    """An email verification or password reset token cannot be consumed."""
+
+
+class EmailDeliveryError(AuthError):
+    """An authentication email could not be delivered."""

@@ -9,6 +9,8 @@ from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.db.models import (
+    AuthActionRequestBucket,
+    AuthActionToken,
     AuthEvent,
     AuthRegistrationBucket,
     AuthThrottleBucket,
@@ -18,6 +20,7 @@ from backend.db.models import (
 @dataclass(frozen=True)
 class AuthMaintenanceSettings:
     event_retention_days: int = 90
+    action_token_retention_days: int = 7
     throttle_retention_days: int = 7
     cleanup_batch_size: int = 1000
 
@@ -28,6 +31,10 @@ class AuthMaintenanceSettings:
             raise ValueError(
                 "AUTH_THROTTLE_RETENTION_DAYS must be between 1 and 365"
             )
+        if not 1 <= self.action_token_retention_days <= 365:
+            raise ValueError(
+                "AUTH_ACTION_TOKEN_RETENTION_DAYS must be between 1 and 365"
+            )
         if not 1 <= self.cleanup_batch_size <= 10000:
             raise ValueError("AUTH_CLEANUP_BATCH_SIZE must be between 1 and 10000")
 
@@ -37,6 +44,10 @@ class AuthMaintenanceSettings:
             event_retention_days=_environment_integer(
                 "AUTH_EVENT_RETENTION_DAYS",
                 90,
+            ),
+            action_token_retention_days=_environment_integer(
+                "AUTH_ACTION_TOKEN_RETENTION_DAYS",
+                7,
             ),
             throttle_retention_days=_environment_integer(
                 "AUTH_THROTTLE_RETENTION_DAYS",
@@ -63,6 +74,7 @@ class AuthMaintenanceService:
         *,
         now: datetime | None = None,
         event_retention_days: int | None = None,
+        action_token_retention_days: int | None = None,
         throttle_retention_days: int | None = None,
         limit: int | None = None,
     ) -> dict[str, Any]:
@@ -76,6 +88,11 @@ class AuthMaintenanceService:
             if throttle_retention_days is None
             else throttle_retention_days
         )
+        configured_action_token_days = (
+            self.settings.action_token_retention_days
+            if action_token_retention_days is None
+            else action_token_retention_days
+        )
         configured_limit = (
             self.settings.cleanup_batch_size if limit is None else limit
         )
@@ -83,11 +100,16 @@ class AuthMaintenanceService:
             raise ValueError("event_retention_days must be between 1 and 3650")
         if not 1 <= configured_throttle_days <= 365:
             raise ValueError("throttle_retention_days must be between 1 and 365")
+        if not 1 <= configured_action_token_days <= 365:
+            raise ValueError("action_token_retention_days must be between 1 and 365")
         if not 1 <= configured_limit <= 10000:
             raise ValueError("cleanup limit must be between 1 and 10000")
 
         current = _as_utc(now or datetime.now(timezone.utc))
         event_cutoff = current - timedelta(days=configured_event_days)
+        action_token_cutoff = current - timedelta(
+            days=configured_action_token_days
+        )
         throttle_cutoff = current - timedelta(days=configured_throttle_days)
 
         with self.session_factory.begin() as session:
@@ -104,6 +126,22 @@ class AuthMaintenanceService:
                 AuthEvent,
                 AuthEvent.id,
                 event_ids,
+            )
+
+            action_token_ids = list(
+                session.execute(
+                    select(AuthActionToken.id)
+                    .where(_action_token_cleanup_filter(action_token_cutoff))
+                    .order_by(AuthActionToken.expires_at, AuthActionToken.id)
+                    .limit(configured_limit)
+                ).scalars()
+            )
+            action_tokens_deleted = _delete_ids(
+                session,
+                AuthActionToken,
+                AuthActionToken.id,
+                action_token_ids,
+                _action_token_cleanup_filter(action_token_cutoff),
             )
 
             login_keys = list(
@@ -164,11 +202,43 @@ class AuthMaintenanceService:
                 ),
             )
 
+            action_request_keys = list(
+                session.execute(
+                    select(AuthActionRequestBucket.key_hash)
+                    .where(
+                        AuthActionRequestBucket.updated_at < throttle_cutoff,
+                        or_(
+                            AuthActionRequestBucket.blocked_until.is_(None),
+                            AuthActionRequestBucket.blocked_until <= current,
+                        ),
+                    )
+                    .order_by(
+                        AuthActionRequestBucket.updated_at,
+                        AuthActionRequestBucket.key_hash,
+                    )
+                    .limit(configured_limit)
+                ).scalars()
+            )
+            action_request_buckets_deleted = _delete_ids(
+                session,
+                AuthActionRequestBucket,
+                AuthActionRequestBucket.key_hash,
+                action_request_keys,
+                AuthActionRequestBucket.updated_at < throttle_cutoff,
+                or_(
+                    AuthActionRequestBucket.blocked_until.is_(None),
+                    AuthActionRequestBucket.blocked_until <= current,
+                ),
+            )
+
         return {
             "events_deleted": events_deleted,
+            "action_tokens_deleted": action_tokens_deleted,
             "login_buckets_deleted": login_buckets_deleted,
             "registration_buckets_deleted": registration_buckets_deleted,
+            "action_request_buckets_deleted": action_request_buckets_deleted,
             "event_cutoff": event_cutoff.isoformat(),
+            "action_token_cutoff": action_token_cutoff.isoformat(),
             "throttle_cutoff": throttle_cutoff.isoformat(),
         }
 
@@ -194,6 +264,14 @@ def _environment_integer(name: str, default: int) -> int:
         return int(raw)
     except ValueError as exc:
         raise ValueError(f"{name} must be an integer") from exc
+
+
+def _action_token_cleanup_filter(cutoff: datetime):
+    return or_(
+        AuthActionToken.expires_at < cutoff,
+        AuthActionToken.consumed_at < cutoff,
+        AuthActionToken.revoked_at < cutoff,
+    )
 
 
 def _as_utc(value: datetime) -> datetime:

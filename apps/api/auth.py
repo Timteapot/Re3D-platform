@@ -6,6 +6,7 @@ from typing import Literal
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Cookie,
     Depends,
     HTTPException,
@@ -21,6 +22,7 @@ from backend.auth import (
     AuthRequestContext,
     DuplicateIdentityError,
     InactiveUserError,
+    InvalidActionTokenError,
     InvalidCredentialsError,
     InvalidTokenError,
     IssuedTokens,
@@ -42,6 +44,22 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     identifier: str = Field(min_length=3, max_length=320)
     password: SecretStr = Field(min_length=1, max_length=128)
+
+
+class ActionTokenRequest(BaseModel):
+    token: SecretStr = Field(min_length=32, max_length=512)
+
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirmRequest(ActionTokenRequest):
+    new_password: SecretStr = Field(min_length=12, max_length=128)
+
+
+class AcceptedResponse(BaseModel):
+    detail: str
 
 
 class UserResponse(BaseModel):
@@ -150,6 +168,107 @@ def create_auth_router(
         _set_refresh_cookie(response, service, issued)
         _set_no_store(response)
         return _token_response(issued)
+
+    @router.post(
+        "/email-verification/request",
+        response_model=AcceptedResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def request_email_verification(
+        request: Request,
+        background_tasks: BackgroundTasks,
+        user: UserIdentity = Depends(current_user),
+    ) -> AcceptedResponse:
+        context = _request_context(request, service)
+        try:
+            pending = service.request_email_verification(
+                user_id=user.id,
+                context=context,
+            )
+        except RateLimitExceededError as exc:
+            raise HTTPException(
+                status_code=429,
+                detail="too many email verification requests; try again later",
+                headers={"Retry-After": str(exc.retry_after_seconds)},
+            ) from exc
+        except InactiveUserError as exc:
+            raise HTTPException(status_code=403, detail="user account is inactive") from exc
+        if pending is not None:
+            background_tasks.add_task(
+                service.deliver_auth_email,
+                pending,
+                context=context,
+            )
+        return AcceptedResponse(
+            detail="email verification request accepted",
+        )
+
+    @router.post(
+        "/email-verification/confirm",
+        response_model=UserResponse,
+    )
+    def confirm_email_verification(
+        payload: ActionTokenRequest,
+        request: Request,
+    ) -> UserResponse:
+        try:
+            user = service.confirm_email_verification(
+                payload.token.get_secret_value(),
+                context=_request_context(request, service),
+            )
+        except InvalidActionTokenError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="email verification token is invalid or expired",
+            ) from exc
+        return UserResponse.from_identity(user)
+
+    @router.post(
+        "/password-reset/request",
+        response_model=AcceptedResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def request_password_reset(
+        payload: PasswordResetRequest,
+        request: Request,
+        background_tasks: BackgroundTasks,
+    ) -> AcceptedResponse:
+        context = _request_context(request, service)
+        pending = service.request_password_reset(
+            email=str(payload.email),
+            context=context,
+        )
+        if pending is not None:
+            background_tasks.add_task(
+                service.deliver_auth_email,
+                pending,
+                context=context,
+            )
+        return AcceptedResponse(
+            detail="if the account exists, password reset instructions will be sent",
+        )
+
+    @router.post(
+        "/password-reset/confirm",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    def confirm_password_reset(
+        payload: PasswordResetConfirmRequest,
+        request: Request,
+    ) -> None:
+        try:
+            service.confirm_password_reset(
+                token=payload.token.get_secret_value(),
+                new_password=payload.new_password.get_secret_value(),
+                context=_request_context(request, service),
+            )
+        except InvalidActionTokenError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="password reset token is invalid or expired",
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @router.post("/refresh", response_model=TokenResponse)
     def refresh(

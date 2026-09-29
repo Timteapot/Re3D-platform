@@ -16,6 +16,8 @@ from sqlalchemy.orm import sessionmaker
 from apps.maintenance.main import main as maintenance_main
 from backend.auth import AuthMaintenanceService, AuthMaintenanceSettings
 from backend.db.models import (
+    AuthActionRequestBucket,
+    AuthActionToken,
     AuthEvent,
     AuthRegistrationBucket,
     AuthThrottleBucket,
@@ -59,6 +61,14 @@ class AuthMaintenanceTests(unittest.TestCase):
                         blocked_until=now + timedelta(hours=1),
                     ),
                     _registration_bucket("recent-registration", recent),
+                    _action_token(old, "a" * 64, expired=True),
+                    _action_token(recent, "b" * 64, expired=False),
+                    _action_request_bucket("old-action-request", old),
+                    _action_request_bucket(
+                        "active-action-request",
+                        old,
+                        blocked_until=now + timedelta(hours=1),
+                    ),
                 ]
             )
 
@@ -72,8 +82,10 @@ class AuthMaintenanceTests(unittest.TestCase):
         ).cleanup(now=now)
 
         self.assertEqual(report["events_deleted"], 1)
+        self.assertEqual(report["action_tokens_deleted"], 1)
         self.assertEqual(report["login_buckets_deleted"], 1)
         self.assertEqual(report["registration_buckets_deleted"], 1)
+        self.assertEqual(report["action_request_buckets_deleted"], 1)
         with self.sessions() as session:
             event_reasons = set(session.execute(select(AuthEvent.reason_code)).scalars())
             login_keys = set(
@@ -82,12 +94,21 @@ class AuthMaintenanceTests(unittest.TestCase):
             registration_keys = set(
                 session.execute(select(AuthRegistrationBucket.key_hash)).scalars()
             )
+            action_tokens = list(
+                session.execute(select(AuthActionToken)).scalars()
+            )
+            action_request_keys = set(
+                session.execute(select(AuthActionRequestBucket.key_hash)).scalars()
+            )
         self.assertEqual(event_reasons, {"recent"})
         self.assertEqual(login_keys, {"active-login", "recent-login"})
         self.assertEqual(
             registration_keys,
             {"active-registration", "recent-registration"},
         )
+        self.assertEqual(len(action_tokens), 1)
+        self.assertEqual(action_tokens[0].token_sha256, "b" * 64)
+        self.assertEqual(action_request_keys, {"active-action-request"})
 
     def test_cleanup_batch_limit_and_command_output(self) -> None:
         old = datetime.now(timezone.utc) - timedelta(days=365)
@@ -122,6 +143,7 @@ class AuthMaintenanceTests(unittest.TestCase):
             "os.environ",
             {
                 "AUTH_EVENT_RETENTION_DAYS": "30",
+                "AUTH_ACTION_TOKEN_RETENTION_DAYS": "4",
                 "AUTH_THROTTLE_RETENTION_DAYS": "2",
                 "AUTH_CLEANUP_BATCH_SIZE": "50",
             },
@@ -129,6 +151,7 @@ class AuthMaintenanceTests(unittest.TestCase):
         ):
             settings = AuthMaintenanceSettings.from_environment()
         self.assertEqual(settings.event_retention_days, 30)
+        self.assertEqual(settings.action_token_retention_days, 4)
         self.assertEqual(settings.throttle_retention_days, 2)
         self.assertEqual(settings.cleanup_batch_size, 50)
         with self.assertRaises(ValueError):
@@ -169,6 +192,43 @@ def _registration_bucket(
 ) -> AuthRegistrationBucket:
     return AuthRegistrationBucket(
         key_hash=key_hash,
+        dimension="identity",
+        attempt_count=1,
+        window_started_at=updated_at,
+        blocked_until=blocked_until,
+        updated_at=updated_at,
+    )
+
+
+def _action_token(
+    created_at: datetime,
+    token_sha256: str,
+    *,
+    expired: bool,
+) -> AuthActionToken:
+    return AuthActionToken(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        purpose="password_reset",
+        token_sha256=token_sha256,
+        created_at=created_at,
+        expires_at=(
+            created_at + timedelta(minutes=30)
+            if expired
+            else datetime.now(timezone.utc) + timedelta(days=1)
+        ),
+    )
+
+
+def _action_request_bucket(
+    key_hash: str,
+    updated_at: datetime,
+    *,
+    blocked_until: datetime | None = None,
+) -> AuthActionRequestBucket:
+    return AuthActionRequestBucket(
+        key_hash=key_hash,
+        purpose="password_reset",
         dimension="identity",
         attempt_count=1,
         window_started_at=updated_at,

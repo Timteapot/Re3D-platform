@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import secrets
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -15,11 +16,14 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError as DatabaseIntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from backend.db.models import RefreshSession, User
+from backend.db.models import AuthActionToken, RefreshSession, User
 
+from .email import AuthEmailSender, DisabledAuthEmailSender
 from .errors import (
     DuplicateIdentityError,
+    EmailDeliveryError,
     InactiveUserError,
+    InvalidActionTokenError,
     InvalidCredentialsError,
     InvalidTokenError,
     RateLimitExceededError,
@@ -34,6 +38,7 @@ PASSWORD_HASH = PasswordHash.recommended()
 DUMMY_PASSWORD_HASH = PASSWORD_HASH.hash("not-a-real-re3d-user-password")
 JWT_ALGORITHM = "HS256"
 JWT_CLOCK_SKEW_SECONDS = 5
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -58,15 +63,26 @@ class IssuedTokens:
     user: UserIdentity
 
 
+@dataclass(frozen=True)
+class PendingAuthEmail:
+    purpose: str
+    token_id: uuid.UUID
+    user_id: uuid.UUID
+    recipient: str
+    token: str = field(repr=False)
+
+
 class AuthService:
     def __init__(
         self,
         session_factory: sessionmaker[Session],
         settings: AuthSettings,
+        email_sender: AuthEmailSender | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.settings = settings
         self.security = AuthSecurity(settings)
+        self.email_sender = email_sender or DisabledAuthEmailSender()
 
     def register(
         self,
@@ -373,6 +389,424 @@ class AuthService:
                 raise InactiveUserError("user account is inactive")
             return _user_identity(user)
 
+    def request_email_verification(
+        self,
+        *,
+        user_id: uuid.UUID,
+        context: AuthRequestContext | None = None,
+    ) -> PendingAuthEmail | None:
+        pending: PendingAuthEmail | None = None
+        retry_after: int | None = None
+        inactive = False
+        with self.session_factory.begin() as session:
+            user = session.execute(
+                select(User).where(User.id == user_id).with_for_update()
+            ).scalar_one_or_none()
+            if user is None or not user.is_active:
+                inactive = True
+            else:
+                now = _database_now(session)
+                keys = self.security.action_request_keys(
+                    purpose="email_verification",
+                    identity_subject=f"user:{user.id}",
+                    client_ip_fingerprint=self.security.client_ip_fingerprint(
+                        context
+                    ),
+                )
+                retry_after = self.security.consume_action_request(
+                    session,
+                    keys,
+                    now=now,
+                )
+                if retry_after is not None:
+                    self.security.add_event(
+                        session,
+                        action="email_verification",
+                        outcome="blocked",
+                        context=context,
+                        occurred_at=now,
+                        user_id=user.id,
+                        identifier_fingerprint=self.security.identifier_fingerprint(
+                            user.email
+                        ),
+                        reason_code="rate_limited",
+                    )
+                elif user.email_verified:
+                    self.security.add_event(
+                        session,
+                        action="email_verification",
+                        outcome="success",
+                        context=context,
+                        occurred_at=now,
+                        user_id=user.id,
+                        identifier_fingerprint=self.security.identifier_fingerprint(
+                            user.email
+                        ),
+                        reason_code="already_verified",
+                    )
+                else:
+                    pending = self._issue_action_token(
+                        session,
+                        user,
+                        purpose="email_verification",
+                        now=now,
+                        ttl=timedelta(
+                            hours=self.settings.email_verification_ttl_hours
+                        ),
+                    )
+        if inactive:
+            raise InactiveUserError("user account is inactive")
+        if retry_after is not None:
+            raise RateLimitExceededError(retry_after)
+        return pending
+
+    def confirm_email_verification(
+        self,
+        token: str,
+        *,
+        context: AuthRequestContext | None = None,
+    ) -> UserIdentity:
+        token_sha256 = _token_sha256(token)
+        verified_user: User | None = None
+        invalid = False
+        with self.session_factory.begin() as session:
+            action_token = session.execute(
+                select(AuthActionToken)
+                .where(
+                    AuthActionToken.token_sha256 == token_sha256,
+                    AuthActionToken.purpose == "email_verification",
+                )
+                .with_for_update()
+            ).scalar_one_or_none()
+            now = _database_now(session)
+            if not _action_token_is_active(action_token, now):
+                invalid = True
+                self._expire_known_action_token(
+                    session,
+                    action_token,
+                    now=now,
+                    context=context,
+                )
+            else:
+                assert action_token is not None
+                user = session.execute(
+                    select(User)
+                    .where(User.id == action_token.user_id)
+                    .with_for_update()
+                ).scalar_one_or_none()
+                if user is None or not user.is_active:
+                    action_token.revoked_at = now
+                    invalid = True
+                else:
+                    user.email_verified = True
+                    user.updated_at = now
+                    action_token.consumed_at = now
+                    self._revoke_other_action_tokens(
+                        session,
+                        user_id=user.id,
+                        purpose="email_verification",
+                        keep_id=action_token.id,
+                        now=now,
+                    )
+                    self.security.add_event(
+                        session,
+                        action="email_verification",
+                        outcome="success",
+                        context=context,
+                        occurred_at=now,
+                        user_id=user.id,
+                        identifier_fingerprint=self.security.identifier_fingerprint(
+                            user.email
+                        ),
+                        reason_code="confirmed",
+                    )
+                    verified_user = user
+        if invalid or verified_user is None:
+            raise InvalidActionTokenError(
+                "email verification token is invalid or expired"
+            )
+        return _user_identity(verified_user)
+
+    def request_password_reset(
+        self,
+        *,
+        email: str,
+        context: AuthRequestContext | None = None,
+    ) -> PendingAuthEmail | None:
+        normalized_email = _normalize_email(email)
+        pending: PendingAuthEmail | None = None
+        with self.session_factory.begin() as session:
+            now = _database_now(session)
+            keys = self.security.action_request_keys(
+                purpose="password_reset",
+                identity_subject=f"email:{normalized_email}",
+                client_ip_fingerprint=self.security.client_ip_fingerprint(context),
+            )
+            retry_after = self.security.consume_action_request(
+                session,
+                keys,
+                now=now,
+            )
+            if retry_after is not None:
+                return None
+            user = session.execute(
+                select(User).where(User.email == normalized_email).with_for_update()
+            ).scalar_one_or_none()
+            if user is not None and user.is_active:
+                pending = self._issue_action_token(
+                    session,
+                    user,
+                    purpose="password_reset",
+                    now=now,
+                    ttl=timedelta(
+                        minutes=self.settings.password_reset_ttl_minutes
+                    ),
+                )
+        return pending
+
+    def confirm_password_reset(
+        self,
+        *,
+        token: str,
+        new_password: str,
+        context: AuthRequestContext | None = None,
+    ) -> None:
+        _validate_password(new_password)
+        token_sha256 = _token_sha256(token)
+        with self.session_factory() as session:
+            candidate = session.execute(
+                select(AuthActionToken).where(
+                    AuthActionToken.token_sha256 == token_sha256,
+                    AuthActionToken.purpose == "password_reset",
+                )
+            ).scalar_one_or_none()
+            now = _database_now(session)
+            if not _action_token_is_active(candidate, now):
+                raise InvalidActionTokenError(
+                    "password reset token is invalid or expired"
+                )
+        password_hash = PASSWORD_HASH.hash(new_password)
+
+        invalid = False
+        with self.session_factory.begin() as session:
+            action_token = session.execute(
+                select(AuthActionToken)
+                .where(
+                    AuthActionToken.token_sha256 == token_sha256,
+                    AuthActionToken.purpose == "password_reset",
+                )
+                .with_for_update()
+            ).scalar_one_or_none()
+            now = _database_now(session)
+            if not _action_token_is_active(action_token, now):
+                invalid = True
+                self._expire_known_action_token(
+                    session,
+                    action_token,
+                    now=now,
+                    context=context,
+                )
+            else:
+                assert action_token is not None
+                user = session.execute(
+                    select(User)
+                    .where(User.id == action_token.user_id)
+                    .with_for_update()
+                ).scalar_one_or_none()
+                if user is None or not user.is_active:
+                    action_token.revoked_at = now
+                    invalid = True
+                else:
+                    user.password_hash = password_hash
+                    user.email_verified = True
+                    user.updated_at = now
+                    action_token.consumed_at = now
+                    self._revoke_other_action_tokens(
+                        session,
+                        user_id=user.id,
+                        purpose="password_reset",
+                        keep_id=action_token.id,
+                        now=now,
+                    )
+                    session.execute(
+                        update(RefreshSession)
+                        .where(
+                            RefreshSession.user_id == user.id,
+                            RefreshSession.revoked_at.is_(None),
+                        )
+                        .values(revoked_at=now)
+                    )
+                    self.security.add_event(
+                        session,
+                        action="password_reset",
+                        outcome="success",
+                        context=context,
+                        occurred_at=now,
+                        user_id=user.id,
+                        identifier_fingerprint=self.security.identifier_fingerprint(
+                            user.email
+                        ),
+                        reason_code="confirmed",
+                    )
+        if invalid:
+            raise InvalidActionTokenError(
+                "password reset token is invalid or expired"
+            )
+
+    def deliver_auth_email(
+        self,
+        pending: PendingAuthEmail,
+        *,
+        context: AuthRequestContext | None = None,
+    ) -> None:
+        try:
+            if pending.purpose == "email_verification":
+                self.email_sender.send_email_verification(
+                    recipient=pending.recipient,
+                    token=pending.token,
+                )
+            elif pending.purpose == "password_reset":
+                self.email_sender.send_password_reset(
+                    recipient=pending.recipient,
+                    token=pending.token,
+                )
+            else:
+                raise ValueError(f"unsupported authentication email: {pending.purpose}")
+        except EmailDeliveryError:
+            self._finish_auth_email_delivery(
+                pending,
+                delivered=False,
+                context=context,
+            )
+            LOGGER.exception(
+                "Authentication email delivery failed for purpose %s",
+                pending.purpose,
+            )
+            return
+        self._finish_auth_email_delivery(
+            pending,
+            delivered=True,
+            context=context,
+        )
+
+    def _issue_action_token(
+        self,
+        session: Session,
+        user: User,
+        *,
+        purpose: str,
+        now: datetime,
+        ttl: timedelta,
+    ) -> PendingAuthEmail:
+        session.execute(
+            update(AuthActionToken)
+            .where(
+                AuthActionToken.user_id == user.id,
+                AuthActionToken.purpose == purpose,
+                AuthActionToken.consumed_at.is_(None),
+                AuthActionToken.revoked_at.is_(None),
+            )
+            .values(revoked_at=now)
+        )
+        raw_token = secrets.token_urlsafe(48)
+        token_id = uuid.uuid4()
+        session.add(
+            AuthActionToken(
+                id=token_id,
+                user_id=user.id,
+                purpose=purpose,
+                token_sha256=_token_sha256(raw_token),
+                created_at=now,
+                expires_at=now + ttl,
+            )
+        )
+        return PendingAuthEmail(
+            purpose=purpose,
+            token_id=token_id,
+            user_id=user.id,
+            recipient=user.email,
+            token=raw_token,
+        )
+
+    def _finish_auth_email_delivery(
+        self,
+        pending: PendingAuthEmail,
+        *,
+        delivered: bool,
+        context: AuthRequestContext | None,
+    ) -> None:
+        with self.session_factory.begin() as session:
+            action_token = session.execute(
+                select(AuthActionToken)
+                .where(AuthActionToken.id == pending.token_id)
+                .with_for_update()
+            ).scalar_one_or_none()
+            if action_token is None:
+                return
+            now = _database_now(session)
+            if not delivered and action_token.consumed_at is None:
+                action_token.revoked_at = now
+            self.security.add_event(
+                session,
+                action=pending.purpose,
+                outcome="success" if delivered else "failure",
+                context=context,
+                occurred_at=now,
+                user_id=pending.user_id,
+                identifier_fingerprint=self.security.identifier_fingerprint(
+                    pending.recipient
+                ),
+                reason_code="delivered" if delivered else "delivery_failed",
+            )
+
+    def _expire_known_action_token(
+        self,
+        session: Session,
+        action_token: AuthActionToken | None,
+        *,
+        now: datetime,
+        context: AuthRequestContext | None,
+    ) -> None:
+        if (
+            action_token is None
+            or action_token.consumed_at is not None
+            or action_token.revoked_at is not None
+        ):
+            return
+        if _as_utc(action_token.expires_at) > now:
+            return
+        action_token.revoked_at = now
+        self.security.add_event(
+            session,
+            action=action_token.purpose,
+            outcome="failure",
+            context=context,
+            occurred_at=now,
+            user_id=action_token.user_id,
+            reason_code="expired",
+        )
+
+    @staticmethod
+    def _revoke_other_action_tokens(
+        session: Session,
+        *,
+        user_id: uuid.UUID,
+        purpose: str,
+        keep_id: uuid.UUID,
+        now: datetime,
+    ) -> None:
+        session.execute(
+            update(AuthActionToken)
+            .where(
+                AuthActionToken.user_id == user_id,
+                AuthActionToken.purpose == purpose,
+                AuthActionToken.id != keep_id,
+                AuthActionToken.consumed_at.is_(None),
+                AuthActionToken.revoked_at.is_(None),
+            )
+            .values(revoked_at=now)
+        )
+
     def _record_login_failure(
         self,
         throttle_keys: tuple[LoginThrottleKey, ...],
@@ -528,6 +962,18 @@ def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _action_token_is_active(
+    action_token: AuthActionToken | None,
+    now: datetime,
+) -> bool:
+    return (
+        action_token is not None
+        and action_token.consumed_at is None
+        and action_token.revoked_at is None
+        and _as_utc(action_token.expires_at) > now
+    )
 
 
 def _user_identity(user: User) -> UserIdentity:

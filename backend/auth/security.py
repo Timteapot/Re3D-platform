@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError as DatabaseIntegrityError
 from sqlalchemy.orm import Session
 
 from backend.db.models import (
+    AuthActionRequestBucket,
     AuthEvent,
     AuthRegistrationBucket,
     AuthThrottleBucket,
@@ -30,6 +31,14 @@ class LoginThrottleKey:
 
 @dataclass(frozen=True)
 class RegistrationThrottleKey:
+    dimension: str
+    key_hash: str
+    limit: int
+
+
+@dataclass(frozen=True)
+class ActionRequestThrottleKey:
+    purpose: str
     dimension: str
     key_hash: str
     limit: int
@@ -135,11 +144,20 @@ class AuthSecurity:
     ) -> int | None:
         window = timedelta(minutes=self.settings.registration_window_minutes)
         block = timedelta(minutes=self.settings.registration_block_minutes)
-        buckets: list[tuple[RegistrationThrottleKey, AuthRegistrationBucket]] = []
+        buckets: list[
+            tuple[RegistrationThrottleKey, AuthRegistrationBucket | None]
+        ] = []
         retry_after = 0
 
         for key in keys:
-            bucket = self._get_or_create_registration_bucket(session, key, now=now)
+            bucket = session.execute(
+                select(AuthRegistrationBucket)
+                .where(AuthRegistrationBucket.key_hash == key.key_hash)
+                .with_for_update()
+            ).scalar_one_or_none()
+            if bucket is None:
+                buckets.append((key, None))
+                continue
             blocked_until = _as_utc_or_none(bucket.blocked_until)
             if blocked_until is not None and blocked_until > now:
                 retry_after = max(
@@ -159,6 +177,96 @@ class AuthSecurity:
             return retry_after
 
         for key, bucket in buckets:
+            if bucket is None:
+                bucket = self._get_or_create_registration_bucket(
+                    session,
+                    key,
+                    now=now,
+                )
+            bucket.attempt_count += 1
+            bucket.updated_at = now
+            if bucket.attempt_count >= key.limit:
+                bucket.blocked_until = now + block
+        return None
+
+    def action_request_keys(
+        self,
+        *,
+        purpose: str,
+        identity_subject: str,
+        client_ip_fingerprint: str | None,
+    ) -> tuple[ActionRequestThrottleKey, ...]:
+        keys = [
+            ActionRequestThrottleKey(
+                purpose=purpose,
+                dimension="identity",
+                key_hash=self._fingerprint(
+                    f"auth-action:{purpose}:identity:{identity_subject}"
+                ),
+                limit=self.settings.action_request_identity_max_attempts,
+            )
+        ]
+        if client_ip_fingerprint is not None:
+            keys.append(
+                ActionRequestThrottleKey(
+                    purpose=purpose,
+                    dimension="ip",
+                    key_hash=self._fingerprint(
+                        f"auth-action:{purpose}:ip:{client_ip_fingerprint}"
+                    ),
+                    limit=self.settings.action_request_ip_max_attempts,
+                )
+            )
+        return tuple(sorted(keys, key=lambda key: key.key_hash))
+
+    def consume_action_request(
+        self,
+        session: Session,
+        keys: tuple[ActionRequestThrottleKey, ...],
+        *,
+        now: datetime,
+    ) -> int | None:
+        window = timedelta(minutes=self.settings.action_request_window_minutes)
+        block = timedelta(minutes=self.settings.action_request_block_minutes)
+        buckets: list[
+            tuple[ActionRequestThrottleKey, AuthActionRequestBucket | None]
+        ] = []
+        retry_after = 0
+
+        for key in keys:
+            bucket = session.execute(
+                select(AuthActionRequestBucket)
+                .where(AuthActionRequestBucket.key_hash == key.key_hash)
+                .with_for_update()
+            ).scalar_one_or_none()
+            if bucket is None:
+                buckets.append((key, None))
+                continue
+            blocked_until = _as_utc_or_none(bucket.blocked_until)
+            if blocked_until is not None and blocked_until > now:
+                retry_after = max(
+                    retry_after,
+                    math.ceil((blocked_until - now).total_seconds()),
+                )
+            elif _as_utc(bucket.window_started_at) + window <= now:
+                bucket.attempt_count = 0
+                bucket.window_started_at = now
+                bucket.blocked_until = None
+                bucket.updated_at = now
+            else:
+                bucket.blocked_until = None
+            buckets.append((key, bucket))
+
+        if retry_after:
+            return retry_after
+
+        for key, bucket in buckets:
+            if bucket is None:
+                bucket = self._get_or_create_action_request_bucket(
+                    session,
+                    key,
+                    now=now,
+                )
             bucket.attempt_count += 1
             bucket.updated_at = now
             if bucket.attempt_count >= key.limit:
@@ -333,6 +441,41 @@ class AuthSecurity:
             return session.execute(
                 select(AuthRegistrationBucket)
                 .where(AuthRegistrationBucket.key_hash == key.key_hash)
+                .with_for_update()
+            ).scalar_one()
+
+    def _get_or_create_action_request_bucket(
+        self,
+        session: Session,
+        key: ActionRequestThrottleKey,
+        *,
+        now: datetime,
+    ) -> AuthActionRequestBucket:
+        bucket = session.execute(
+            select(AuthActionRequestBucket)
+            .where(AuthActionRequestBucket.key_hash == key.key_hash)
+            .with_for_update()
+        ).scalar_one_or_none()
+        if bucket is not None:
+            return bucket
+
+        candidate = AuthActionRequestBucket(
+            key_hash=key.key_hash,
+            purpose=key.purpose,
+            dimension=key.dimension,
+            attempt_count=0,
+            window_started_at=now,
+            updated_at=now,
+        )
+        try:
+            with session.begin_nested():
+                session.add(candidate)
+                session.flush()
+            return candidate
+        except DatabaseIntegrityError:
+            return session.execute(
+                select(AuthActionRequestBucket)
+                .where(AuthActionRequestBucket.key_hash == key.key_hash)
                 .with_for_update()
             ).scalar_one()
 
