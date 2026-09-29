@@ -7,7 +7,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel, Field
 
-from apps.api.auth import CurrentUserDependency
+from apps.api.auth import CurrentUserDependency, VerifiedUserDependency
 from backend.auth import UserIdentity
 from backend.uploads import (
     UploadConflictError,
@@ -67,6 +67,7 @@ class UploadSubmitRequest(BaseModel):
 def create_upload_router(
     service: UploadService,
     current_user: CurrentUserDependency,
+    verified_user: VerifiedUserDependency,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v1/uploads", tags=["uploads"])
 
@@ -78,7 +79,7 @@ def create_upload_router(
     def create_upload(
         payload: UploadCreateRequest,
         response: Response,
-        user: UserIdentity = Depends(current_user),
+        user: UserIdentity = Depends(verified_user),
     ) -> UploadResponse:
         try:
             snapshot, reused = service.create(
@@ -111,7 +112,7 @@ def create_upload_router(
     def add_image(
         upload_id: uuid.UUID,
         file: UploadFile = File(...),
-        user: UserIdentity = Depends(current_user),
+        user: UserIdentity = Depends(verified_user),
     ) -> UploadResponse:
         try:
             snapshot = service.add_image(
@@ -180,7 +181,7 @@ def create_upload_router(
     def submit_upload(
         upload_id: uuid.UUID,
         payload: UploadSubmitRequest | None = None,
-        user: UserIdentity = Depends(current_user),
+        user: UserIdentity = Depends(verified_user),
     ) -> SubmittedJobResponse:
         try:
             job = service.submit(

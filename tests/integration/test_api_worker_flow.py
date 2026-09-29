@@ -16,7 +16,7 @@ from sqlalchemy.orm import sessionmaker
 from apps.api.main import AppServices, create_app
 from apps.worker.main import main as worker_main
 from backend.auth import AuthService, AuthSettings
-from backend.db.models import AuthEvent, Base, ReconstructionJob
+from backend.db.models import AuthEvent, Base, ReconstructionJob, User
 from backend.db.queue import JobQueue
 from backend.jobs.development import DevelopmentJobService
 from backend.uploads import UploadService
@@ -87,13 +87,25 @@ class ApiWorkerFlowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 201)
         return response.json()
 
-    def register_and_login(self, *, username: str, email: str) -> tuple[uuid.UUID, str]:
+    def register_and_login(
+        self,
+        *,
+        username: str,
+        email: str,
+        verified: bool = True,
+    ) -> tuple[uuid.UUID, str]:
         password = "correct horse battery staple"
         registered = self.client.post(
             "/api/v1/auth/register",
             json={"username": username, "email": email, "password": password},
         )
         self.assertEqual(registered.status_code, 201)
+        user_id = uuid.UUID(registered.json()["id"])
+        if verified:
+            with self.sessions.begin() as session:
+                user = session.get(User, user_id)
+                assert user is not None
+                user.email_verified = True
         logged_in = self.client.post(
             "/api/v1/auth/login",
             json={"identifier": username, "password": password},
@@ -104,7 +116,7 @@ class ApiWorkerFlowTests(unittest.TestCase):
         self.assertIn("httponly", refresh_cookie)
         self.assertIn("samesite=lax", refresh_cookie)
         self.assertIn("path=/api/v1/auth", refresh_cookie)
-        return uuid.UUID(registered.json()["id"]), logged_in.json()["access_token"]
+        return user_id, logged_in.json()["access_token"]
 
     @staticmethod
     def auth_headers(access_token: str) -> dict[str, str]:
@@ -450,9 +462,34 @@ class ApiWorkerFlowTests(unittest.TestCase):
         self.assertEqual(len(blocked_events), 1)
 
     def test_email_verification_and_password_reset_api_flow(self) -> None:
+        _, unverified_access_token = self.register_and_login(
+            username="unverified-owner",
+            email="unverified-owner@example.com",
+            verified=False,
+        )
+
+        readable_jobs = self.client.get(
+            "/api/v1/jobs",
+            headers=self.auth_headers(unverified_access_token),
+        )
+        self.assertEqual(readable_jobs.status_code, 200)
+        blocked_upload = self.client.post(
+            "/api/v1/uploads",
+            json={"idempotency_key": "unverified-upload-001"},
+            headers=self.auth_headers(unverified_access_token),
+        )
+        self.assertEqual(blocked_upload.status_code, 403)
+        self.assertEqual(blocked_upload.json()["detail"], "email verification is required")
+        blocked_simulation = self.client.post(
+            "/api/v1/development/simulated-jobs",
+            json={"image_count": 3, "idempotency_key": "unverified-job-001"},
+            headers=self.auth_headers(unverified_access_token),
+        )
+        self.assertEqual(blocked_simulation.status_code, 403)
+
         verification_request = self.client.post(
             "/api/v1/auth/email-verification/request",
-            headers=self.auth_headers(self.access_token),
+            headers=self.auth_headers(unverified_access_token),
         )
         self.assertEqual(verification_request.status_code, 202)
         self.assertEqual(len(self.email_sender.verification), 1)
@@ -470,13 +507,20 @@ class ApiWorkerFlowTests(unittest.TestCase):
         )
         self.assertEqual(replayed.status_code, 400)
 
+        allowed_upload = self.client.post(
+            "/api/v1/uploads",
+            json={"idempotency_key": "verified-upload-001"},
+            headers=self.auth_headers(unverified_access_token),
+        )
+        self.assertEqual(allowed_upload.status_code, 201)
+
         unknown = self.client.post(
             "/api/v1/auth/password-reset/request",
             json={"email": "missing-reset@example.com"},
         )
         known = self.client.post(
             "/api/v1/auth/password-reset/request",
-            json={"email": "api-owner@example.com"},
+            json={"email": "unverified-owner@example.com"},
         )
         self.assertEqual(unknown.status_code, 202)
         self.assertEqual(known.status_code, 202)
@@ -492,11 +536,12 @@ class ApiWorkerFlowTests(unittest.TestCase):
             },
         )
         self.assertEqual(reset.status_code, 204)
+        self.assertIn("max-age=0", reset.headers["set-cookie"].lower())
         self.assertEqual(self.client.post("/api/v1/auth/refresh").status_code, 401)
         old_password = self.client.post(
             "/api/v1/auth/login",
             json={
-                "identifier": "api-owner",
+                "identifier": "unverified-owner",
                 "password": "correct horse battery staple",
             },
         )
@@ -504,7 +549,7 @@ class ApiWorkerFlowTests(unittest.TestCase):
         new_password = self.client.post(
             "/api/v1/auth/login",
             json={
-                "identifier": "api-owner",
+                "identifier": "unverified-owner",
                 "password": "new correct horse battery staple",
             },
         )

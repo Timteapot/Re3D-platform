@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, login, refreshSession } from "./api";
+import {
+  ApiError,
+  confirmPasswordReset,
+  login,
+  refreshSession,
+  requestEmailVerification,
+  requestPasswordReset,
+} from "./api";
 
 const session = {
   access_token: "access-token",
@@ -83,5 +90,58 @@ describe("authentication API", () => {
       status: 401,
       message: "invalid credentials",
     });
+  });
+
+  it("authenticates email verification requests", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ detail: "accepted" }), {
+        status: 202,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await requestEmailVerification("access-token");
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/auth/email-verification/request");
+    expect(init.method).toBe("POST");
+    expect(new Headers(init.headers).get("Authorization")).toBe("Bearer access-token");
+  });
+
+  it("sends password reset request and confirmation payloads", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ detail: "accepted" }), {
+          status: 202,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await requestPasswordReset("learner@example.com");
+    await confirmPasswordReset("reset-token", "a new secure password");
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/v1/auth/password-reset/request",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ email: "learner@example.com" }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/v1/auth/password-reset/confirm",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          token: "reset-token",
+          new_password: "a new secure password",
+        }),
+      }),
+    );
   });
 });

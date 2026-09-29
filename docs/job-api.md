@@ -15,6 +15,8 @@
 
 这些路由在 development、test 和 production 环境注册。所有用户身份只来自经过校验的 Bearer access token；任务不存在和跨用户访问统一返回 404。
 
+读取、下载和取消已有任务不要求邮箱已验证。development/test 的 `/api/v1/development/simulated-jobs` 创建接口要求邮箱已验证；这与上传提交接口采用同一服务端权限边界。
+
 ## 环境边界
 
 | 接口组 | development/test | production |

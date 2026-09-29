@@ -67,6 +67,10 @@ class PostgreSQLApiWorkerFlowTests(unittest.TestCase):
         )
         self.assertEqual(registered.status_code, 201)
         self.user_id = uuid.UUID(registered.json()["id"])
+        with self.sessions.begin() as session:
+            user = session.get(User, self.user_id)
+            assert user is not None
+            user.email_verified = True
         logged_in = self.client.post(
             "/api/v1/auth/login",
             json={

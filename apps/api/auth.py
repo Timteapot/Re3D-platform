@@ -33,6 +33,7 @@ from backend.auth import (
 
 
 CurrentUserDependency = Callable[..., UserIdentity]
+VerifiedUserDependency = Callable[..., UserIdentity]
 
 
 class RegisterRequest(BaseModel):
@@ -95,7 +96,7 @@ class TokenResponse(BaseModel):
 
 def create_auth_router(
     service: AuthService,
-) -> tuple[APIRouter, CurrentUserDependency]:
+) -> tuple[APIRouter, CurrentUserDependency, VerifiedUserDependency]:
     router = APIRouter(prefix="/api/v1/auth", tags=["authentication"])
     bearer = HTTPBearer(auto_error=False)
 
@@ -110,6 +111,16 @@ def create_auth_router(
             raise _authentication_error() from exc
         except InactiveUserError as exc:
             raise HTTPException(status_code=403, detail="user account is inactive") from exc
+
+    def verified_user(
+        user: UserIdentity = Depends(current_user),
+    ) -> UserIdentity:
+        if not user.email_verified:
+            raise HTTPException(
+                status_code=403,
+                detail="email verification is required",
+            )
+        return user
 
     @router.post(
         "/register",
@@ -255,6 +266,7 @@ def create_auth_router(
     def confirm_password_reset(
         payload: PasswordResetConfirmRequest,
         request: Request,
+        response: Response,
     ) -> None:
         try:
             service.confirm_password_reset(
@@ -269,6 +281,7 @@ def create_auth_router(
             ) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        _delete_refresh_cookie(response, service)
 
     @router.post("/refresh", response_model=TokenResponse)
     def refresh(
@@ -305,20 +318,14 @@ def create_auth_router(
             refresh_token,
             context=_request_context(request, service),
         )
-        response.delete_cookie(
-            key=service.settings.refresh_cookie_name,
-            path="/api/v1/auth",
-            secure=service.settings.cookie_secure,
-            httponly=True,
-            samesite="lax",
-        )
+        _delete_refresh_cookie(response, service)
         _set_no_store(response)
 
     @router.get("/me", response_model=UserResponse)
     def me(user: UserIdentity = Depends(current_user)) -> UserResponse:
         return UserResponse.from_identity(user)
 
-    return router, current_user
+    return router, current_user, verified_user
 
 
 def _token_response(issued: IssuedTokens) -> TokenResponse:
@@ -350,6 +357,16 @@ def _set_refresh_cookie(
 def _set_no_store(response: Response) -> None:
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
+
+
+def _delete_refresh_cookie(response: Response, service: AuthService) -> None:
+    response.delete_cookie(
+        key=service.settings.refresh_cookie_name,
+        path="/api/v1/auth",
+        secure=service.settings.cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
 
 
 def _authentication_error(detail: str = "could not validate credentials") -> HTTPException:

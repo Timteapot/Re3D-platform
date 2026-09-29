@@ -28,6 +28,7 @@ from backend.jobs.development import DevelopmentJobService
 
 
 CurrentUserDependency = Callable[..., UserIdentity]
+VerifiedUserDependency = Callable[..., UserIdentity]
 STABLE_JOB_PREFIX = "/api/v1/jobs"
 LEGACY_DEVELOPMENT_JOB_PREFIX = "/api/v1/development/jobs"
 
@@ -229,7 +230,7 @@ def encode_job_event(snapshot: dict[str, Any]) -> str:
 
 def create_development_job_router(
     development_jobs: DevelopmentJobService,
-    current_user: CurrentUserDependency,
+    verified_user: VerifiedUserDependency,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v1/development", tags=["development"])
 
@@ -241,7 +242,7 @@ def create_development_job_router(
     def create_simulated_job(
         payload: SimulatedJobCreate,
         response: Response,
-        user: UserIdentity = Depends(current_user),
+        user: UserIdentity = Depends(verified_user),
     ) -> JobResponse:
         try:
             created = development_jobs.create_simulated_job(

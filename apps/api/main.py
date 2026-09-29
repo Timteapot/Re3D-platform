@@ -89,7 +89,9 @@ def create_app(
 
     resolved_services = services or build_services(environment=environment)
     app.state.services = resolved_services
-    auth_router, current_user = create_auth_router(resolved_services.auth)
+    auth_router, current_user, verified_user = create_auth_router(
+        resolved_services.auth
+    )
     app.include_router(auth_router)
 
     poll_seconds = 0.05 if environment == "test" else 1.0
@@ -105,12 +107,18 @@ def create_app(
     if environment not in DEVELOPMENT_ENVIRONMENTS:
         return app
 
-    app.include_router(create_upload_router(resolved_services.uploads, current_user))
+    app.include_router(
+        create_upload_router(
+            resolved_services.uploads,
+            current_user,
+            verified_user,
+        )
+    )
 
     app.include_router(
         create_development_job_router(
             resolved_services.development_jobs,
-            current_user,
+            verified_user,
         )
     )
     app.include_router(

@@ -54,7 +54,7 @@ export function AuthPage() {
         });
         navigate("/auth/login", {
           replace: true,
-          state: { notice: "注册成功，请使用新账号登录。" },
+          state: { notice: "注册成功。登录后请发送并完成邮箱验证，才能创建重建任务。" },
         });
       } else {
         await auth.login({
@@ -141,6 +141,12 @@ export function AuthPage() {
               required
             />
             {isRegister ? <p className="field-hint">至少 12 个非空白字符</p> : null}
+
+            {!isRegister ? (
+              <Link className="forgot-password-link" to="/auth/forgot-password">
+                忘记密码？
+              </Link>
+            ) : null}
 
             {isRegister ? (
               <>

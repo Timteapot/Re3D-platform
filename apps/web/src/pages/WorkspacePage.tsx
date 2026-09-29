@@ -50,6 +50,9 @@ function readableError(error: unknown): string {
     return "上传请求已停止，正在取消上传会话。";
   }
   if (error instanceof ApiError) {
+    if (error.status === 403 && error.message === "email verification is required") {
+      return "请先完成邮箱验证，再创建或提交重建任务。";
+    }
     if (error.status === 413) return "图片或任务总大小超过后端限制。";
     if (error.status === 409) return `上传冲突：${error.message}`;
     if (error.status === 422) return `图片未通过校验：${error.message}`;
@@ -75,6 +78,10 @@ export function WorkspacePage() {
   const [batchTotal, setBatchTotal] = useState(0);
   const [uploadSession, setUploadSession] = useState<UploadSession | null>(null);
   const [latestJob, setLatestJob] = useState<Job | null>(null);
+  const [verificationSending, setVerificationSending] = useState(false);
+  const [verificationNotice, setVerificationNotice] = useState<string | null>(null);
+  const [verificationError, setVerificationError] = useState<string | null>(null);
+  const emailVerified = auth.user?.email_verified === true;
 
   const totalBytes = useMemo(
     () => files.reduce((total, file) => total + file.size, 0),
@@ -185,6 +192,11 @@ export function WorkspacePage() {
   });
 
   function selectFiles(event: ChangeEvent<HTMLInputElement>) {
+    if (!emailVerified) {
+      setSelectionError("请先完成邮箱验证，再选择重建图片。");
+      event.target.value = "";
+      return;
+    }
     const selected = Array.from(event.target.files ?? []);
     uploadFiles.reset();
     setUploadedCount(0);
@@ -229,9 +241,9 @@ export function WorkspacePage() {
     deleteImage.isPending ||
     submitDraft.isPending ||
     cancelDraft.isPending;
-  const canUpload = files.length > 0 && !busy;
+  const canUpload = emailVerified && files.length > 0 && !busy;
   const canSubmit =
-    uploadSession !== null && uploadSession.image_count >= 3 && !busy;
+    emailVerified && uploadSession !== null && uploadSession.image_count >= 3 && !busy;
   const progress =
     batchTotal > 0 ? Math.round((uploadedCount / batchTotal) * 100) : 0;
   const displayedLatestJob = latestJob
@@ -251,14 +263,44 @@ export function WorkspacePage() {
         </span>
       </header>
 
+      {!emailVerified ? (
+        <section className="verification-banner" aria-labelledby="verification-heading">
+          <div>
+            <p className="eyebrow">ACTION REQUIRED</p>
+            <h2 id="verification-heading">验证邮箱后再创建任务</h2>
+            <p>
+              当前账号可以查看和取消已有任务，但上传图片、提交输入和创建新任务已锁定。验证邮件将发送至 {auth.user?.email}。
+            </p>
+          </div>
+          <button
+            className="button primary"
+            type="button"
+            disabled={verificationSending}
+            onClick={() => {
+              setVerificationSending(true);
+              setVerificationNotice(null);
+              setVerificationError(null);
+              void auth.requestEmailVerification()
+                .then(() => setVerificationNotice("验证邮件请求已受理，请检查收件箱。"))
+                .catch((error: unknown) => setVerificationError(readableError(error)))
+                .finally(() => setVerificationSending(false));
+            }}
+          >
+            {verificationSending ? "正在发送…" : "发送验证邮件"}
+          </button>
+          {verificationNotice ? <div className="form-notice success" role="status">{verificationNotice}</div> : null}
+          {verificationError ? <div className="form-notice error" role="alert">{verificationError}</div> : null}
+        </section>
+      ) : null}
+
       <section className="workspace-grid">
         <article className="workspace-card upload-card">
           <div className="card-label">INPUT</div>
           <h2>管理多视图输入</h2>
           <p>支持 JPEG、PNG，3–150 张，单张最大 25 MB、合计最大 1 GiB。图片先验证并保留在可修改上传中，确认后再冻结并入队。</p>
-          <label className="file-picker" htmlFor="reconstruction-images">
-            <span>选择一批图片</span>
-            <small>可分批添加；磁盘名称由平台生成</small>
+          <label className={`file-picker${emailVerified ? "" : " disabled"}`} htmlFor="reconstruction-images">
+            <span>{emailVerified ? "选择一批图片" : "邮箱验证后开放图片上传"}</span>
+            <small>{emailVerified ? "可分批添加；磁盘名称由平台生成" : "现有任务仍可正常查看"}</small>
           </label>
           <input
             className="visually-hidden"
@@ -266,7 +308,7 @@ export function WorkspacePage() {
             type="file"
             accept="image/jpeg,image/png,.jpg,.jpeg,.png"
             multiple
-            disabled={busy}
+            disabled={busy || !emailVerified}
             onChange={selectFiles}
           />
 

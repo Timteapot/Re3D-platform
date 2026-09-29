@@ -3,6 +3,10 @@ import { requestJson } from "../api/http";
 
 const AUTH_BASE = "/api/v1/auth";
 
+export interface AcceptedResponse {
+  detail: string;
+}
+
 export { ApiError } from "../api/http";
 
 export function register(input: RegisterInput): Promise<User> {
@@ -16,6 +20,40 @@ export function login(input: LoginInput): Promise<TokenResponse> {
   return requestJson<TokenResponse>(`${AUTH_BASE}/login`, {
     method: "POST",
     body: JSON.stringify(input),
+  });
+}
+
+export function requestEmailVerification(
+  accessToken: string,
+): Promise<AcceptedResponse> {
+  return requestJson<AcceptedResponse>(
+    `${AUTH_BASE}/email-verification/request`,
+    { method: "POST" },
+    accessToken,
+  );
+}
+
+export function confirmEmailVerification(token: string): Promise<User> {
+  return requestJson<User>(`${AUTH_BASE}/email-verification/confirm`, {
+    method: "POST",
+    body: JSON.stringify({ token }),
+  });
+}
+
+export function requestPasswordReset(email: string): Promise<AcceptedResponse> {
+  return requestJson<AcceptedResponse>(`${AUTH_BASE}/password-reset/request`, {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
+
+export function confirmPasswordReset(
+  token: string,
+  newPassword: string,
+): Promise<void> {
+  return requestJson<void>(`${AUTH_BASE}/password-reset/confirm`, {
+    method: "POST",
+    body: JSON.stringify({ token, new_password: newPassword }),
   });
 }
 

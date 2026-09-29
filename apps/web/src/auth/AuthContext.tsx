@@ -10,6 +10,7 @@ import {
 
 import {
   ApiError,
+  confirmEmailVerification as confirmEmailVerificationRequest,
   login as loginRequest,
   logout as logoutRequest,
   refreshSession,
@@ -29,6 +30,8 @@ interface AuthContextValue {
   register: (input: RegisterInput) => Promise<User>;
   logout: () => Promise<void>;
   retryRestore: () => Promise<void>;
+  requestEmailVerification: () => Promise<void>;
+  confirmEmailVerification: (token: string) => Promise<User>;
   request: <T>(path: string, init?: RequestInit) => Promise<T>;
   fetchAuthorized: (path: string, init?: RequestInit) => Promise<Response>;
 }
@@ -140,6 +143,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [accessToken, clearSession],
   );
 
+  const requestEmailVerification = useCallback(async () => {
+    await request<{ detail: string }>(
+      "/api/v1/auth/email-verification/request",
+      { method: "POST" },
+    );
+  }, [request]);
+
+  const confirmEmailVerification = useCallback(
+    async (token: string) => {
+      const verifiedUser = await confirmEmailVerificationRequest(token);
+      setUser((current) =>
+        current?.id === verifiedUser.id ? verifiedUser : current,
+      );
+      return verifiedUser;
+    },
+    [],
+  );
+
   const value = useMemo<AuthContextValue>(
     () => ({
       status,
@@ -150,10 +171,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       register,
       logout,
       retryRestore,
+      requestEmailVerification,
+      confirmEmailVerification,
       request,
       fetchAuthorized,
     }),
-    [accessToken, fetchAuthorized, login, logout, register, request, restoreError, retryRestore, status, user],
+    [
+      accessToken,
+      confirmEmailVerification,
+      fetchAuthorized,
+      login,
+      logout,
+      register,
+      request,
+      requestEmailVerification,
+      restoreError,
+      retryRestore,
+      status,
+      user,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

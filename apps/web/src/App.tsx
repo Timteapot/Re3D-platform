@@ -3,6 +3,7 @@ import { Route, Routes } from "react-router-dom";
 import { ProtectedRoute } from "./auth/ProtectedRoute";
 import { AppShell } from "./components/AppShell";
 import { AboutPage } from "./pages/AboutPage";
+import { AccountRecoveryPage } from "./pages/AccountRecoveryPage";
 import { AuthPage } from "./pages/AuthPage";
 import { HomePage } from "./pages/HomePage";
 import { JobDetailPage } from "./pages/JobDetailPage";
@@ -21,6 +22,9 @@ export function App() {
         </Route>
         <Route path="*" element={<NotFoundPage />} />
       </Route>
+      <Route path="auth/verify-email" element={<AccountRecoveryPage mode="verify-email" />} />
+      <Route path="auth/forgot-password" element={<AccountRecoveryPage mode="forgot-password" />} />
+      <Route path="auth/reset-password" element={<AccountRecoveryPage mode="reset-password" />} />
       <Route path="auth/:mode" element={<AuthPage />} />
     </Routes>
   );
