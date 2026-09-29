@@ -38,6 +38,19 @@ class AuthMaintenanceTests(unittest.TestCase):
         self.engine.dispose()
         self.temporary.cleanup()
 
+    @patch(
+        "apps.maintenance.main.check_local_readiness",
+        return_value={"status": "ready"},
+    )
+    def test_local_readiness_command_outputs_safe_json(self, readiness) -> None:
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = maintenance_main(["check-local-readiness"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(json.loads(stdout.getvalue()), {"status": "ready"})
+        readiness.assert_called_once_with()
+
     def test_cleanup_removes_expired_records_but_preserves_active_blocks(self) -> None:
         now = datetime.now(timezone.utc)
         old = now - timedelta(days=100)

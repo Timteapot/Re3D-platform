@@ -52,6 +52,14 @@ tests                    集成、端到端与测试夹具
 
 邮件界面位于 `http://127.0.0.1:8025`，具体配置和停止方式见 [`deploy/mailpit/README.md`](deploy/mailpit/README.md)。
 
+首次创建包含数据库密码和随机 JWT 密钥的本机 `.env`：
+
+```powershell
+& .\deploy\development\initialize-local-env.ps1
+```
+
+脚本不会覆盖已有配置，且只输出不含秘密的就绪检查结果。说明见 [`deploy/development/README.md`](deploy/development/README.md)。
+
 `.env`、用户数据、模型权重和运行产物不得提交到 Git。
 
 前端首次安装和启动：

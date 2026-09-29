@@ -46,7 +46,7 @@ python -m venv .venv
 
 ## 4. 配置开发环境
 
-将 `.env.example` 复制为未提交的 `.env`，填写已创建的 `re3d_app` 密码。至少确认：
+推荐运行 `deploy/development/initialize-local-env.ps1`，通过安全提示输入已创建的 `re3d_app` 密码。脚本从 `.env.example` 创建未提交的 `.env`，生成随机 JWT 密钥，并验证数据库、迁移、Re3D、数据目录和本地 SMTP。也可以手工复制配置，但至少确认：
 
 ```dotenv
 APP_ENV=development
