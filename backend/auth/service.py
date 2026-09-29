@@ -76,22 +76,38 @@ class AuthService:
         password: str,
         context: AuthRequestContext | None = None,
     ) -> UserIdentity:
-        try:
-            normalized_username = _normalize_username(username)
-            normalized_email = _normalize_email(email)
-            _validate_password(password)
-        except ValueError:
-            self._record_event(
-                action="register",
-                outcome="failure",
-                context=context,
-                identifier=email or username,
-                reason_code="validation_failed",
-            )
-            raise
+        normalized_username = _normalize_username(username)
+        normalized_email = _normalize_email(email)
+        _validate_password(password)
         identifier_fingerprint = self.security.identifier_fingerprint(
             normalized_email
         )
+        throttle_keys = self.security.registration_keys(
+            normalized_username=normalized_username,
+            normalized_email=normalized_email,
+            client_ip_fingerprint=self.security.client_ip_fingerprint(context),
+        )
+        retry_after: int | None
+        with self.session_factory.begin() as session:
+            now = _database_now(session)
+            retry_after = self.security.consume_registration_attempt(
+                session,
+                throttle_keys,
+                now=now,
+            )
+            if retry_after is not None:
+                self.security.add_event(
+                    session,
+                    action="register",
+                    outcome="blocked",
+                    context=context,
+                    occurred_at=now,
+                    identifier_fingerprint=identifier_fingerprint,
+                    reason_code="rate_limited",
+                )
+        if retry_after is not None:
+            raise RateLimitExceededError(retry_after)
+
         password_hash = PASSWORD_HASH.hash(password)
         user = User(
             id=uuid.uuid4(),

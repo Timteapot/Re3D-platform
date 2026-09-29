@@ -27,6 +27,10 @@
 - `auth_events`：注册、登录、刷新与退出的成功、失败、阻断和 refresh token 重放事件；
 - `auth_throttle_buckets`：跨 API 进程共享的账户/IP 固定窗口失败计数和阻断期限。
 
+`0006_registration_throttle` 增加：
+
+- `auth_registration_buckets`：跨 API 进程共享的用户名、邮箱和 IP 注册尝试计数及阻断期限。
+
 数据库从不保存明文密码或明文 refresh token。审计表不保存原始用户名、邮箱、IP 或 User-Agent：登录标识符和 IP 使用 JWT secret 做带域分离的 HMAC-SHA-256，User-Agent 只保存 SHA-256。Access token 只包含用户 UUID、token 类型、签发/到期时间、issuer、audience 和随机 `jti`，不包含邮箱、用户名或密码信息。轮换 JWT secret 会同时改变后续审计指纹，因此跨轮换周期不能直接用指纹关联事件；正式密钥轮换方案需同时定义审计关联边界。
 
 ## 3. Token 流程
@@ -61,7 +65,7 @@ JWT 验证允许最多 5 秒的主机时钟偏差，用于容纳 API 与 Postgre
 
 当前不检查泄露密码库；公开互联网部署前仍需评估泄露密码检查和必要时的验证码。
 
-## 5. 登录限流与审计
+## 5. 登录、注册限流与审计
 
 默认策略：
 
@@ -74,7 +78,17 @@ JWT 验证允许最多 5 秒的主机时钟偏差，用于容纳 API 与 Postgre
 
 客户端 IP 默认取 TCP 对端，不直接相信 `X-Forwarded-For`。只有对端位于 `AUTH_TRUSTED_PROXY_CIDRS` 时，才从代理链右向左跳过可信代理并选择第一个不可信地址。production 必须显式配置可信代理网段，否则应用拒绝启动；不能把 `0.0.0.0/0` 或任意公网范围配置为可信代理。
 
-审计记录覆盖注册、登录、refresh token 轮换/重放和有效 refresh session 的退出。随机伪造或缺失的 refresh Cookie 不写入数据库，避免未认证请求无限制造审计记录。当前尚未实现审计查询后台、审计保留期清理和注册接口限流。
+审计记录覆盖注册、登录、refresh token 轮换/重放和有效 refresh session 的退出。随机伪造或缺失的 refresh Cookie 不写入数据库，避免未认证请求无限制造审计记录。
+
+注册默认使用 60 分钟窗口：同一规范化用户名或邮箱允许 3 次有效注册尝试，同一客户端 IP 允许 10 次。成功注册、重复用户名/邮箱等通过请求模型和服务校验的尝试都会计数，因此不能通过批量创建不同账户或重复触发唯一约束绕过；达到阈值后的后续请求返回 429 和 `Retry-After`。请求模型直接拒绝的畸形请求不写数据库，仍应由反向代理承担连接级和通用请求速率限制。
+
+认证维护命令默认删除 90 天前的认证事件，并删除 7 天未更新且不在阻断期的登录/注册限流桶。每张表每次最多处理 1000 行，重复运行直到删除数为零即可完成积压清理：
+
+```powershell
+.\.venv\Scripts\python.exe -m apps.maintenance.main cleanup-auth-security
+```
+
+可通过 `--event-retention-days`、`--throttle-retention-days` 和 `--limit` 临时覆盖配置。该命令只清理认证安全表，不删除用户、refresh session、重建任务或任务文件。正式部署时应由计划任务定期运行并监控返回的 JSON 结果。当前尚未实现受管理员权限保护的审计查询后台。
 
 ## 6. Cookie 与环境约束
 
@@ -110,7 +124,14 @@ AUTH_LOGIN_WINDOW_MINUTES=15
 AUTH_LOGIN_ACCOUNT_MAX_FAILURES=5
 AUTH_LOGIN_IP_MAX_FAILURES=30
 AUTH_LOGIN_BLOCK_MINUTES=15
+AUTH_REGISTRATION_WINDOW_MINUTES=60
+AUTH_REGISTRATION_IDENTITY_MAX_ATTEMPTS=3
+AUTH_REGISTRATION_IP_MAX_ATTEMPTS=10
+AUTH_REGISTRATION_BLOCK_MINUTES=60
 AUTH_TRUSTED_PROXY_CIDRS=
+AUTH_EVENT_RETENTION_DAYS=90
+AUTH_THROTTLE_RETENTION_DAYS=7
+AUTH_CLEANUP_BATCH_SIZE=1000
 ```
 
 production 环境如果设置 `REFRESH_COOKIE_SECURE=false`、未配置 `AUTH_TRUSTED_PROXY_CIDRS`、使用示例占位 JWT secret 或不足 32 字节的 secret，应用都会拒绝启动。开发环境直连 FastAPI 时可信代理列表可保持为空。
@@ -155,7 +176,7 @@ Invoke-RestMethod `
 
 - 邮箱验证令牌和邮件发送；
 - 密码重置和修改密码后撤销全部会话；
-- 注册限流、验证码、审计查询权限和审计保留期清理；
+- 验证码和审计查询权限；
 - 邮箱验证状态与前端提交权限联动；
 - 管理员停用用户的受保护接口；
 - 多设备会话列表与单独撤销；

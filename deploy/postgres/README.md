@@ -41,7 +41,7 @@ DATABASE_URL=postgresql+psycopg://re3d_app:<URL编码后的密码>@127.0.0.1:543
 
 `0004_upload_lifecycle` 增加取消时间、取消原因、目录清理完成时间和维护查询索引。迁移本身只修改数据库结构，不删除任何任务目录。
 
-`0005_auth_audit_throttle` 增加脱敏认证事件和共享登录限流桶。迁移不修改用户密码、refresh token、任务或文件数据。
+`0005_auth_audit_throttle` 增加脱敏认证事件和共享登录限流桶；`0006_registration_throttle` 增加共享注册尝试限流桶。迁移不修改用户密码、refresh token、任务或文件数据。
 
 ## 集成测试
 

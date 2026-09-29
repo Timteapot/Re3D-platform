@@ -21,6 +21,7 @@ from backend.auth import (
 )
 from backend.db.models import (
     AuthEvent,
+    AuthRegistrationBucket,
     AuthThrottleBucket,
     Base,
     RefreshSession,
@@ -74,6 +75,21 @@ class AuthServiceTests(unittest.TestCase):
                 email="different@example.com",
                 password="another valid development password",
             )
+
+    def test_invalid_registration_does_not_create_audit_or_throttle_rows(self) -> None:
+        with self.assertRaises(ValueError):
+            self.auth.register(
+                username="invalid username",
+                email="valid@example.com",
+                password="correct horse battery staple",
+            )
+        with self.sessions() as session:
+            events = list(session.execute(select(AuthEvent)).scalars())
+            buckets = list(
+                session.execute(select(AuthRegistrationBucket)).scalars()
+            )
+        self.assertEqual(events, [])
+        self.assertEqual(buckets, [])
 
     def test_login_access_refresh_rotation_and_logout(self) -> None:
         self.register_user()
@@ -293,6 +309,84 @@ class AuthServiceTests(unittest.TestCase):
                 context=context,
             )
 
+    def test_registration_throttle_counts_success_and_duplicate_attempts(self) -> None:
+        settings = AuthSettings(
+            jwt_secret=TEST_SECRET,
+            cookie_secure=False,
+            registration_identity_max_attempts=2,
+            registration_ip_max_attempts=10,
+            registration_block_minutes=1,
+        )
+        auth = AuthService(self.sessions, settings)
+        now = datetime.now(timezone.utc) - timedelta(hours=2)
+        with patch("backend.auth.service._database_now", return_value=now):
+            auth.register(
+                username="limited-registration",
+                email="limited-registration@example.com",
+                password="correct horse battery staple",
+            )
+            with self.assertRaises(DuplicateIdentityError):
+                auth.register(
+                    username="limited-registration",
+                    email="another-registration@example.com",
+                    password="correct horse battery staple",
+                )
+            with self.assertRaises(RateLimitExceededError) as blocked:
+                auth.register(
+                    username="limited-registration",
+                    email="third-registration@example.com",
+                    password="correct horse battery staple",
+                )
+        self.assertEqual(blocked.exception.retry_after_seconds, 60)
+
+        with patch(
+            "backend.auth.service._database_now",
+            return_value=now + timedelta(minutes=61),
+        ):
+            with self.assertRaises(DuplicateIdentityError):
+                auth.register(
+                    username="limited-registration",
+                    email="after-window@example.com",
+                    password="correct horse battery staple",
+                )
+
+        with self.sessions() as session:
+            buckets = session.execute(
+                select(AuthRegistrationBucket)
+            ).scalars().all()
+            blocked_events = session.execute(
+                select(AuthEvent).where(
+                    AuthEvent.action == "register",
+                    AuthEvent.outcome == "blocked",
+                )
+            ).scalars().all()
+        self.assertGreaterEqual(len(buckets), 4)
+        self.assertEqual(len(blocked_events), 1)
+
+    def test_registration_ip_throttle_aggregates_unique_identities(self) -> None:
+        settings = AuthSettings(
+            jwt_secret=TEST_SECRET,
+            cookie_secure=False,
+            registration_identity_max_attempts=2,
+            registration_ip_max_attempts=2,
+        )
+        auth = AuthService(self.sessions, settings)
+        context = AuthRequestContext(client_ip="198.51.100.55")
+        for index in range(2):
+            auth.register(
+                username=f"registration-ip-{index}",
+                email=f"registration-ip-{index}@example.com",
+                password="correct horse battery staple",
+                context=context,
+            )
+        with self.assertRaises(RateLimitExceededError):
+            auth.register(
+                username="registration-ip-blocked",
+                email="registration-ip-blocked@example.com",
+                password="correct horse battery staple",
+                context=context,
+            )
+
 
 class AuthRequestContextTests(unittest.TestCase):
     def test_ignores_forwarded_header_from_untrusted_peer(self) -> None:
@@ -368,6 +462,12 @@ class AuthSettingsTests(unittest.TestCase):
             AuthSettings(
                 jwt_secret=TEST_SECRET,
                 trusted_proxy_cidrs=("not-a-network",),
+            )
+        with self.assertRaises(ValueError):
+            AuthSettings(
+                jwt_secret=TEST_SECRET,
+                registration_identity_max_attempts=10,
+                registration_ip_max_attempts=5,
             )
 
 

@@ -22,6 +22,10 @@ class AuthSettings:
     login_account_max_failures: int = 5
     login_ip_max_failures: int = 30
     login_block_minutes: int = 15
+    registration_window_minutes: int = 60
+    registration_identity_max_attempts: int = 3
+    registration_ip_max_attempts: int = 10
+    registration_block_minutes: int = 60
     trusted_proxy_cidrs: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -49,6 +53,27 @@ class AuthSettings:
             )
         if not 1 <= self.login_block_minutes <= 1440:
             raise ValueError("AUTH_LOGIN_BLOCK_MINUTES must be between 1 and 1440")
+        if not 1 <= self.registration_window_minutes <= 1440:
+            raise ValueError(
+                "AUTH_REGISTRATION_WINDOW_MINUTES must be between 1 and 1440"
+            )
+        if not 1 <= self.registration_identity_max_attempts <= 100:
+            raise ValueError(
+                "AUTH_REGISTRATION_IDENTITY_MAX_ATTEMPTS must be between 1 and 100"
+            )
+        if not (
+            self.registration_identity_max_attempts
+            <= self.registration_ip_max_attempts
+            <= 1000
+        ):
+            raise ValueError(
+                "AUTH_REGISTRATION_IP_MAX_ATTEMPTS must be between the identity "
+                "limit and 1000"
+            )
+        if not 1 <= self.registration_block_minutes <= 1440:
+            raise ValueError(
+                "AUTH_REGISTRATION_BLOCK_MINUTES must be between 1 and 1440"
+            )
         for cidr in self.trusted_proxy_cidrs:
             try:
                 ip_network(cidr, strict=False)
@@ -104,6 +129,22 @@ class AuthSettings:
             login_block_minutes=_environment_integer(
                 "AUTH_LOGIN_BLOCK_MINUTES",
                 15,
+            ),
+            registration_window_minutes=_environment_integer(
+                "AUTH_REGISTRATION_WINDOW_MINUTES",
+                60,
+            ),
+            registration_identity_max_attempts=_environment_integer(
+                "AUTH_REGISTRATION_IDENTITY_MAX_ATTEMPTS",
+                3,
+            ),
+            registration_ip_max_attempts=_environment_integer(
+                "AUTH_REGISTRATION_IP_MAX_ATTEMPTS",
+                10,
+            ),
+            registration_block_minutes=_environment_integer(
+                "AUTH_REGISTRATION_BLOCK_MINUTES",
+                60,
             ),
             trusted_proxy_cidrs=trusted_proxy_cidrs,
         )

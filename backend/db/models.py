@@ -168,6 +168,32 @@ class AuthThrottleBucket(Base):
     )
 
 
+class AuthRegistrationBucket(Base):
+    __tablename__ = "auth_registration_buckets"
+    __table_args__ = (
+        CheckConstraint(
+            "dimension IN ('identity', 'ip')",
+            name="ck_auth_registration_dimension",
+        ),
+        CheckConstraint(
+            "attempt_count >= 0",
+            name="ck_auth_registration_attempt_count",
+        ),
+        Index("ix_auth_registration_blocked_until", "blocked_until"),
+    )
+
+    key_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    dimension: Mapped[str] = mapped_column(String(16), nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    window_started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    blocked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
 class JobUpload(Base):
     __tablename__ = "job_uploads"
     __table_args__ = (

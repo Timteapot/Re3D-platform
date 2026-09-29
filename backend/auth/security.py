@@ -11,7 +11,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError as DatabaseIntegrityError
 from sqlalchemy.orm import Session
 
-from backend.db.models import AuthEvent, AuthThrottleBucket
+from backend.db.models import (
+    AuthEvent,
+    AuthRegistrationBucket,
+    AuthThrottleBucket,
+)
 
 from .context import AuthRequestContext
 from .settings import AuthSettings
@@ -19,6 +23,13 @@ from .settings import AuthSettings
 
 @dataclass(frozen=True)
 class LoginThrottleKey:
+    dimension: str
+    key_hash: str
+    limit: int
+
+
+@dataclass(frozen=True)
+class RegistrationThrottleKey:
     dimension: str
     key_hash: str
     limit: int
@@ -80,6 +91,79 @@ class AuthSecurity:
                 )
             )
         return tuple(sorted(keys, key=lambda key: key.key_hash))
+
+    def registration_keys(
+        self,
+        *,
+        normalized_username: str,
+        normalized_email: str,
+        client_ip_fingerprint: str | None,
+    ) -> tuple[RegistrationThrottleKey, ...]:
+        identity_limit = self.settings.registration_identity_max_attempts
+        keys = [
+            RegistrationThrottleKey(
+                dimension="identity",
+                key_hash=self._fingerprint(
+                    f"register-username:{normalized_username}"
+                ),
+                limit=identity_limit,
+            ),
+            RegistrationThrottleKey(
+                dimension="identity",
+                key_hash=self._fingerprint(f"register-email:{normalized_email}"),
+                limit=identity_limit,
+            ),
+        ]
+        if client_ip_fingerprint is not None:
+            keys.append(
+                RegistrationThrottleKey(
+                    dimension="ip",
+                    key_hash=self._fingerprint(
+                        f"register-ip:{client_ip_fingerprint}"
+                    ),
+                    limit=self.settings.registration_ip_max_attempts,
+                )
+            )
+        return tuple(sorted(keys, key=lambda key: key.key_hash))
+
+    def consume_registration_attempt(
+        self,
+        session: Session,
+        keys: tuple[RegistrationThrottleKey, ...],
+        *,
+        now: datetime,
+    ) -> int | None:
+        window = timedelta(minutes=self.settings.registration_window_minutes)
+        block = timedelta(minutes=self.settings.registration_block_minutes)
+        buckets: list[tuple[RegistrationThrottleKey, AuthRegistrationBucket]] = []
+        retry_after = 0
+
+        for key in keys:
+            bucket = self._get_or_create_registration_bucket(session, key, now=now)
+            blocked_until = _as_utc_or_none(bucket.blocked_until)
+            if blocked_until is not None and blocked_until > now:
+                retry_after = max(
+                    retry_after,
+                    math.ceil((blocked_until - now).total_seconds()),
+                )
+            elif _as_utc(bucket.window_started_at) + window <= now:
+                bucket.attempt_count = 0
+                bucket.window_started_at = now
+                bucket.blocked_until = None
+                bucket.updated_at = now
+            else:
+                bucket.blocked_until = None
+            buckets.append((key, bucket))
+
+        if retry_after:
+            return retry_after
+
+        for key, bucket in buckets:
+            bucket.attempt_count += 1
+            bucket.updated_at = now
+            if bucket.attempt_count >= key.limit:
+                bucket.blocked_until = now + block
+        return None
 
     def login_retry_after(
         self,
@@ -215,6 +299,40 @@ class AuthSecurity:
             return session.execute(
                 select(AuthThrottleBucket)
                 .where(AuthThrottleBucket.key_hash == key.key_hash)
+                .with_for_update()
+            ).scalar_one()
+
+    def _get_or_create_registration_bucket(
+        self,
+        session: Session,
+        key: RegistrationThrottleKey,
+        *,
+        now: datetime,
+    ) -> AuthRegistrationBucket:
+        bucket = session.execute(
+            select(AuthRegistrationBucket)
+            .where(AuthRegistrationBucket.key_hash == key.key_hash)
+            .with_for_update()
+        ).scalar_one_or_none()
+        if bucket is not None:
+            return bucket
+
+        candidate = AuthRegistrationBucket(
+            key_hash=key.key_hash,
+            dimension=key.dimension,
+            attempt_count=0,
+            window_started_at=now,
+            updated_at=now,
+        )
+        try:
+            with session.begin_nested():
+                session.add(candidate)
+                session.flush()
+            return candidate
+        except DatabaseIntegrityError:
+            return session.execute(
+                select(AuthRegistrationBucket)
+                .where(AuthRegistrationBucket.key_hash == key.key_hash)
                 .with_for_update()
             ).scalar_one()
 

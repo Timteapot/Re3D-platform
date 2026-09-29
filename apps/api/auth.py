@@ -106,6 +106,12 @@ def create_auth_router(
                 password=payload.password.get_secret_value(),
                 context=_request_context(request, service),
             )
+        except RateLimitExceededError as exc:
+            raise HTTPException(
+                status_code=429,
+                detail="too many registration attempts; try again later",
+                headers={"Retry-After": str(exc.retry_after_seconds)},
+            ) from exc
         except DuplicateIdentityError as exc:
             raise HTTPException(
                 status_code=409,

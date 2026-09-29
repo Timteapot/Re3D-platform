@@ -406,6 +406,35 @@ class ApiWorkerFlowTests(unittest.TestCase):
         self.assertEqual(outcomes.count("failure"), 5)
         self.assertEqual(outcomes.count("blocked"), 1)
 
+    def test_registration_rate_limit_returns_retry_after(self) -> None:
+        payload = {
+            "username": "registration-rate-limit",
+            "email": "registration-rate-limit@example.com",
+            "password": "correct horse battery staple",
+        }
+        created = self.client.post("/api/v1/auth/register", json=payload)
+        self.assertEqual(created.status_code, 201)
+
+        for _ in range(
+            self.services.auth.settings.registration_identity_max_attempts - 1
+        ):
+            duplicate = self.client.post("/api/v1/auth/register", json=payload)
+            self.assertEqual(duplicate.status_code, 409)
+
+        blocked = self.client.post("/api/v1/auth/register", json=payload)
+        self.assertEqual(blocked.status_code, 429)
+        self.assertGreaterEqual(int(blocked.headers["retry-after"]), 1)
+        self.assertNotIn(payload["email"], blocked.text)
+
+        with self.sessions() as session:
+            blocked_events = session.execute(
+                select(AuthEvent).where(
+                    AuthEvent.action == "register",
+                    AuthEvent.outcome == "blocked",
+                )
+            ).scalars().all()
+        self.assertEqual(len(blocked_events), 1)
+
     def test_authenticated_image_upload_submission_and_user_scope(self) -> None:
         created = self.client.post(
             "/api/v1/uploads",

@@ -9,12 +9,15 @@ from .errors import (
     RateLimitExceededError,
 )
 from .context import AuthRequestContext, resolve_client_ip
+from .maintenance import AuthMaintenanceService, AuthMaintenanceSettings
 from .service import AuthService, IssuedTokens, UserIdentity
 from .settings import AuthSettings
 
 __all__ = [
     "AuthError",
     "AuthRequestContext",
+    "AuthMaintenanceService",
+    "AuthMaintenanceSettings",
     "AuthService",
     "AuthSettings",
     "DuplicateIdentityError",

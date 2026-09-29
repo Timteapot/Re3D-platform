@@ -98,6 +98,9 @@ SELECT count(*) AS auth_event_count FROM auth_events;
 SELECT count(*) AS blocked_login_bucket_count
 FROM auth_throttle_buckets
 WHERE blocked_until > CURRENT_TIMESTAMP;
+SELECT count(*) AS blocked_registration_bucket_count
+FROM auth_registration_buckets
+WHERE blocked_until > CURRENT_TIMESTAMP;
 "@
     & $psql `
         -X `

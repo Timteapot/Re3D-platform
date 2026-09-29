@@ -22,7 +22,7 @@ class InactiveUserError(AuthError):
 
 
 class RateLimitExceededError(AuthError):
-    """A login throttle bucket is blocked until a later time."""
+    """An authentication throttle bucket is blocked until a later time."""
 
     def __init__(self, retry_after_seconds: int) -> None:
         super().__init__("too many login attempts")
