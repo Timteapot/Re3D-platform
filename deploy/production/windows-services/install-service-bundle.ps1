@@ -13,6 +13,7 @@ if (-not (Test-Re3DAdministrator)) {
 $manifest = Assert-Re3DServiceBundle `
     -BundleRoot $BundleRoot `
     -CheckExternalBinaryVersions
+Assert-Re3DServiceSourceState -Manifest $manifest | Out-Null
 $projectRoot = Resolve-Re3DServicePath `
     -Path $manifest.project_root `
     -PathType Container

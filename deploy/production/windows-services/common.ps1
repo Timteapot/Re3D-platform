@@ -77,6 +77,26 @@ function Test-Re3DServicePathWithin {
     )
 }
 
+function Get-Re3DGitSourceState {
+    param([Parameter(Mandatory = $true)][string]$ProjectRoot)
+
+    $root = Resolve-Re3DServicePath -Path $ProjectRoot -PathType Container
+    $git = (Get-Command git.exe -ErrorAction Stop).Source
+    $arguments = @("-c", "safe.directory=$root", "-C", $root)
+    $commit = (& $git @arguments rev-parse HEAD 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[0-9a-f]{40}$') {
+        throw "Could not resolve the platform Git commit at $root."
+    }
+    $changes = @(& $git @arguments status --porcelain --untracked-files=all)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not inspect the platform Git worktree at $root."
+    }
+    return [pscustomobject]@{
+        Commit = $commit
+        Dirty = $changes.Count -gt 0
+    }
+}
+
 function Get-Re3DEnvironmentValue {
     param(
         [Parameter(Mandatory = $true)][string]$EnvironmentFile,
@@ -240,7 +260,7 @@ function Assert-Re3DServiceBundle {
 
     $root = Resolve-Re3DServicePath -Path $BundleRoot -PathType Container
     $manifest = Get-Re3DServiceBundleManifest -BundleRoot $root
-    if ($manifest.schema_version -cne "1.1") {
+    if ($manifest.schema_version -cne "1.2") {
         throw "Unsupported Windows service bundle schema."
     }
     if ($manifest.winsw.version -cne $script:Re3DWinSWVersion) {
@@ -248,6 +268,42 @@ function Assert-Re3DServiceBundle {
     }
     if ([IO.Path]::GetFullPath($manifest.runtime_root) -cne $root) {
         throw "Windows service bundle runtime_root does not match its directory."
+    }
+    if ($manifest.source.platform_commit -notmatch '^[0-9a-f]{40}$') {
+        throw "Windows service bundle has an invalid platform source commit."
+    }
+    if ($manifest.source.web_source_commit -cne $manifest.source.platform_commit) {
+        throw "Frontend and platform source commits do not match."
+    }
+    $webDeploymentFile = Resolve-Re3DServicePath `
+        -Path $manifest.source.web_deployment_file `
+        -PathType Leaf
+    if (-not (Test-Re3DServicePathWithin `
+        -Candidate $webDeploymentFile `
+        -Root $manifest.external.web_root)) {
+        throw "Frontend deployment metadata is outside the configured web root."
+    }
+    $webDeploymentHash = (Get-FileHash `
+        -LiteralPath $webDeploymentFile `
+        -Algorithm SHA256
+    ).Hash
+    if ($webDeploymentHash -cne $manifest.source.web_deployment_sha256) {
+        throw "Frontend deployment metadata hash does not match the service bundle."
+    }
+    try {
+        $webDeployment = Get-Content `
+            -LiteralPath $webDeploymentFile `
+            -Raw | ConvertFrom-Json
+    } catch {
+        throw "Could not read frontend deployment metadata."
+    }
+    if (
+        $webDeployment.schema_version -cne "1.0" -or
+        $webDeployment.source_commit -cne $manifest.source.web_source_commit -or
+        [bool]$webDeployment.source_dirty -or
+        [int]$webDeployment.asset_count -lt 1
+    ) {
+        throw "Frontend deployment metadata does not match the reviewed clean build."
     }
 
     $re3dRoot = Resolve-Re3DServicePath `
@@ -383,6 +439,22 @@ function Assert-Re3DServiceBundle {
         }
     }
     return $manifest
+}
+
+function Assert-Re3DServiceSourceState {
+    param([Parameter(Mandatory = $true)]$Manifest)
+
+    if ([bool]$Manifest.source.platform_dirty) {
+        throw "Windows service bundle was generated from a dirty platform worktree."
+    }
+    $state = Get-Re3DGitSourceState -ProjectRoot $Manifest.project_root
+    if ($state.Dirty) {
+        throw "Platform worktree changed after the Windows service bundle was generated."
+    }
+    if ($state.Commit -cne $Manifest.source.platform_commit) {
+        throw "Platform commit changed after the Windows service bundle was generated."
+    }
+    return $state
 }
 
 function Test-Re3DAdministrator {

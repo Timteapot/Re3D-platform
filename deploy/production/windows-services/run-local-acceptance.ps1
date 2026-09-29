@@ -23,6 +23,7 @@ function Assert-Re3DRejected {
 }
 
 $projectRoot = Get-Re3DProductionProjectRoot
+$sourceState = Get-Re3DGitSourceState -ProjectRoot $projectRoot
 $temporaryRoot = [IO.Path]::GetFullPath((Join-Path (
     [IO.Path]::GetTempPath()
 ) "re3d-service-bundle-$([Guid]::NewGuid().ToString('N'))"))
@@ -32,6 +33,7 @@ $dataRoot = Join-Path $fixtureRoot "data"
 $re3dRoot = Join-Path $fixtureRoot "Re3D"
 $re3dConfigRoot = Join-Path $re3dRoot "configs"
 $webRoot = Join-Path $fixtureRoot "web"
+$webAssetRoot = Join-Path $webRoot "assets"
 $driverEnvironment = Join-Path $fixtureRoot "driver-environment"
 $mapEnvironment = Join-Path $fixtureRoot "map-environment"
 $mvsEnvironment = Join-Path $fixtureRoot "mvs-environment"
@@ -49,6 +51,7 @@ try {
         $dataRoot,
         $re3dConfigRoot,
         $webRoot,
+        $webAssetRoot,
         $driverEnvironment,
         $mapEnvironment,
         $mvsEnvironment,
@@ -81,6 +84,23 @@ try {
     [IO.File]::WriteAllText(
         (Join-Path $webRoot "index.html"),
         '<div id="root"></div>',
+        [Text.UTF8Encoding]::new($false)
+    )
+    [IO.File]::WriteAllText(
+        (Join-Path $webAssetRoot "fixture.js"),
+        'export {};',
+        [Text.UTF8Encoding]::new($false)
+    )
+    $deploymentMetadata = [ordered]@{
+        schema_version = "1.0"
+        source_commit = $sourceState.Commit
+        source_dirty = $false
+        built_at_utc = [DateTime]::UtcNow.ToString("o")
+        asset_count = 1
+    }
+    [IO.File]::WriteAllText(
+        (Join-Path $webRoot "deployment.json"),
+        (($deploymentMetadata | ConvertTo-Json) + [Environment]::NewLine),
         [Text.UTF8Encoding]::new($false)
     )
     $normalizedDataRoot = $dataRoot.Replace("\", "/")
@@ -126,6 +146,13 @@ try {
         -WebRoot $webRoot | Out-Null
 
     $manifest = Assert-Re3DServiceBundle -BundleRoot $bundleRoot
+    if (
+        $manifest.source.platform_commit -cne $sourceState.Commit -or
+        $manifest.source.web_source_commit -cne $sourceState.Commit -or
+        [bool]$manifest.source.platform_dirty -ne $sourceState.Dirty
+    ) {
+        throw "Service bundle did not preserve the platform and web source identity."
+    }
     $bundleText = Get-ChildItem -LiteralPath $bundleRoot -Filter *.xml -Recurse |
         Get-Content -Raw
     if (($bundleText -join [Environment]::NewLine).Contains($markerSecret)) {
@@ -193,6 +220,53 @@ try {
             throw "Worker execution root was not recorded: $expectedExecutionRoot"
         }
     }
+
+    $deploymentPath = Join-Path $webRoot "deployment.json"
+    $originalDeploymentText = Get-Content -LiteralPath $deploymentPath -Raw
+    try {
+        [IO.File]::WriteAllText(
+            $deploymentPath,
+            "$originalDeploymentText ",
+            [Text.UTF8Encoding]::new($false)
+        )
+        Assert-Re3DRejected `
+            -ExpectedMessage "deployment metadata hash does not match" `
+            -Action {
+                Assert-Re3DServiceBundle -BundleRoot $bundleRoot | Out-Null
+            }
+    } finally {
+        [IO.File]::WriteAllText(
+            $deploymentPath,
+            $originalDeploymentText,
+            [Text.UTF8Encoding]::new($false)
+        )
+    }
+    $manifestPath = Join-Path $bundleRoot "service-bundle.json"
+    $originalManifestText = Get-Content -LiteralPath $manifestPath -Raw
+    try {
+        $dirtyManifest = $originalManifestText | ConvertFrom-Json
+        $dirtyManifest.source.platform_dirty = $true
+        [IO.File]::WriteAllText(
+            $manifestPath,
+            (($dirtyManifest | ConvertTo-Json -Depth 8) + [Environment]::NewLine),
+            [Text.UTF8Encoding]::new($false)
+        )
+        Assert-Re3DRejected `
+            -ExpectedMessage "generated from a dirty platform worktree" `
+            -Action {
+                $rejectedManifest = Get-Re3DServiceBundleManifest `
+                    -BundleRoot $bundleRoot
+                Assert-Re3DServiceSourceState `
+                    -Manifest $rejectedManifest | Out-Null
+            }
+    } finally {
+        [IO.File]::WriteAllText(
+            $manifestPath,
+            $originalManifestText,
+            [Text.UTF8Encoding]::new($false)
+        )
+    }
+    Assert-Re3DServiceBundle -BundleRoot $bundleRoot | Out-Null
 
     Assert-Re3DRejected `
         -ExpectedMessage "Worker environment contains web-only secret keys" `

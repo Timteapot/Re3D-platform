@@ -56,6 +56,29 @@ $resolvedWebRoot = if ($WebRoot) {
 if (-not (Test-Path -LiteralPath (Join-Path $resolvedWebRoot "index.html") -PathType Leaf)) {
     throw "Production web root does not contain index.html."
 }
+$sourceState = Get-Re3DGitSourceState -ProjectRoot $resolvedProjectRoot
+$webDeploymentFile = Resolve-Re3DServicePath `
+    -Path (Join-Path $resolvedWebRoot "deployment.json") `
+    -PathType Leaf
+try {
+    $webDeployment = Get-Content `
+        -LiteralPath $webDeploymentFile `
+        -Raw | ConvertFrom-Json
+} catch {
+    throw "Could not read frontend deployment metadata from $webDeploymentFile."
+}
+if (
+    $webDeployment.schema_version -cne "1.0" -or
+    $webDeployment.source_commit -notmatch '^[0-9a-f]{40}$' -or
+    $webDeployment.source_commit -cne $sourceState.Commit -or
+    [bool]$webDeployment.source_dirty -or
+    [int]$webDeployment.asset_count -lt 1
+) {
+    throw (
+        "Frontend deployment metadata must be a clean build of the current " +
+        "platform commit."
+    )
+}
 if ([string]::IsNullOrWhiteSpace($SiteAddress)) {
     throw "SiteAddress is required."
 }
@@ -279,10 +302,21 @@ foreach ($definition in Get-Re3DWindowsServiceDefinitions) {
 }
 
 $manifest = [ordered]@{
-    schema_version = "1.1"
+    schema_version = "1.2"
     created_at_utc = [DateTime]::UtcNow.ToString("o")
     runtime_root = $runtimeRoot
     project_root = $resolvedProjectRoot
+    source = [ordered]@{
+        platform_commit = $sourceState.Commit
+        platform_dirty = $sourceState.Dirty
+        web_source_commit = $webDeployment.source_commit
+        web_deployment_file = $webDeploymentFile
+        web_deployment_sha256 = (
+            Get-FileHash -LiteralPath $webDeploymentFile -Algorithm SHA256
+        ).Hash
+        web_built_at_utc = $webDeployment.built_at_utc
+        web_asset_count = [int]$webDeployment.asset_count
+    }
     winsw = [ordered]@{
         version = $script:Re3DWinSWVersion
         source_path = $resolvedWinSW

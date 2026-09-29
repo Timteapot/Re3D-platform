@@ -69,7 +69,7 @@ Copy-Item .env.production.example .env.production
 
 `run-caddy.ps1` 拒绝非回环地址上的明文 HTTP。Caddy 为 `/api/*` 和 `/health/*` 提供同源代理、单请求体上限和禁止缓存策略，为带内容哈希的 `/assets/*` 提供不可变缓存，其余页面执行 SPA 回退和重新验证缓存；同时设置 CSP、点击劫持防护、MIME 嗅探防护、来源策略和权限策略。默认 `27MB` 为单张 25 MiB 图片和 multipart 开销预留空间，修改 `UPLOAD_MAX_FILE_BYTES` 时必须同步复核该值。API 自身不对公网监听，Worker 不开启网络端口，PostgreSQL 也不应直接暴露到互联网。
 
-基于 WinSW 的三个独立 Windows 虚拟账户、自动启动、失败重启、日志轮转、最小 ACL、安装和卸载流程见 [`windows-services/README.md`](windows-services/README.md)。仓库已完成无系统改动的服务包生成验收；实际服务器安装、重启和故障恢复仍需单独验收。
+基于 WinSW 的三个独立 Windows 虚拟账户、自动启动、失败重启、日志轮转、最小 ACL、平台/前端发布身份绑定、安装后只读验收和卸载流程见 [`windows-services/README.md`](windows-services/README.md)。仓库已完成无系统改动的服务包生成验收；实际服务器安装、重启和故障恢复仍需单独验收。
 
 ## 非公网生产拓扑验收
 
