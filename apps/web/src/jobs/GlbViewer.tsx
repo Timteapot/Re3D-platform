@@ -10,6 +10,14 @@ import {
   type ResultBranchSummary,
 } from "./api";
 import { selectGlbPreviewBranches } from "./glbPreview";
+import {
+  applyModelRotation,
+  AUTO_MODEL_ROTATION,
+  centerModelContent,
+  defaultCameraDirection,
+  prepareReconstructionModel,
+  type ModelRotationDegrees,
+} from "./modelPresentation";
 
 interface GlbViewerProps {
   branches: ResultBranchSummary[];
@@ -38,6 +46,7 @@ interface ViewerRuntime {
   controls: OrbitControls;
   grid: THREE.GridHelper;
   model: THREE.Object3D | null;
+  cameraDirection: THREE.Vector3 | null;
   resetCamera: (() => void) | null;
 }
 
@@ -95,29 +104,30 @@ function clearModel(runtime: ViewerRuntime): void {
     disposeModel(runtime.model);
   }
   runtime.model = null;
+  runtime.cameraDirection = null;
   runtime.resetCamera = null;
   runtime.grid.visible = false;
 }
 
-function fitModel(runtime: ViewerRuntime, model: THREE.Object3D): THREE.Box3 | null {
+function fitModel(
+  runtime: ViewerRuntime,
+  model: THREE.Object3D,
+  cameraDirection: THREE.Vector3,
+): THREE.Box3 | null {
   model.updateMatrixWorld(true);
   const bounds = new THREE.Box3().setFromObject(model, true);
   if (bounds.isEmpty()) return null;
 
-  const center = bounds.getCenter(new THREE.Vector3());
   const size = bounds.getSize(new THREE.Vector3());
   const radius = Math.max(size.length() / 2, 0.001);
-  model.position.sub(center);
-  model.updateMatrixWorld(true);
 
   const verticalFov = THREE.MathUtils.degToRad(runtime.camera.fov);
   const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * runtime.camera.aspect);
   const limitingFov = Math.max(Math.min(verticalFov, horizontalFov), 0.01);
   const distance = (radius / Math.sin(limitingFov / 2)) * 1.2;
-  const cameraDirection = new THREE.Vector3(1, 0.65, 1).normalize();
-
+  const fittedDirection = cameraDirection.clone().normalize();
   const resetCamera = () => {
-    runtime.camera.position.copy(cameraDirection).multiplyScalar(distance);
+    runtime.camera.position.copy(fittedDirection).multiplyScalar(distance);
     runtime.camera.near = Math.max(radius / 1000, 0.0001);
     runtime.camera.far = Math.max(distance + radius * 20, radius * 100);
     runtime.camera.updateProjectionMatrix();
@@ -127,6 +137,7 @@ function fitModel(runtime: ViewerRuntime, model: THREE.Object3D): THREE.Box3 | n
     runtime.controls.update();
   };
 
+  runtime.cameraDirection = fittedDirection;
   runtime.resetCamera = resetCamera;
   resetCamera();
   runtime.grid.position.y = -size.y / 2;
@@ -153,6 +164,9 @@ export default function GlbViewer({
   );
   const [selectedName, setSelectedName] = useState("");
   const [viewerState, setViewerState] = useState<ViewerState>(initialViewerState);
+  const [modelRotation, setModelRotation] = useState<ModelRotationDegrees>({
+    ...AUTO_MODEL_ROTATION,
+  });
 
   const selectedBranch = previewBranches.find((branch) => branch.name === selectedName);
 
@@ -215,6 +229,7 @@ export default function GlbViewer({
       controls,
       grid,
       model: null,
+      cameraDirection: null,
       resetCamera: null,
     };
     runtimeRef.current = runtime;
@@ -257,11 +272,24 @@ export default function GlbViewer({
 
   useEffect(() => {
     const runtime = runtimeRef.current;
+    if (!runtime?.model) return;
+
+    applyModelRotation(runtime.model, modelRotation);
+    fitModel(
+      runtime,
+      runtime.model,
+      runtime.cameraDirection ?? defaultCameraDirection(),
+    );
+  }, [modelRotation]);
+
+  useEffect(() => {
+    const runtime = runtimeRef.current;
     if (!runtime || !selectedBranch) return;
 
     const controller = new AbortController();
     let cancelled = false;
     clearModel(runtime);
+    setModelRotation({ ...AUTO_MODEL_ROTATION });
     setViewerState({
       phase: "loading",
       message: `正在通过受鉴权接口加载 ${selectedBranch.name} 的 GLB…`,
@@ -284,10 +312,23 @@ export default function GlbViewer({
           return;
         }
 
-        runtime.scene.add(gltf.scene);
-        runtime.model = gltf.scene;
         const stats = inspectModel(gltf.scene);
-        if (!fitModel(runtime, gltf.scene) || stats.meshes === 0) {
+        if (!centerModelContent(gltf.scene)) {
+          setViewerState({
+            phase: "empty",
+            message: "该 GLB 已加载，但没有有效包围盒。",
+            stats,
+          });
+          return;
+        }
+
+        const modelPivot = new THREE.Group();
+        modelPivot.add(gltf.scene);
+        applyModelRotation(modelPivot, AUTO_MODEL_ROTATION);
+        runtime.scene.add(modelPivot);
+        runtime.model = modelPivot;
+        const cameraDirection = prepareReconstructionModel(modelPivot);
+        if (!fitModel(runtime, modelPivot, cameraDirection) || stats.meshes === 0) {
           setViewerState({
             phase: "empty",
             message: executionMode === "simulated"
@@ -351,6 +392,42 @@ export default function GlbViewer({
         </button>
       </div>
 
+      <div className="glb-orientation-toolbar" aria-label="模型坐标旋转">
+        <div>
+          <strong>模型坐标角度</strong>
+          <small>自动转换 Re3D 坐标；滑杆可绕各轴自由旋转。</small>
+        </div>
+        <div className="glb-rotation-controls">
+          {(["x", "y", "z"] as const).map((axis) => (
+            <label key={axis}>
+              <span>{axis.toUpperCase()}</span>
+              <input
+                type="range"
+                min="-180"
+                max="180"
+                step="1"
+                value={modelRotation[axis]}
+                disabled={viewerState.phase !== "ready"}
+                aria-label={`模型 ${axis.toUpperCase()} 轴旋转角度`}
+                onChange={(event) => setModelRotation((current) => ({
+                  ...current,
+                  [axis]: event.currentTarget.valueAsNumber,
+                }))}
+              />
+              <output>{modelRotation[axis]}°</output>
+            </label>
+          ))}
+        </div>
+        <button
+          className="glb-reset-button"
+          type="button"
+          disabled={viewerState.phase !== "ready"}
+          onClick={() => setModelRotation({ ...AUTO_MODEL_ROTATION })}
+        >
+          恢复自动朝向
+        </button>
+      </div>
+
       <div
         ref={containerRef}
         className="glb-viewer-stage"
@@ -373,7 +450,7 @@ export default function GlbViewer({
           <span>报告顶点 {metric(selectedBranch.metrics, "vertices")}</span>
           <span>报告面数 {metric(selectedBranch.metrics, "faces")}</span>
           {viewerState.stats ? <span>已加载网格 {viewerState.stats.meshes}</span> : null}
-          <small>左键旋转 · 滚轮缩放 · 右键平移</small>
+          <small>左键旋转视角 · 滚轮缩放 · 右键平移 · 滑杆旋转模型</small>
         </div>
       ) : null}
     </div>
