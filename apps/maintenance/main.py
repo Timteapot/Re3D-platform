@@ -10,7 +10,8 @@ from backend.db.runtime import (
     create_database_engine,
     create_session_factory,
 )
-from .readiness import check_local_readiness
+from backend.re3d_adapter import AdapterError
+from .readiness import check_local_readiness, check_production_readiness
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -29,6 +30,16 @@ def build_parser() -> argparse.ArgumentParser:
         "check-local-readiness",
         description="Validate local development configuration without exposing secrets",
     )
+    production = subparsers.add_parser(
+        "check-production-readiness",
+        description="Validate production configuration without exposing secrets",
+    )
+    production.add_argument(
+        "--component",
+        choices=["api", "worker", "all"],
+        default="all",
+        help="Process role to validate (default: all)",
+    )
     return parser
 
 
@@ -37,6 +48,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "check-local-readiness":
             response = check_local_readiness()
+        elif args.command == "check-production-readiness":
+            response = check_production_readiness(component=args.component)
         elif args.command == "cleanup-auth-security":
             database = DatabaseSettings.from_environment(args.database_url)
             engine = create_database_engine(database)
@@ -58,7 +71,7 @@ def main(argv: list[str] | None = None) -> int:
                 engine.dispose()
         else:
             raise ValueError(f"unsupported maintenance command: {args.command}")
-    except ValueError as exc:
+    except (AdapterError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
 

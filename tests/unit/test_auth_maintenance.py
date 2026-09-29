@@ -51,6 +51,24 @@ class AuthMaintenanceTests(unittest.TestCase):
         self.assertEqual(json.loads(stdout.getvalue()), {"status": "ready"})
         readiness.assert_called_once_with()
 
+    @patch(
+        "apps.maintenance.main.check_production_readiness",
+        return_value={"status": "ready", "component": "worker"},
+    )
+    def test_production_readiness_command_selects_component(self, readiness) -> None:
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = maintenance_main(
+                ["check-production-readiness", "--component", "worker"]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            json.loads(stdout.getvalue()),
+            {"status": "ready", "component": "worker"},
+        )
+        readiness.assert_called_once_with(component="worker")
+
     def test_cleanup_removes_expired_records_but_preserves_active_blocks(self) -> None:
         now = datetime.now(timezone.utc)
         old = now - timedelta(days=100)
