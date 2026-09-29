@@ -10,13 +10,22 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from backend.auth import (
+    AuthRequestContext,
     AuthService,
     AuthSettings,
     DuplicateIdentityError,
     InvalidCredentialsError,
     InvalidTokenError,
+    RateLimitExceededError,
+    resolve_client_ip,
 )
-from backend.db.models import Base, RefreshSession, User
+from backend.db.models import (
+    AuthEvent,
+    AuthThrottleBucket,
+    Base,
+    RefreshSession,
+    User,
+)
 
 
 TEST_SECRET = "auth-test-secret-" + "x" * 64
@@ -144,6 +153,168 @@ class AuthServiceTests(unittest.TestCase):
         with self.assertRaises(InvalidTokenError):
             self.auth.current_user(outside_tolerance.access_token)
 
+    def test_authentication_events_do_not_store_raw_request_identity(self) -> None:
+        context = AuthRequestContext(
+            client_ip="203.0.113.25",
+            user_agent="Example Browser/1.0",
+        )
+        user = self.auth.register(
+            username="audit-user",
+            email="audit-user@example.com",
+            password="correct horse battery staple",
+            context=context,
+        )
+        with self.assertRaises(InvalidCredentialsError):
+            self.auth.login(
+                identifier="audit-user@example.com",
+                password="wrong password",
+                context=context,
+            )
+        issued = self.auth.login(
+            identifier="audit-user@example.com",
+            password="correct horse battery staple",
+            context=context,
+        )
+        rotated = self.auth.refresh(issued.refresh_token, context=context)
+        with self.assertRaises(InvalidTokenError):
+            self.auth.refresh(issued.refresh_token, context=context)
+        self.auth.logout(rotated.refresh_token, context=context)
+
+        with self.sessions() as session:
+            events = session.execute(
+                select(AuthEvent).order_by(AuthEvent.occurred_at, AuthEvent.action)
+            ).scalars().all()
+        self.assertEqual(
+            {(event.action, event.outcome) for event in events},
+            {
+                ("register", "success"),
+                ("login", "failure"),
+                ("login", "success"),
+                ("refresh", "success"),
+                ("refresh", "reuse"),
+                ("logout", "success"),
+            },
+        )
+        self.assertTrue(any(event.user_id == user.id for event in events))
+        self.assertTrue(
+            all(
+                event.client_ip_fingerprint is None
+                or len(event.client_ip_fingerprint) == 64
+                for event in events
+            )
+        )
+        serialized = " ".join(
+            str(
+                (
+                    event.identifier_fingerprint,
+                    event.client_ip_fingerprint,
+                    event.user_agent_sha256,
+                    event.reason_code,
+                )
+            )
+            for event in events
+        )
+        self.assertNotIn("audit-user@example.com", serialized)
+        self.assertNotIn("203.0.113.25", serialized)
+        self.assertNotIn("Example Browser", serialized)
+
+    def test_account_login_throttle_blocks_and_expires(self) -> None:
+        settings = AuthSettings(
+            jwt_secret=TEST_SECRET,
+            cookie_secure=False,
+            login_account_max_failures=2,
+            login_ip_max_failures=10,
+            login_block_minutes=1,
+        )
+        auth = AuthService(self.sessions, settings)
+        auth.register(
+            username="limited-user",
+            email="limited-user@example.com",
+            password="correct horse battery staple",
+        )
+        now = datetime.now(timezone.utc) - timedelta(minutes=2)
+        with patch("backend.auth.service._database_now", return_value=now):
+            for identifier in ("limited-user", "limited-user@example.com"):
+                with self.assertRaises(InvalidCredentialsError):
+                    auth.login(
+                        identifier=identifier,
+                        password="wrong password",
+                    )
+            with self.assertRaises(RateLimitExceededError) as blocked:
+                auth.login(
+                    identifier="limited-user",
+                    password="correct horse battery staple",
+                )
+        self.assertEqual(blocked.exception.retry_after_seconds, 60)
+
+        with patch(
+            "backend.auth.service._database_now",
+            return_value=now + timedelta(seconds=61),
+        ):
+            issued = auth.login(
+                identifier="limited-user",
+                password="correct horse battery staple",
+            )
+        self.assertEqual(auth.current_user(issued.access_token).username, "limited-user")
+        with self.sessions() as session:
+            buckets = session.execute(select(AuthThrottleBucket)).scalars().all()
+            blocked_events = session.execute(
+                select(AuthEvent).where(AuthEvent.outcome == "blocked")
+            ).scalars().all()
+        self.assertEqual(len(buckets), 1)
+        self.assertEqual(buckets[0].failure_count, 0)
+        self.assertEqual(len(blocked_events), 1)
+
+    def test_ip_throttle_aggregates_different_identifiers(self) -> None:
+        settings = AuthSettings(
+            jwt_secret=TEST_SECRET,
+            cookie_secure=False,
+            login_account_max_failures=2,
+            login_ip_max_failures=2,
+        )
+        auth = AuthService(self.sessions, settings)
+        auth.register(
+            username="known-user",
+            email="known-user@example.com",
+            password="correct horse battery staple",
+        )
+        context = AuthRequestContext(client_ip="198.51.100.42")
+        for identifier in ("missing-one", "missing-two"):
+            with self.assertRaises(InvalidCredentialsError):
+                auth.login(
+                    identifier=identifier,
+                    password="wrong password",
+                    context=context,
+                )
+        with self.assertRaises(RateLimitExceededError):
+            auth.login(
+                identifier="known-user",
+                password="correct horse battery staple",
+                context=context,
+            )
+
+
+class AuthRequestContextTests(unittest.TestCase):
+    def test_ignores_forwarded_header_from_untrusted_peer(self) -> None:
+        self.assertEqual(
+            resolve_client_ip(
+                peer="198.51.100.8",
+                forwarded_for="203.0.113.20",
+                trusted_proxy_cidrs=("127.0.0.1/32",),
+            ),
+            "198.51.100.8",
+        )
+
+    def test_uses_first_untrusted_hop_behind_trusted_proxies(self) -> None:
+        self.assertEqual(
+            resolve_client_ip(
+                peer="127.0.0.1",
+                forwarded_for="203.0.113.20, 10.0.0.5",
+                trusted_proxy_cidrs=("127.0.0.1/32", "10.0.0.0/8"),
+            ),
+            "203.0.113.20",
+        )
+
 
 class AuthSettingsTests(unittest.TestCase):
     def test_rejects_placeholder_and_insecure_production_cookie(self) -> None:
@@ -159,11 +330,45 @@ class AuthSettingsTests(unittest.TestCase):
         ):
             with self.assertRaises(ValueError):
                 AuthSettings.from_environment(environment="production")
+        with patch.dict(
+            "os.environ",
+            {
+                "JWT_SECRET": TEST_SECRET,
+                "REFRESH_COOKIE_SECURE": "true",
+            },
+            clear=True,
+        ):
+            with self.assertRaises(ValueError):
+                AuthSettings.from_environment(environment="production")
 
     def test_development_defaults_to_non_secure_cookie(self) -> None:
-        with patch.dict("os.environ", {"JWT_SECRET": TEST_SECRET}, clear=True):
+        with patch.dict(
+            "os.environ",
+            {
+                "JWT_SECRET": TEST_SECRET,
+                "AUTH_TRUSTED_PROXY_CIDRS": "127.0.0.1/32,::1/128",
+            },
+            clear=True,
+        ):
             settings = AuthSettings.from_environment(environment="development")
         self.assertFalse(settings.cookie_secure)
+        self.assertEqual(
+            settings.trusted_proxy_cidrs,
+            ("127.0.0.1/32", "::1/128"),
+        )
+
+    def test_rejects_invalid_login_limits_and_proxy_networks(self) -> None:
+        with self.assertRaises(ValueError):
+            AuthSettings(
+                jwt_secret=TEST_SECRET,
+                login_account_max_failures=10,
+                login_ip_max_failures=5,
+            )
+        with self.assertRaises(ValueError):
+            AuthSettings(
+                jwt_secret=TEST_SECRET,
+                trusted_proxy_cidrs=("not-a-network",),
+            )
 
 
 if __name__ == "__main__":

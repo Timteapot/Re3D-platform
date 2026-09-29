@@ -16,7 +16,7 @@ from sqlalchemy.orm import sessionmaker
 from apps.api.main import AppServices, create_app
 from apps.worker.main import main as worker_main
 from backend.auth import AuthService, AuthSettings
-from backend.db.models import Base, ReconstructionJob
+from backend.db.models import AuthEvent, Base, ReconstructionJob
 from backend.db.queue import JobQueue
 from backend.jobs.development import DevelopmentJobService
 from backend.uploads import UploadService
@@ -365,6 +365,46 @@ class ApiWorkerFlowTests(unittest.TestCase):
         self.assertEqual(logged_out.status_code, 204)
         self.assertIsNone(self.client.cookies.get(cookie_name))
         self.assertEqual(self.client.post("/api/v1/auth/refresh").status_code, 401)
+
+    def test_login_rate_limit_returns_retry_after_and_audits(self) -> None:
+        password = "correct horse battery staple"
+        registered = self.client.post(
+            "/api/v1/auth/register",
+            json={
+                "username": "rate-limited-user",
+                "email": "rate-limited-user@example.com",
+                "password": password,
+            },
+        )
+        self.assertEqual(registered.status_code, 201)
+
+        for _ in range(self.services.auth.settings.login_account_max_failures):
+            failed = self.client.post(
+                "/api/v1/auth/login",
+                json={
+                    "identifier": "rate-limited-user",
+                    "password": "wrong password",
+                },
+            )
+            self.assertEqual(failed.status_code, 401)
+
+        blocked = self.client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "rate-limited-user",
+                "password": password,
+            },
+        )
+        self.assertEqual(blocked.status_code, 429)
+        self.assertGreaterEqual(int(blocked.headers["retry-after"]), 1)
+        self.assertNotIn("rate-limited-user", blocked.text)
+
+        with self.sessions() as session:
+            outcomes = session.execute(
+                select(AuthEvent.outcome).where(AuthEvent.action == "login")
+            ).scalars().all()
+        self.assertEqual(outcomes.count("failure"), 5)
+        self.assertEqual(outcomes.count("blocked"), 1)
 
     def test_authenticated_image_upload_submission_and_user_scope(self) -> None:
         created = self.client.post(

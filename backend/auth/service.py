@@ -22,7 +22,10 @@ from .errors import (
     InactiveUserError,
     InvalidCredentialsError,
     InvalidTokenError,
+    RateLimitExceededError,
 )
+from .context import AuthRequestContext
+from .security import AuthSecurity, LoginThrottleKey
 from .settings import AuthSettings
 
 
@@ -63,6 +66,7 @@ class AuthService:
     ) -> None:
         self.session_factory = session_factory
         self.settings = settings
+        self.security = AuthSecurity(settings)
 
     def register(
         self,
@@ -70,10 +74,24 @@ class AuthService:
         username: str,
         email: str,
         password: str,
+        context: AuthRequestContext | None = None,
     ) -> UserIdentity:
-        normalized_username = _normalize_username(username)
-        normalized_email = _normalize_email(email)
-        _validate_password(password)
+        try:
+            normalized_username = _normalize_username(username)
+            normalized_email = _normalize_email(email)
+            _validate_password(password)
+        except ValueError:
+            self._record_event(
+                action="register",
+                outcome="failure",
+                context=context,
+                identifier=email or username,
+                reason_code="validation_failed",
+            )
+            raise
+        identifier_fingerprint = self.security.identifier_fingerprint(
+            normalized_email
+        )
         password_hash = PASSWORD_HASH.hash(password)
         user = User(
             id=uuid.uuid4(),
@@ -86,15 +104,42 @@ class AuthService:
         )
         try:
             with self.session_factory.begin() as session:
+                now = _database_now(session)
                 session.add(user)
+                self.security.add_event(
+                    session,
+                    action="register",
+                    outcome="success",
+                    context=context,
+                    occurred_at=now,
+                    user_id=user.id,
+                    identifier_fingerprint=identifier_fingerprint,
+                )
         except DatabaseIntegrityError as exc:
+            self._record_event(
+                action="register",
+                outcome="failure",
+                context=context,
+                identifier=normalized_email,
+                reason_code="duplicate_identity",
+            )
             raise DuplicateIdentityError(
                 "username or email is already registered"
             ) from exc
         return _user_identity(user)
 
-    def login(self, *, identifier: str, password: str) -> IssuedTokens:
+    def login(
+        self,
+        *,
+        identifier: str,
+        password: str,
+        context: AuthRequestContext | None = None,
+    ) -> IssuedTokens:
         normalized_identifier = identifier.strip().lower()
+        identifier_fingerprint = self.security.identifier_fingerprint(
+            normalized_identifier
+        )
+        client_ip_fingerprint = self.security.client_ip_fingerprint(context)
         with self.session_factory() as session:
             user = session.execute(
                 select(User).where(
@@ -105,25 +150,107 @@ class AuthService:
                 )
             ).scalar_one_or_none()
             stored_hash = user.password_hash if user is not None else DUMMY_PASSWORD_HASH
-            password_valid = PASSWORD_HASH.verify(password, stored_hash)
-            if user is None or not password_valid:
-                raise InvalidCredentialsError("invalid username/email or password")
-            user_id = user.id
+            user_id = user.id if user is not None else None
+        account_fingerprint = self.security.login_account_fingerprint(
+            normalized_identifier=normalized_identifier,
+            user_id=user_id,
+        )
+        throttle_keys = self.security.login_keys(
+            account_fingerprint,
+            client_ip_fingerprint,
+        )
+        retry_after: int | None
+        with self.session_factory.begin() as session:
+            now = _database_now(session)
+            retry_after = self.security.login_retry_after(
+                session,
+                throttle_keys,
+                now=now,
+            )
+            if retry_after is not None:
+                self.security.add_event(
+                    session,
+                    action="login",
+                    outcome="blocked",
+                    context=context,
+                    occurred_at=now,
+                    user_id=user_id,
+                    identifier_fingerprint=identifier_fingerprint,
+                    reason_code="rate_limited",
+                )
+        if retry_after is not None:
+            raise RateLimitExceededError(retry_after)
 
+        password_valid = PASSWORD_HASH.verify(password, stored_hash)
+        if user_id is None or not password_valid:
+            self._record_login_failure(
+                throttle_keys,
+                context=context,
+                identifier_fingerprint=identifier_fingerprint,
+                user_id=user_id,
+                reason_code="invalid_credentials",
+            )
+            raise InvalidCredentialsError("invalid username/email or password")
+
+        issued: IssuedTokens | None = None
+        inactive = False
         with self.session_factory.begin() as session:
             current_user = session.execute(
                 select(User).where(User.id == user_id).with_for_update()
             ).scalar_one()
-            if not current_user.is_active:
-                raise InactiveUserError("user account is inactive")
             now = _database_now(session)
-            current_user.last_login_at = now
-            current_user.updated_at = now
-            return self._issue_tokens(session, current_user, now=now)
+            if not current_user.is_active:
+                inactive = True
+                self.security.record_login_failure(
+                    session,
+                    throttle_keys,
+                    now=now,
+                )
+                self.security.add_event(
+                    session,
+                    action="login",
+                    outcome="failure",
+                    context=context,
+                    occurred_at=now,
+                    user_id=current_user.id,
+                    identifier_fingerprint=identifier_fingerprint,
+                    reason_code="inactive_user",
+                )
+            else:
+                self.security.reset_account_throttle(
+                    session,
+                    throttle_keys,
+                    now=now,
+                )
+                current_user.last_login_at = now
+                current_user.updated_at = now
+                issued = self._issue_tokens(session, current_user, now=now)
+                self.security.add_event(
+                    session,
+                    action="login",
+                    outcome="success",
+                    context=context,
+                    occurred_at=now,
+                    user_id=current_user.id,
+                    refresh_session_id=issued.refresh_session_id,
+                    identifier_fingerprint=identifier_fingerprint,
+                )
+        if inactive:
+            raise InactiveUserError("user account is inactive")
+        assert issued is not None
+        return issued
 
-    def refresh(self, refresh_token: str) -> IssuedTokens:
+    def refresh(
+        self,
+        refresh_token: str | None,
+        *,
+        context: AuthRequestContext | None = None,
+    ) -> IssuedTokens:
+        if not refresh_token:
+            raise InvalidTokenError("refresh token is invalid or expired")
         token_sha256 = _token_sha256(refresh_token)
         issued: IssuedTokens | None = None
+        inactive = False
         with self.session_factory.begin() as session:
             current = session.execute(
                 select(RefreshSession)
@@ -141,39 +268,84 @@ class AuthService:
                         )
                         .values(revoked_at=now)
                     )
+                    outcome = "reuse"
+                    reason_code = "refresh_reuse_detected"
+                else:
+                    outcome = "failure"
+                    reason_code = "refresh_revoked"
             elif current is not None and _as_utc(current.expires_at) > now:
                 user = session.execute(
                     select(User).where(User.id == current.user_id).with_for_update()
                 ).scalar_one_or_none()
                 if user is None or not user.is_active:
-                    raise InactiveUserError("user account is inactive")
-
-                issued = self._issue_tokens(
+                    inactive = True
+                    outcome = "failure"
+                    reason_code = "inactive_user"
+                else:
+                    issued = self._issue_tokens(
+                        session,
+                        user,
+                        now=now,
+                        refresh_expires_at=_as_utc(current.expires_at),
+                        refresh_family_id=current.family_id,
+                    )
+                    current.revoked_at = now
+                    current.last_used_at = now
+                    current.replaced_by_id = issued.refresh_session_id
+                    outcome = "success"
+                    reason_code = None
+            else:
+                outcome = "failure"
+                reason_code = "refresh_invalid_or_expired"
+            if current is not None:
+                self.security.add_event(
                     session,
-                    user,
-                    now=now,
-                    refresh_expires_at=_as_utc(current.expires_at),
-                    refresh_family_id=current.family_id,
+                    action="refresh",
+                    outcome=outcome,
+                    context=context,
+                    occurred_at=now,
+                    user_id=current.user_id,
+                    refresh_session_id=current.id,
+                    reason_code=reason_code,
                 )
-                current.revoked_at = now
-                current.last_used_at = now
-                current.replaced_by_id = issued.refresh_session_id
+        if inactive:
+            raise InactiveUserError("user account is inactive")
         if issued is None:
             raise InvalidTokenError("refresh token is invalid or expired")
         return issued
 
-    def logout(self, refresh_token: str | None) -> None:
-        if not refresh_token:
-            return
-        token_sha256 = _token_sha256(refresh_token)
+    def logout(
+        self,
+        refresh_token: str | None,
+        *,
+        context: AuthRequestContext | None = None,
+    ) -> None:
+        token_sha256 = _token_sha256(refresh_token) if refresh_token else None
         with self.session_factory.begin() as session:
-            current = session.execute(
-                select(RefreshSession)
-                .where(RefreshSession.token_sha256 == token_sha256)
-                .with_for_update()
-            ).scalar_one_or_none()
-            if current is not None and current.revoked_at is None:
-                current.revoked_at = _database_now(session)
+            current = (
+                session.execute(
+                    select(RefreshSession)
+                    .where(RefreshSession.token_sha256 == token_sha256)
+                    .with_for_update()
+                ).scalar_one_or_none()
+                if token_sha256 is not None
+                else None
+            )
+            now = _database_now(session)
+            session_was_active = current is not None and current.revoked_at is None
+            if session_was_active:
+                current.revoked_at = now
+            if current is not None:
+                self.security.add_event(
+                    session,
+                    action="logout",
+                    outcome="success",
+                    context=context,
+                    occurred_at=now,
+                    user_id=current.user_id,
+                    refresh_session_id=current.id,
+                    reason_code=None if session_was_active else "session_not_active",
+                )
 
     def current_user(self, access_token: str) -> UserIdentity:
         user_id = self._decode_access_token(access_token)
@@ -184,6 +356,57 @@ class AuthService:
             if not user.is_active:
                 raise InactiveUserError("user account is inactive")
             return _user_identity(user)
+
+    def _record_login_failure(
+        self,
+        throttle_keys: tuple[LoginThrottleKey, ...],
+        *,
+        context: AuthRequestContext | None,
+        identifier_fingerprint: str,
+        user_id: uuid.UUID | None,
+        reason_code: str,
+    ) -> None:
+        with self.session_factory.begin() as session:
+            now = _database_now(session)
+            self.security.record_login_failure(
+                session,
+                throttle_keys,
+                now=now,
+            )
+            self.security.add_event(
+                session,
+                action="login",
+                outcome="failure",
+                context=context,
+                occurred_at=now,
+                user_id=user_id,
+                identifier_fingerprint=identifier_fingerprint,
+                reason_code=reason_code,
+            )
+
+    def _record_event(
+        self,
+        *,
+        action: str,
+        outcome: str,
+        context: AuthRequestContext | None,
+        identifier: str | None = None,
+        reason_code: str | None = None,
+    ) -> None:
+        with self.session_factory.begin() as session:
+            self.security.add_event(
+                session,
+                action=action,
+                outcome=outcome,
+                context=context,
+                occurred_at=_database_now(session),
+                identifier_fingerprint=(
+                    self.security.identifier_fingerprint(identifier)
+                    if identifier
+                    else None
+                ),
+                reason_code=reason_code,
+            )
 
     def _issue_tokens(
         self,

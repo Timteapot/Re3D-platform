@@ -9,6 +9,7 @@ from fastapi import (
     Cookie,
     Depends,
     HTTPException,
+    Request,
     Response,
     status,
 )
@@ -17,12 +18,15 @@ from pydantic import BaseModel, EmailStr, Field, SecretStr
 
 from backend.auth import (
     AuthService,
+    AuthRequestContext,
     DuplicateIdentityError,
     InactiveUserError,
     InvalidCredentialsError,
     InvalidTokenError,
     IssuedTokens,
+    RateLimitExceededError,
     UserIdentity,
+    resolve_client_ip,
 )
 
 
@@ -94,12 +98,13 @@ def create_auth_router(
         response_model=UserResponse,
         status_code=status.HTTP_201_CREATED,
     )
-    def register(payload: RegisterRequest) -> UserResponse:
+    def register(payload: RegisterRequest, request: Request) -> UserResponse:
         try:
             user = service.register(
                 username=payload.username,
                 email=str(payload.email),
                 password=payload.password.get_secret_value(),
+                context=_request_context(request, service),
             )
         except DuplicateIdentityError as exc:
             raise HTTPException(
@@ -111,12 +116,23 @@ def create_auth_router(
         return UserResponse.from_identity(user)
 
     @router.post("/login", response_model=TokenResponse)
-    def login(payload: LoginRequest, response: Response) -> TokenResponse:
+    def login(
+        payload: LoginRequest,
+        request: Request,
+        response: Response,
+    ) -> TokenResponse:
         try:
             issued = service.login(
                 identifier=payload.identifier,
                 password=payload.password.get_secret_value(),
+                context=_request_context(request, service),
             )
+        except RateLimitExceededError as exc:
+            raise HTTPException(
+                status_code=429,
+                detail="too many login attempts; try again later",
+                headers={"Retry-After": str(exc.retry_after_seconds)},
+            ) from exc
         except InvalidCredentialsError as exc:
             raise HTTPException(
                 status_code=401,
@@ -131,16 +147,18 @@ def create_auth_router(
 
     @router.post("/refresh", response_model=TokenResponse)
     def refresh(
+        request: Request,
         response: Response,
         refresh_token: str | None = Cookie(
             default=None,
             alias=service.settings.refresh_cookie_name,
         ),
     ) -> TokenResponse:
-        if refresh_token is None:
-            raise _authentication_error("refresh token is missing")
         try:
-            issued = service.refresh(refresh_token)
+            issued = service.refresh(
+                refresh_token,
+                context=_request_context(request, service),
+            )
         except InvalidTokenError as exc:
             raise _authentication_error("refresh token is invalid or expired") from exc
         except InactiveUserError as exc:
@@ -151,13 +169,17 @@ def create_auth_router(
 
     @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
     def logout(
+        request: Request,
         response: Response,
         refresh_token: str | None = Cookie(
             default=None,
             alias=service.settings.refresh_cookie_name,
         ),
     ) -> None:
-        service.logout(refresh_token)
+        service.logout(
+            refresh_token,
+            context=_request_context(request, service),
+        )
         response.delete_cookie(
             key=service.settings.refresh_cookie_name,
             path="/api/v1/auth",
@@ -210,4 +232,17 @@ def _authentication_error(detail: str = "could not validate credentials") -> HTT
         status_code=401,
         detail=detail,
         headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def _request_context(request: Request, service: AuthService) -> AuthRequestContext:
+    peer = request.client.host if request.client is not None else None
+    user_agent = request.headers.get("user-agent")
+    return AuthRequestContext(
+        client_ip=resolve_client_ip(
+            peer=peer,
+            forwarded_for=request.headers.get("x-forwarded-for"),
+            trusted_proxy_cidrs=service.settings.trusted_proxy_cidrs,
+        ),
+        user_agent=user_agent[:512] if user_agent else None,
     )

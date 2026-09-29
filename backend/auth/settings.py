@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
+from ipaddress import ip_network
 
 
 DEVELOPMENT_ENVIRONMENTS = {"development", "test"}
@@ -17,6 +18,11 @@ class AuthSettings:
     jwt_audience: str = "re3d-platform-api"
     refresh_cookie_name: str = "re3d_refresh"
     cookie_secure: bool = True
+    login_window_minutes: int = 15
+    login_account_max_failures: int = 5
+    login_ip_max_failures: int = 30
+    login_block_minutes: int = 15
+    trusted_proxy_cidrs: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if len(self.jwt_secret.encode("utf-8")) < 32:
@@ -31,6 +37,25 @@ class AuthSettings:
             raise ValueError("REFRESH_COOKIE_NAME has an invalid format")
         if not self.jwt_issuer or not self.jwt_audience:
             raise ValueError("JWT issuer and audience must not be empty")
+        if not 1 <= self.login_window_minutes <= 1440:
+            raise ValueError("AUTH_LOGIN_WINDOW_MINUTES must be between 1 and 1440")
+        if not 1 <= self.login_account_max_failures <= 100:
+            raise ValueError(
+                "AUTH_LOGIN_ACCOUNT_MAX_FAILURES must be between 1 and 100"
+            )
+        if not self.login_account_max_failures <= self.login_ip_max_failures <= 1000:
+            raise ValueError(
+                "AUTH_LOGIN_IP_MAX_FAILURES must be between the account limit and 1000"
+            )
+        if not 1 <= self.login_block_minutes <= 1440:
+            raise ValueError("AUTH_LOGIN_BLOCK_MINUTES must be between 1 and 1440")
+        for cidr in self.trusted_proxy_cidrs:
+            try:
+                ip_network(cidr, strict=False)
+            except ValueError as exc:
+                raise ValueError(
+                    f"AUTH_TRUSTED_PROXY_CIDRS contains an invalid network: {cidr}"
+                ) from exc
 
     @classmethod
     def from_environment(cls, *, environment: str) -> "AuthSettings":
@@ -42,6 +67,11 @@ class AuthSettings:
         )
         if environment not in DEVELOPMENT_ENVIRONMENTS and not cookie_secure:
             raise ValueError("REFRESH_COOKIE_SECURE must be true outside development")
+        trusted_proxy_cidrs = _environment_csv("AUTH_TRUSTED_PROXY_CIDRS")
+        if environment not in DEVELOPMENT_ENVIRONMENTS and not trusted_proxy_cidrs:
+            raise ValueError(
+                "AUTH_TRUSTED_PROXY_CIDRS is required outside development"
+            )
         return cls(
             jwt_secret=secret,
             access_token_ttl_minutes=_environment_integer(
@@ -59,6 +89,23 @@ class AuthSettings:
                 "re3d_refresh",
             ),
             cookie_secure=cookie_secure,
+            login_window_minutes=_environment_integer(
+                "AUTH_LOGIN_WINDOW_MINUTES",
+                15,
+            ),
+            login_account_max_failures=_environment_integer(
+                "AUTH_LOGIN_ACCOUNT_MAX_FAILURES",
+                5,
+            ),
+            login_ip_max_failures=_environment_integer(
+                "AUTH_LOGIN_IP_MAX_FAILURES",
+                30,
+            ),
+            login_block_minutes=_environment_integer(
+                "AUTH_LOGIN_BLOCK_MINUTES",
+                15,
+            ),
+            trusted_proxy_cidrs=trusted_proxy_cidrs,
         )
 
 
@@ -80,3 +127,8 @@ def _environment_bool(name: str, default: bool) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
     raise ValueError(f"{name} must be true or false")
+
+
+def _environment_csv(name: str) -> tuple[str, ...]:
+    raw = os.environ.get(name, "")
+    return tuple(value.strip() for value in raw.split(",") if value.strip())

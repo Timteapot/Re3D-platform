@@ -22,7 +22,12 @@
 - `refresh_sessions`：refresh token 的 SHA-256、token family、绝对到期时间、使用/撤销时间和轮换后继；
 - `reconstruction_jobs.user_id → users.id` 外键，阻止任务引用不存在的用户。
 
-数据库从不保存明文密码或明文 refresh token。Access token 只包含用户 UUID、token 类型、签发/到期时间、issuer、audience 和随机 `jti`，不包含邮箱、用户名或密码信息。
+`0005_auth_audit_throttle` 增加：
+
+- `auth_events`：注册、登录、刷新与退出的成功、失败、阻断和 refresh token 重放事件；
+- `auth_throttle_buckets`：跨 API 进程共享的账户/IP 固定窗口失败计数和阻断期限。
+
+数据库从不保存明文密码或明文 refresh token。审计表不保存原始用户名、邮箱、IP 或 User-Agent：登录标识符和 IP 使用 JWT secret 做带域分离的 HMAC-SHA-256，User-Agent 只保存 SHA-256。Access token 只包含用户 UUID、token 类型、签发/到期时间、issuer、audience 和随机 `jti`，不包含邮箱、用户名或密码信息。轮换 JWT secret 会同时改变后续审计指纹，因此跨轮换周期不能直接用指纹关联事件；正式密钥轮换方案需同时定义审计关联边界。
 
 ## 3. Token 流程
 
@@ -54,9 +59,24 @@ JWT 验证允许最多 5 秒的主机时钟偏差，用于容纳 API 与 Postgre
 - 登录失败统一返回“用户名/邮箱或密码错误”；
 - 被停用用户不能登录、刷新或调用受保护接口。
 
-当前不检查泄露密码库，也没有登录限流。公开互联网部署前必须补充 IP/账号双维度限流、失败退避、审计事件和必要时的验证码。
+当前不检查泄露密码库；公开互联网部署前仍需评估泄露密码检查和必要时的验证码。
 
-## 5. Cookie 与环境约束
+## 5. 登录限流与审计
+
+默认策略：
+
+- 15 分钟窗口内，同一账户允许 5 次失败；用户名和邮箱会归并到同一内部用户桶；
+- 同一客户端 IP 允许 30 次失败，用于限制攻击者轮换用户名；
+- 达到阈值的本次请求仍返回统一的 401，后续请求在 15 分钟阻断期内返回 429 和 `Retry-After`；
+- 登录成功只重置账户桶，不重置 IP 桶，避免攻击者用自己的有效账户清除来源限制；
+- 未知用户也进入基于规范化标识符的账户桶并执行 dummy Argon2 校验；
+- 计数保存在 PostgreSQL，可由多个 API 进程共享，服务重启不会清除阻断状态。
+
+客户端 IP 默认取 TCP 对端，不直接相信 `X-Forwarded-For`。只有对端位于 `AUTH_TRUSTED_PROXY_CIDRS` 时，才从代理链右向左跳过可信代理并选择第一个不可信地址。production 必须显式配置可信代理网段，否则应用拒绝启动；不能把 `0.0.0.0/0` 或任意公网范围配置为可信代理。
+
+审计记录覆盖注册、登录、refresh token 轮换/重放和有效 refresh session 的退出。随机伪造或缺失的 refresh Cookie 不写入数据库，避免未认证请求无限制造审计记录。当前尚未实现审计查询后台、审计保留期清理和注册接口限流。
+
+## 6. Cookie 与环境约束
 
 Refresh Cookie 属性：
 
@@ -68,7 +88,7 @@ Refresh Cookie 属性：
 
 公开部署仍应校验可信 Origin、配置严格 CORS、全站 HTTPS，并在反向代理层设置安全响应头。SameSite 不能替代全部 CSRF 防护。
 
-## 6. 本地配置
+## 7. 本地配置
 
 生成至少 32 字节的随机签名密钥：
 
@@ -86,11 +106,16 @@ ACCESS_TOKEN_TTL_MINUTES=15
 REFRESH_TOKEN_TTL_DAYS=7
 REFRESH_COOKIE_NAME=re3d_refresh
 REFRESH_COOKIE_SECURE=false
+AUTH_LOGIN_WINDOW_MINUTES=15
+AUTH_LOGIN_ACCOUNT_MAX_FAILURES=5
+AUTH_LOGIN_IP_MAX_FAILURES=30
+AUTH_LOGIN_BLOCK_MINUTES=15
+AUTH_TRUSTED_PROXY_CIDRS=
 ```
 
-production 环境如果设置 `REFRESH_COOKIE_SECURE=false`，应用会拒绝启动。示例占位 JWT secret 或不足 32 字节的 secret 同样会被拒绝。
+production 环境如果设置 `REFRESH_COOKIE_SECURE=false`、未配置 `AUTH_TRUSTED_PROXY_CIDRS`、使用示例占位 JWT secret 或不足 32 字节的 secret，应用都会拒绝启动。开发环境直连 FastAPI 时可信代理列表可保持为空。
 
-## 7. 本地调用示例
+## 8. 本地调用示例
 
 ```powershell
 $password = "replace-with-a-local-test-password"
@@ -126,11 +151,11 @@ Invoke-RestMethod `
 
 不要把示例密码用于真实账号，不要把 access token、refresh Cookie 或 JWT secret 复制到日志和提交记录。
 
-## 8. 尚未完成
+## 9. 尚未完成
 
 - 邮箱验证令牌和邮件发送；
 - 密码重置和修改密码后撤销全部会话；
-- 登录/注册限流、验证码和安全审计；
+- 注册限流、验证码、审计查询权限和审计保留期清理；
 - 邮箱验证状态与前端提交权限联动；
 - 管理员停用用户的受保护接口；
 - 多设备会话列表与单独撤销；

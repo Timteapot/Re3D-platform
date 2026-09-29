@@ -58,6 +58,7 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    auth_events: Mapped[list[AuthEvent]] = relationship(back_populates="user")
     uploads: Mapped[list[JobUpload]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
@@ -95,6 +96,76 @@ class RefreshSession(Base):
     )
 
     user: Mapped[User] = relationship(back_populates="refresh_sessions")
+
+
+class AuthEvent(Base):
+    __tablename__ = "auth_events"
+    __table_args__ = (
+        CheckConstraint(
+            "action IN ('register', 'login', 'refresh', 'logout')",
+            name="ck_auth_events_action",
+        ),
+        CheckConstraint(
+            "outcome IN ('success', 'failure', 'blocked', 'reuse')",
+            name="ck_auth_events_outcome",
+        ),
+        Index("ix_auth_events_action_occurred", "action", "occurred_at"),
+        Index("ix_auth_events_user_occurred", "user_id", "occurred_at"),
+        Index(
+            "ix_auth_events_identifier_occurred",
+            "identifier_fingerprint",
+            "occurred_at",
+        ),
+        Index(
+            "ix_auth_events_ip_occurred",
+            "client_ip_fingerprint",
+            "occurred_at",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("users.id", ondelete="SET NULL"),
+    )
+    refresh_session_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    identifier_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    client_ip_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    user_agent_sha256: Mapped[str | None] = mapped_column(String(64))
+    reason_code: Mapped[str | None] = mapped_column(String(64))
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+    user: Mapped[User | None] = relationship(back_populates="auth_events")
+
+
+class AuthThrottleBucket(Base):
+    __tablename__ = "auth_throttle_buckets"
+    __table_args__ = (
+        CheckConstraint(
+            "dimension IN ('account', 'ip')",
+            name="ck_auth_throttle_dimension",
+        ),
+        CheckConstraint(
+            "failure_count >= 0",
+            name="ck_auth_throttle_failure_count",
+        ),
+        Index("ix_auth_throttle_blocked_until", "blocked_until"),
+    )
+
+    key_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    dimension: Mapped[str] = mapped_column(String(16), nullable=False)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    window_started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    blocked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
 
 
 class JobUpload(Base):

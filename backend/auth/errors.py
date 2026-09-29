@@ -19,3 +19,11 @@ class InvalidTokenError(AuthError):
 
 class InactiveUserError(AuthError):
     """The authenticated user has been disabled."""
+
+
+class RateLimitExceededError(AuthError):
+    """A login throttle bucket is blocked until a later time."""
+
+    def __init__(self, retry_after_seconds: int) -> None:
+        super().__init__("too many login attempts")
+        self.retry_after_seconds = max(1, retry_after_seconds)

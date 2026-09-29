@@ -94,6 +94,10 @@ WHERE status = 'cancelled' AND storage_cleaned_at IS NULL;
 SELECT count(*) AS active_refresh_session_count
 FROM refresh_sessions
 WHERE revoked_at IS NULL AND expires_at > CURRENT_TIMESTAMP;
+SELECT count(*) AS auth_event_count FROM auth_events;
+SELECT count(*) AS blocked_login_bucket_count
+FROM auth_throttle_buckets
+WHERE blocked_until > CURRENT_TIMESTAMP;
 "@
     & $psql `
         -X `
