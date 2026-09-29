@@ -161,7 +161,7 @@ AUTH_ACTION_TOKEN_RETENTION_DAYS=7
 AUTH_THROTTLE_RETENTION_DAYS=7
 AUTH_CLEANUP_BATCH_SIZE=1000
 APP_PUBLIC_BASE_URL=http://localhost:5173
-SMTP_HOST=localhost
+SMTP_HOST=127.0.0.1
 SMTP_PORT=1025
 SMTP_FROM=no-reply@example.invalid
 SMTP_USERNAME=
@@ -170,7 +170,7 @@ SMTP_STARTTLS=false
 SMTP_TIMEOUT_SECONDS=10
 ```
 
-development/test 允许不配置 `SMTP_HOST`，此时请求仍创建随后会被标记投递失败的令牌，不会把明文令牌输出到响应或日志。要完成本地人工联调，必须配置本地 SMTP 捕获服务。production 除既有 Cookie、可信代理和 JWT secret 检查外，还强制要求 SMTP 主机、STARTTLS、非 `.invalid` 发件地址和 HTTPS `APP_PUBLIC_BASE_URL`，否则应用拒绝启动。
+development/test 允许不配置 `SMTP_HOST`，此时请求仍创建随后会被标记投递失败的令牌，不会把明文令牌输出到响应或日志。本地可通过 `deploy/mailpit/start-local.ps1` 启动只绑定回环地址的 Mailpit，并用 `deploy/mailpit/run-acceptance.ps1` 验证注册、SMTP 投递、邮箱确认、任务权限解锁和密码重置闭环。production 除既有 Cookie、可信代理和 JWT secret 检查外，还强制要求 SMTP 主机、STARTTLS、非 `.invalid` 发件地址和 HTTPS `APP_PUBLIC_BASE_URL`，否则应用拒绝启动。
 
 ## 8. 本地调用示例
 

@@ -43,6 +43,15 @@ tests                    集成、端到端与测试夹具
 3. 保证 `RE3D_DATA_ROOT` 位于代码仓库之外。
 4. 在公开部署前明确成功任务的数据保留期限、用户配额、域名、TLS、邮件服务和备份策略。
 
+本地邮箱验证与密码重置使用只绑定回环地址的 Mailpit：
+
+```powershell
+& .\deploy\mailpit\start-local.ps1
+& .\deploy\mailpit\run-acceptance.ps1
+```
+
+邮件界面位于 `http://127.0.0.1:8025`，具体配置和停止方式见 [`deploy/mailpit/README.md`](deploy/mailpit/README.md)。
+
 `.env`、用户数据、模型权重和运行产物不得提交到 Git。
 
 前端首次安装和启动：
