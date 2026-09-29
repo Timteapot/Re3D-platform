@@ -343,14 +343,61 @@ class ApiWorkerFlowTests(unittest.TestCase):
             self.assertEqual(legacy_job.status_code, 404)
             upload_response = production.post(
                 "/api/v1/uploads",
-                json={"idempotency_key": "must-not-upload"},
+                json={"idempotency_key": "production-upload-boundary"},
                 headers=self.auth_headers(self.access_token),
             )
-            self.assertEqual(upload_response.status_code, 404)
+            self.assertEqual(upload_response.status_code, 201)
             openapi_paths = production.get("/openapi.json").json()["paths"]
             self.assertIn("/api/v1/jobs/{job_id}", openapi_paths)
+            self.assertIn("/api/v1/uploads", openapi_paths)
             self.assertNotIn("/api/v1/development/jobs/{job_id}", openapi_paths)
             self.assertEqual(production.get("/api/v1/auth/me").status_code, 401)
+        finally:
+            production.close()
+
+    def test_production_upload_submission_is_real_only(self) -> None:
+        production = TestClient(
+            create_app(services=self.services, app_env="production")
+        )
+        headers = self.auth_headers(self.access_token)
+        try:
+            created = production.post(
+                "/api/v1/uploads",
+                json={"idempotency_key": "production-real-upload"},
+                headers=headers,
+            )
+            self.assertEqual(created.status_code, 201, created.text)
+            upload_id = created.json()["upload_id"]
+
+            for index, color in enumerate(
+                ((180, 30, 20), (20, 170, 60), (40, 80, 200))
+            ):
+                uploaded = production.post(
+                    f"/api/v1/uploads/{upload_id}/images",
+                    files={
+                        "file": (
+                            f"production-{index}.png",
+                            self.png_bytes(color),
+                            "image/png",
+                        )
+                    },
+                    headers=headers,
+                )
+                self.assertEqual(uploaded.status_code, 201, uploaded.text)
+
+            simulated = production.post(
+                f"/api/v1/uploads/{upload_id}/submit",
+                json={"execution_mode": "simulated"},
+                headers=headers,
+            )
+            self.assertEqual(simulated.status_code, 422, simulated.text)
+
+            submitted = production.post(
+                f"/api/v1/uploads/{upload_id}/submit",
+                headers=headers,
+            )
+            self.assertEqual(submitted.status_code, 202, submitted.text)
+            self.assertEqual(submitted.json()["execution_mode"], "real")
         finally:
             production.close()
 

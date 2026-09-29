@@ -126,6 +126,46 @@ class PostgreSQLApiWorkerFlowTests(unittest.TestCase):
         self.assertEqual(len(replaced), 1)
         self.assertEqual(replaced[0].replaced_by_id, active[0].id)
 
+    def test_production_upload_submission_defaults_to_real(self) -> None:
+        production = TestClient(
+            create_app(services=self.services, app_env="production")
+        )
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+        try:
+            created = production.post(
+                "/api/v1/uploads",
+                json={"idempotency_key": "postgres-production-real"},
+                headers=headers,
+            )
+            self.assertEqual(created.status_code, 201, created.text)
+            upload_id = created.json()["upload_id"]
+
+            for index, color in enumerate(
+                ((180, 30, 20), (20, 170, 60), (40, 80, 200))
+            ):
+                uploaded = production.post(
+                    f"/api/v1/uploads/{upload_id}/images",
+                    files={
+                        "file": (
+                            f"production-{index}.png",
+                            self.png_bytes(color),
+                            "image/png",
+                        )
+                    },
+                    headers=headers,
+                )
+                self.assertEqual(uploaded.status_code, 201, uploaded.text)
+
+            submitted = production.post(
+                f"/api/v1/uploads/{upload_id}/submit",
+                headers=headers,
+            )
+            self.assertEqual(submitted.status_code, 202, submitted.text)
+            self.assertEqual(submitted.json()["execution_mode"], "real")
+            self.job_ids.append(uuid.UUID(submitted.json()["job_id"]))
+        finally:
+            production.close()
+
     def test_api_postgresql_worker_and_artifacts_form_a_closed_loop(self) -> None:
         upload_response = self.client.post(
             "/api/v1/uploads",

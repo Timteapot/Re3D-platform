@@ -2,7 +2,7 @@
 
 ## 1. 当前实现范围
 
-上传接口目前只在 `APP_ENV=development` 或 `test` 时注册。它接收真实 JPEG/PNG 图片；提交不带请求体时使用 `execution_mode=simulated`，显式提交 `{"execution_mode":"real"}` 时进入真实队列。默认网页流程仍使用模拟模式，因此上传成功本身不等于真实 Re3D 已执行。
+上传接口在 development、test 和 production 环境注册并接收真实 JPEG/PNG 图片。development/test 提交不带请求体时使用 `execution_mode=simulated`，也可显式提交 `{"execution_mode":"real"}`；production 不带请求体时由服务端强制使用 `real`，显式请求 `simulated` 会被拒绝。客户端不能决定生产任务是否绕过真实 Re3D。
 
 | 方法 | 路径 | 作用 |
 |---|---|---|

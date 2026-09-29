@@ -104,16 +104,23 @@ def create_app(
         )
     )
 
-    if environment not in DEVELOPMENT_ENVIRONMENTS:
-        return app
-
+    is_development = environment in DEVELOPMENT_ENVIRONMENTS
     app.include_router(
         create_upload_router(
             resolved_services.uploads,
             current_user,
             verified_user,
+            default_execution_mode="simulated" if is_development else "real",
+            allowed_execution_modes=(
+                frozenset({"simulated", "real"})
+                if is_development
+                else frozenset({"real"})
+            ),
         )
     )
+
+    if not is_development:
+        return app
 
     app.include_router(
         create_development_job_router(

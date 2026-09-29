@@ -60,15 +60,25 @@ class SubmittedJobResponse(BaseModel):
     queued_at: datetime
 
 
+ExecutionMode = Literal["simulated", "real"]
+
+
 class UploadSubmitRequest(BaseModel):
-    execution_mode: Literal["simulated", "real"] = "simulated"
+    execution_mode: ExecutionMode | None = None
 
 
 def create_upload_router(
     service: UploadService,
     current_user: CurrentUserDependency,
     verified_user: VerifiedUserDependency,
+    *,
+    default_execution_mode: ExecutionMode = "simulated",
+    allowed_execution_modes: frozenset[ExecutionMode] = frozenset(
+        {"simulated", "real"}
+    ),
 ) -> APIRouter:
+    if default_execution_mode not in allowed_execution_modes:
+        raise ValueError("default execution mode must be allowed")
     router = APIRouter(prefix="/api/v1/uploads", tags=["uploads"])
 
     @router.post(
@@ -183,13 +193,21 @@ def create_upload_router(
         payload: UploadSubmitRequest | None = None,
         user: UserIdentity = Depends(verified_user),
     ) -> SubmittedJobResponse:
+        execution_mode = (
+            payload.execution_mode
+            if payload is not None and payload.execution_mode is not None
+            else default_execution_mode
+        )
+        if execution_mode not in allowed_execution_modes:
+            raise HTTPException(
+                status_code=422,
+                detail="execution mode is unavailable in this environment",
+            )
         try:
             job = service.submit(
                 upload_id=upload_id,
                 user_id=user.id,
-                execution_mode=(
-                    payload.execution_mode if payload is not None else "simulated"
-                ),
+                execution_mode=execution_mode,
             )
         except UploadNotFoundError as exc:
             raise HTTPException(status_code=404, detail="upload not found") from exc

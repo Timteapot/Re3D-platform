@@ -399,7 +399,7 @@ export function WorkspacePage() {
                 if (uploadSession) submitDraft.mutate(uploadSession.upload_id);
               }}
             >
-              {submitDraft.isPending ? "正在提交…" : "冻结输入并创建模拟任务"}
+              {submitDraft.isPending ? "正在提交…" : "冻结输入并创建重建任务"}
             </button>
             {uploadSession ? (
               <button
