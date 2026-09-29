@@ -5,6 +5,7 @@ import {
   cancelJob,
   createUpload,
   deleteUploadedImage,
+  fetchJobArtifact,
   getJobDetail,
   submitUpload,
   uploadImage,
@@ -94,5 +95,30 @@ describe("job upload API", () => {
       `/api/v1/development/jobs/${jobId}/cancel`,
       { method: "POST" },
     );
+  });
+
+  it("downloads an artifact through the authenticated binary request path", async () => {
+    const payload = new Uint8Array([0x67, 0x6c, 0x54, 0x46]);
+    const fetchAuthorized = vi.fn().mockResolvedValue(
+      new Response(payload, {
+        status: 200,
+        headers: { "Content-Type": "model/gltf-binary" },
+      }),
+    );
+    const artifact = {
+      kind: "glb",
+      size_bytes: 4,
+      content_type: "model/gltf-binary",
+      download_url: "/api/v1/development/jobs/job-id/artifacts/A-v4/glb",
+    };
+
+    const downloaded = await fetchJobArtifact(fetchAuthorized, artifact);
+
+    expect(fetchAuthorized).toHaveBeenCalledWith(artifact.download_url, {
+      headers: { Accept: "model/gltf-binary" },
+    });
+    expect(downloaded).toBeInstanceOf(Blob);
+    expect(downloaded.size).toBe(4);
+    expect(downloaded.type).toBe("model/gltf-binary");
   });
 });

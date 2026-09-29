@@ -151,6 +151,24 @@ class ApiWorkerFlowTests(unittest.TestCase):
         self.assertIsNone(detail["evaluation"]["score"])
         self.assertNotIn("path", detail["result"]["branches"][0]["artifacts"][0])
         self.assertNotIn("sha256", detail["result"]["branches"][0]["artifacts"][0])
+        artifact_summary = detail["result"]["branches"][0]["artifacts"][0]
+        artifact_url = (
+            f"/api/v1/development/jobs/{job_id}/artifacts/A-v4/glb"
+        )
+        self.assertEqual(artifact_summary["download_url"], artifact_url)
+        unauthenticated = self.client.get(artifact_url)
+        self.assertEqual(unauthenticated.status_code, 401)
+        downloaded = self.client.get(
+            artifact_url,
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(downloaded.status_code, 200)
+        self.assertEqual(downloaded.content[:4], b"glTF")
+        self.assertEqual(downloaded.headers["content-type"], "model/gltf-binary")
+        self.assertEqual(downloaded.headers["cache-control"], "private, no-store")
+        self.assertEqual(downloaded.headers["x-content-type-options"], "nosniff")
+        self.assertIn("attachment", downloaded.headers["content-disposition"])
+        self.assertIn("A-v4-mesh.glb", downloaded.headers["content-disposition"])
 
         stream = self.client.get(
             f"/api/v1/development/jobs/{job_id}/events",
@@ -188,6 +206,14 @@ class ApiWorkerFlowTests(unittest.TestCase):
             ).scalar_one()
         self.assertEqual(count, 1)
 
+        artifact = self.data_root / "jobs" / job_id / "output" / "A-v4" / "mesh.glb"
+        artifact.write_bytes(b"tampered")
+        corrupted = self.client.get(
+            artifact_url,
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(corrupted.status_code, 409)
+
     def test_user_scope_cancel_and_production_route_guard(self) -> None:
         created = self.create_job("integration-cancel-001")
         job_id = created["job_id"]
@@ -211,6 +237,16 @@ class ApiWorkerFlowTests(unittest.TestCase):
             headers=self.auth_headers(other_access_token),
         )
         self.assertEqual(hidden_stream.status_code, 404)
+        hidden_artifact = self.client.get(
+            f"/api/v1/development/jobs/{job_id}/artifacts/A-v4/glb",
+            headers=self.auth_headers(other_access_token),
+        )
+        self.assertEqual(hidden_artifact.status_code, 404)
+        pending_artifact = self.client.get(
+            f"/api/v1/development/jobs/{job_id}/artifacts/A-v4/glb",
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(pending_artifact.status_code, 409)
         cancelled = self.client.post(
             f"/api/v1/development/jobs/{job_id}/cancel",
             headers=self.auth_headers(self.access_token),
@@ -251,6 +287,11 @@ class ApiWorkerFlowTests(unittest.TestCase):
                 headers=self.auth_headers(self.access_token),
             )
             self.assertEqual(response.status_code, 404)
+            artifact_response = production.get(
+                f"/api/v1/development/jobs/{job_id}/artifacts/A-v4/glb",
+                headers=self.auth_headers(self.access_token),
+            )
+            self.assertEqual(artifact_response.status_code, 404)
             upload_response = production.post(
                 "/api/v1/uploads",
                 json={"idempotency_key": "must-not-upload"},

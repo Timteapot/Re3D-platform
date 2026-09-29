@@ -4,7 +4,14 @@ import { Link, useParams } from "react-router-dom";
 
 import { ApiError } from "../api/http";
 import { useAuth } from "../auth/AuthContext";
-import { cancelJob, getJobDetail, type Job, type JobDetail } from "../jobs/api";
+import {
+  cancelJob,
+  fetchJobArtifact,
+  getJobDetail,
+  type ArtifactSummary,
+  type Job,
+  type JobDetail,
+} from "../jobs/api";
 import { streamJobEvents } from "../jobs/events";
 
 const TERMINAL_STATUSES = new Set([
@@ -66,12 +73,32 @@ function applyJobUpdate(detail: JobDetail | undefined, job: Job): JobDetail | un
   return detail ? { ...detail, job } : detail;
 }
 
+function artifactFilename(
+  jobId: string,
+  branch: string,
+  artifact: ArtifactSummary,
+): string {
+  const extension = artifact.kind === "texture"
+    ? artifact.content_type === "image/png" ? "png" : "jpg"
+    : artifact.kind;
+  return `re3d-${jobId}-${branch}-${artifact.kind}.${extension}`;
+}
+
+const artifactLabels: Record<string, string> = {
+  glb: "GLB 模型",
+  obj: "OBJ 网格",
+  mtl: "MTL 材质",
+  texture: "纹理图片",
+};
+
 export function JobDetailPage() {
   const { jobId = "" } = useParams();
   const auth = useAuth();
   const queryClient = useQueryClient();
   const queryKey = ["job-detail", auth.user?.id, jobId] as const;
   const [streamState, setStreamState] = useState<"connecting" | "live" | "fallback" | "closed">("connecting");
+  const [downloading, setDownloading] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const detail = useQuery({
     queryKey,
@@ -156,6 +183,30 @@ export function JobDetailPage() {
         ? "正在连接实时状态"
         : "任务状态已终止";
 
+  async function downloadArtifact(branch: string, artifact: ArtifactSummary) {
+    const key = `${branch}:${artifact.kind}`;
+    setDownloading(key);
+    setDownloadError(null);
+    try {
+      const blob = await fetchJobArtifact(auth.fetchAuthorized, artifact);
+      const objectUrl = URL.createObjectURL(blob);
+      try {
+        const link = document.createElement("a");
+        link.href = objectUrl;
+        link.download = artifactFilename(job.job_id, branch, artifact);
+        document.body.append(link);
+        link.click();
+        link.remove();
+      } finally {
+        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      }
+    } catch (error) {
+      setDownloadError(readableError(error));
+    } finally {
+      setDownloading(null);
+    }
+  }
+
   return (
     <main className="page job-detail-page">
       <Link className="back-link job-back" to="/workspace">← 返回重建工作台</Link>
@@ -207,19 +258,43 @@ export function JobDetailPage() {
       ) : null}
 
       <section className="detail-section">
-        <div className="detail-heading"><span>01</span><div><h2>三分支输出</h2><p>仅显示契约内的产物类型、大小和结构指标；文件下载将在后续独立实现授权接口。</p></div></div>
+        <div className="detail-heading"><span>01</span><div><h2>三分支输出</h2><p>下载请求携带当前会话令牌；服务端会重新核对任务所有权、结果契约、文件大小和 SHA-256。</p></div></div>
+        {downloadError ? <div className="form-notice error" role="alert">{downloadError}</div> : null}
         {value.result ? (
           <div className="result-branch-grid">
-            {value.result.branches.map((branch) => (
-              <article key={branch.name}>
-                <div><span>{branch.name}</span><strong>{statusLabels[branch.status] ?? branch.status}</strong></div>
-                <dl>
-                  <div><dt>产物</dt><dd>{branch.artifacts.length} 个</dd></div>
-                  <div><dt>体积</dt><dd>{formatBytes(branch.artifacts.reduce((sum, item) => sum + item.size_bytes, 0))}</dd></div>
-                  <div><dt>顶点 / 面</dt><dd>{String(branch.metrics.vertices ?? "—")} / {String(branch.metrics.faces ?? "—")}</dd></div>
-                </dl>
-              </article>
-            ))}
+            {value.result.branches.map((branch) => {
+              return (
+                <article key={branch.name}>
+                  <div><span>{branch.name}</span><strong>{statusLabels[branch.status] ?? branch.status}</strong></div>
+                  <dl>
+                    <div><dt>产物</dt><dd>{branch.artifacts.length} 个</dd></div>
+                    <div><dt>体积</dt><dd>{formatBytes(branch.artifacts.reduce((sum, item) => sum + item.size_bytes, 0))}</dd></div>
+                    <div><dt>顶点 / 面</dt><dd>{String(branch.metrics.vertices ?? "—")} / {String(branch.metrics.faces ?? "—")}</dd></div>
+                  </dl>
+                  <ul className="artifact-download-list">
+                    {branch.artifacts.map((artifact) => {
+                      const key = `${branch.name}:${artifact.kind}`;
+                      return (
+                        <li key={artifact.kind}>
+                          <span><strong>{artifactLabels[artifact.kind] ?? artifact.kind}</strong><small>{formatBytes(artifact.size_bytes)}</small></span>
+                          {artifact.download_url ? (
+                            <button
+                              className="artifact-download-button"
+                              type="button"
+                              aria-label={`下载 ${branch.name} ${artifactLabels[artifact.kind] ?? artifact.kind}`}
+                              disabled={downloading !== null}
+                              onClick={() => void downloadArtifact(branch.name, artifact)}
+                            >
+                              {downloading === key ? "下载中…" : "下载"}
+                            </button>
+                          ) : <small>不可下载</small>}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </article>
+              );
+            })}
           </div>
         ) : (
           <p className="empty-state">{active ? "结果尚未生成。页面会随任务状态自动更新。" : "该任务没有可展示的结果摘要。"}</p>

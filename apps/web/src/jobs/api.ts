@@ -1,3 +1,5 @@
+import { ApiError, readApiError } from "../api/http";
+
 export interface UploadedImage {
   id: string;
   original_name: string;
@@ -54,6 +56,7 @@ export interface ArtifactSummary {
   kind: string;
   size_bytes: number;
   content_type: string;
+  download_url: string | null;
 }
 
 export interface ResultBranchSummary {
@@ -102,6 +105,11 @@ export type AuthorizedRequest = <T>(
   path: string,
   init?: RequestInit,
 ) => Promise<T>;
+
+export type AuthorizedFetch = (
+  path: string,
+  init?: RequestInit,
+) => Promise<Response>;
 
 export function createUpload(
   request: AuthorizedRequest,
@@ -177,4 +185,18 @@ export function cancelJob(
   return request<Job>(`/api/v1/development/jobs/${jobId}/cancel`, {
     method: "POST",
   });
+}
+
+export async function fetchJobArtifact(
+  fetchAuthorized: AuthorizedFetch,
+  artifact: ArtifactSummary,
+): Promise<Blob> {
+  if (artifact.download_url === null) {
+    throw new ApiError(404, "该产物当前不可下载");
+  }
+  const response = await fetchAuthorized(artifact.download_url, {
+    headers: { Accept: artifact.content_type },
+  });
+  if (!response.ok) throw await readApiError(response);
+  return response.blob();
 }

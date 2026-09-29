@@ -9,12 +9,19 @@ from typing import Any, Callable, Literal
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
-from starlette.responses import StreamingResponse
+from starlette.responses import FileResponse, StreamingResponse
 
 from backend.auth import UserIdentity
 from backend.db.errors import JobNotFoundError, QueueConflictError
 from backend.db.queue import JobQueue
 from backend.db.state_machine import JobStatus, TERMINAL_STATUSES
+from backend.jobs.artifacts import (
+    ArtifactBranch,
+    ArtifactKind,
+    ArtifactNotFoundError,
+    ArtifactReader,
+    ArtifactUnavailableError,
+)
 from backend.jobs.details import JobDetailReader, JobDetailSnapshot
 from backend.jobs.development import DevelopmentJobService
 
@@ -78,6 +85,7 @@ class ArtifactSummary(BaseModel):
     kind: str
     size_bytes: int
     content_type: str
+    download_url: str | None
 
 
 class ResultBranchSummary(BaseModel):
@@ -165,6 +173,12 @@ def _summarize_result(result: dict[str, Any]) -> ResultSummary:
                         kind=artifact["kind"],
                         size_bytes=artifact["size_bytes"],
                         content_type=artifact["content_type"],
+                        download_url=(
+                            f"/api/v1/development/jobs/{result['job_id']}"
+                            f"/artifacts/{name}/{artifact['kind']}"
+                            if artifact["kind"] in {"glb", "obj", "mtl", "texture"}
+                            else None
+                        ),
                     )
                     for artifact in branch["artifacts"]
                 ],
@@ -219,6 +233,7 @@ def create_development_job_router(
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v1/development", tags=["development"])
     details = JobDetailReader(queue, data_root=development_jobs.data_root)
+    artifacts = ArtifactReader(queue, data_root=development_jobs.data_root)
 
     @router.post(
         "/simulated-jobs",
@@ -280,6 +295,41 @@ def create_development_job_router(
             )
         except JobNotFoundError as exc:
             raise HTTPException(status_code=404, detail="job not found") from exc
+
+    @router.get("/jobs/{job_id}/artifacts/{branch}/{kind}")
+    def download_job_artifact(
+        job_id: uuid.UUID,
+        branch: ArtifactBranch,
+        kind: ArtifactKind,
+        user: UserIdentity = Depends(current_user),
+    ) -> FileResponse:
+        try:
+            artifact = artifacts.read(
+                job_id,
+                user_id=user.id,
+                branch=branch,
+                kind=kind,
+            )
+        except JobNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="job not found") from exc
+        except ArtifactNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="artifact not found") from exc
+        except ArtifactUnavailableError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="artifact is unavailable or failed integrity checks",
+            ) from exc
+        return FileResponse(
+            artifact.path,
+            media_type=artifact.content_type,
+            filename=artifact.filename,
+            content_disposition_type="attachment",
+            headers={
+                "Cache-Control": "private, no-store",
+                "ETag": f'"{artifact.sha256}"',
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
 
     @router.post("/jobs/{job_id}/cancel", response_model=JobResponse)
     def cancel_job(

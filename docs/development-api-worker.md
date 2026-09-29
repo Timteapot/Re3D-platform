@@ -139,6 +139,8 @@ Invoke-RestMethod `
 
 浏览器任务详情页使用 `GET /api/v1/development/jobs/{job_id}/events` 接收 SSE。由于访问令牌不放在 URL 中，前端使用带 `Authorization` 请求头的 Fetch 流读取事件，而不是原生 `EventSource`；连接失败时保留 5 秒轮询作为降级路径。终态任务发送最后一个状态事件后主动关闭流。
 
+成功任务的详情响应为每个产物提供受控 `download_url`。浏览器仍使用带 `Authorization` 请求头的 Fetch 获取二进制 Blob，再触发本地保存，不把 access token 放进查询参数或普通链接。服务端只接受固定的 A-v4/B-v2/C 和 glb/obj/mtl/texture 选择器，并在返回文件前复核所有权、成功终态、契约路径、大小和 SHA-256。完整边界见 [`artifact-downloads.md`](artifact-downloads.md)。
+
 任务目录包含：
 
 ```text
@@ -172,10 +174,11 @@ Re3D-data/jobs/<job_uuid>/
 | POST | `/api/v1/development/simulated-jobs` | 以当前登录用户创建幂等模拟任务 |
 | GET | `/api/v1/development/jobs/{job_id}` | 查询当前用户的任务 |
 | GET | `/api/v1/development/jobs/{job_id}/detail` | 返回契约校验后的输入、三分支结果和评估摘要 |
+| GET | `/api/v1/development/jobs/{job_id}/artifacts/{branch}/{kind}` | 下载当前用户成功任务中通过完整性复核的固定产物 |
 | GET | `/api/v1/development/jobs/{job_id}/events` | 返回当前用户任务的 SSE 状态流 |
 | POST | `/api/v1/development/jobs/{job_id}/cancel` | 取消当前用户的任务 |
 
-查询或取消其他用户的任务会统一返回 404，避免泄露任务是否存在。用户 ID 只来自服务端验证后的 access token。
+查询、取消或下载其他用户的任务会统一返回 404，避免泄露任务是否存在。用户 ID 只来自服务端验证后的 access token。
 
 ## 8. 测试方式
 
@@ -198,7 +201,7 @@ Re3D-data/jobs/<job_uuid>/
 ## 9. 仍未完成
 
 - 邮箱验证、密码重置和登录限流；
-- 产物授权下载和在线三维查看；
+- 在线三维查看；
 - GPU、显存和磁盘资源采样；
 - 基于真值或人工标注校准真实评估阈值；
 - 失败任务目录自动清理；

@@ -183,6 +183,15 @@ class PostgreSQLApiWorkerFlowTests(unittest.TestCase):
         self.assertEqual(detail["detail_state"], "available")
         self.assertEqual(detail["evaluation"]["overall_status"], "not_available")
         self.assertEqual(len(detail["result"]["branches"]), 3)
+        artifact_url = detail["result"]["branches"][0]["artifacts"][0][
+            "download_url"
+        ]
+        downloaded = self.client.get(
+            artifact_url,
+            headers={"Authorization": f"Bearer {self.access_token}"},
+        )
+        self.assertEqual(downloaded.status_code, 200)
+        self.assertEqual(downloaded.content[:4], b"glTF")
         for branch in ("A-v4", "B-v2", "C"):
             artifact = (
                 self.data_root
