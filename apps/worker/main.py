@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import time
+from typing import Protocol
 
 from backend.db.errors import SchedulerError
 from backend.db.queue import JobQueue
@@ -22,6 +25,10 @@ from backend.re3d_adapter import (
 from backend.re3d_adapter.settings import Re3DSettings, WorkerSettings
 from backend.uploads import UploadService, UploadSettings
 from backend.worker import QueuedRealWorker, QueuedSimulationWorker
+
+
+class RealQueueWorker(Protocol):
+    def run_once(self): ...
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -69,6 +76,19 @@ def build_parser() -> argparse.ArgumentParser:
     queued_real.add_argument("--heartbeat-seconds", type=int)
     queued_real.add_argument("--re3d-root")
     queued_real.add_argument("--driver-python")
+    queued_real_loop = subparsers.add_parser(
+        "run-real-queued-loop",
+        description="Continuously claim and supervise real PostgreSQL Re3D jobs",
+    )
+    queued_real_loop.add_argument("--data-root")
+    queued_real_loop.add_argument("--worker-id")
+    queued_real_loop.add_argument("--database-url")
+    queued_real_loop.add_argument("--resource-key")
+    queued_real_loop.add_argument("--lease-seconds", type=int)
+    queued_real_loop.add_argument("--heartbeat-seconds", type=int)
+    queued_real_loop.add_argument("--re3d-root")
+    queued_real_loop.add_argument("--driver-python")
+    queued_real_loop.add_argument("--poll-seconds", type=float)
     cleanup = subparsers.add_parser(
         "cleanup-stale-uploads",
         description="Cancel stale uploads and remove their task directories",
@@ -138,7 +158,11 @@ def main(argv: list[str] | None = None) -> int:
                 }
             finally:
                 engine.dispose()
-        elif args.command in {"run-queued-once", "run-real-queued-once"}:
+        elif args.command in {
+            "run-queued-once",
+            "run-real-queued-once",
+            "run-real-queued-loop",
+        }:
             database = DatabaseSettings.from_environment(args.database_url)
             scheduler = SchedulerSettings.from_environment(
                 resource_key=args.resource_key,
@@ -148,7 +172,7 @@ def main(argv: list[str] | None = None) -> int:
             engine = create_database_engine(database)
             try:
                 queue = JobQueue(create_session_factory(engine))
-                if args.command == "run-real-queued-once":
+                if args.command in {"run-real-queued-once", "run-real-queued-loop"}:
                     re3d = Re3DSettings.from_environment(
                         root=args.re3d_root,
                         driver_python=args.driver_python,
@@ -172,6 +196,12 @@ def main(argv: list[str] | None = None) -> int:
                         lease_seconds=scheduler.lease_seconds,
                         heartbeat_seconds=scheduler.heartbeat_seconds,
                     )
+                if args.command == "run-real-queued-loop":
+                    _run_real_worker_loop(
+                        worker,
+                        poll_seconds=_worker_poll_seconds(args.poll_seconds),
+                    )
+                    return 0
                 outcome = worker.run_once()
             finally:
                 engine.dispose()
@@ -192,6 +222,8 @@ def main(argv: list[str] | None = None) -> int:
     except (SchedulerError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
+    except KeyboardInterrupt:
+        return 130
     print(
         json.dumps(
             response,
@@ -199,6 +231,52 @@ def main(argv: list[str] | None = None) -> int:
         )
     )
     return 0
+
+
+def _run_real_worker_loop(
+    worker: RealQueueWorker,
+    *,
+    poll_seconds: float,
+) -> None:
+    print(
+        json.dumps(
+            {
+                "operation": "real-worker-loop",
+                "status": "started",
+                "poll_seconds": poll_seconds,
+            }
+        ),
+        flush=True,
+    )
+    while True:
+        outcome = worker.run_once()
+        if outcome.claimed:
+            print(
+                json.dumps(
+                    {
+                        "claimed": True,
+                        "job_id": outcome.job_id,
+                        "status": outcome.status,
+                        "recovered": outcome.recovered,
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
+        else:
+            time.sleep(poll_seconds)
+
+
+def _worker_poll_seconds(configured: float | None) -> float:
+    if configured is None:
+        raw = os.environ.get("RE3D_WORKER_POLL_SECONDS", "5")
+        try:
+            configured = float(raw)
+        except ValueError as exc:
+            raise ValueError("RE3D_WORKER_POLL_SECONDS must be a number") from exc
+    if not 0.5 <= configured <= 60:
+        raise ValueError("RE3D_WORKER_POLL_SECONDS must be between 0.5 and 60")
+    return configured
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ Re3D Platform 是基于 Re3D 三维重建管线的非商业学习与工程实践
 
 ## 当前状态
 
-阶段 0 的核心验收闭环已经完成，项目已完成阶段 4 的首个本机真实 GPU 闭环验收，尚未进入公开部署阶段。
+阶段 0 的核心验收闭环已经完成，项目已完成阶段 4 的首个本机真实 GPU 闭环验收，并完成 Windows 单机生产拓扑的非公网验收，尚未进入公开部署阶段。
 
 - Re3D 活动基线标签：`re3d-pipeline-v1.1.0`
 - Re3D 活动基线提交：`2c5ba174dae9fe53dcec8f7d8466793fdebf0c58`
@@ -60,7 +60,7 @@ tests                    集成、端到端与测试夹具
 
 脚本不会覆盖已有配置，且只输出不含秘密的就绪检查结果。说明见 [`deploy/development/README.md`](deploy/development/README.md)。
 
-生产配置模板和按 `api` / `worker` / `all` 区分的无秘密就绪检查见 [`deploy/production/README.md`](deploy/production/README.md)。生产 PostgreSQL 的管理员/迁移/运行权限拆分以及备份恢复流程见 [`deploy/postgres/README.md`](deploy/postgres/README.md)。这些检查和脚本用于提前拒绝开发库、管理员数据库账户、不安全 Cookie、非 HTTPS 公共地址、未加密 SMTP、漂移的 Re3D 基线和不足的数据盘；检查通过本身不代表允许开放公网。
+生产配置模板、按 `api` / `worker` / `all` 区分的无秘密就绪检查、前端生产构建、API/Worker 启动入口、Caddy 同源代理和本机闭环验收见 [`deploy/production/README.md`](deploy/production/README.md)。生产 PostgreSQL 的管理员/迁移/运行权限拆分以及备份恢复流程见 [`deploy/postgres/README.md`](deploy/postgres/README.md)。这些检查和脚本用于提前拒绝开发库、管理员数据库账户、不安全 Cookie、非 HTTPS 公共地址、未加密 SMTP、漂移的 Re3D 基线和不足的数据盘；检查通过本身不代表允许开放公网。
 
 `.env`、用户数据、模型权重和运行产物不得提交到 Git。
 
@@ -86,6 +86,6 @@ Vite 开发服务器只绑定 `127.0.0.1:5173`，并将 `/api` 代理到本机 F
 
 ## 下一步
 
-运行契约、Windows Worker、三分支模拟器、PostgreSQL 租约队列、认证、数据库共享登录/注册/认证邮件请求限流、脱敏认证审计及保留期清理、邮箱验证与密码重置前后端闭环、未验证账号任务创建权限控制、真实图片上传、稳定任务访问 API、任务详情/SSE、受控真实 Re3D 子进程、产物汇总、首版结构评估、受鉴权产物下载、三分支 GLB 在线预览、生产配置就绪检查和生产 PostgreSQL 权限/备份恢复合同已经完成。生产邮件服务、审计查询权限、任务配额、失败任务清理、资源监控、真实服务器备份和数据保留策略仍是公开部署前置条件。
+运行契约、Windows Worker、三分支模拟器、PostgreSQL 租约队列、认证、数据库共享登录/注册/认证邮件请求限流、脱敏认证审计及保留期清理、邮箱验证与密码重置前后端闭环、未验证账号任务创建权限控制、真实图片上传、稳定任务访问 API、任务详情/SSE、受控真实 Re3D 子进程、产物汇总、首版结构评估、受鉴权产物下载、三分支 GLB 在线预览、生产配置就绪检查、生产 PostgreSQL 权限/备份恢复合同，以及 Windows 单机静态站点/API/持续 Worker/Caddy 非公网拓扑验收已经完成。Windows 服务托管、生产邮件服务、审计查询权限、任务配额、失败任务清理、资源监控、真实服务器备份和数据保留策略仍是公开部署前置条件。
 
 数据库队列的设计、初始化和当前边界见 [`docs/database-queue.md`](docs/database-queue.md)。

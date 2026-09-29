@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import contextlib
+import io
+import json
+import os
 import sys
 import tempfile
 import threading
@@ -7,6 +11,8 @@ import time
 import unittest
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -16,8 +22,49 @@ from backend.db.queue import JobQueue
 from backend.db.state_machine import JobStatus
 from backend.re3d_adapter.contracts import load_json_contract
 from backend.worker import QueuedRealWorker
+from apps.worker.main import _run_real_worker_loop, _worker_poll_seconds
 from tests.unit.test_real_adapter import create_fake_real_re3d, make_real_request
 from tests.unit.test_worker_simulation import create_task, read_events
+
+
+class RealWorkerLoopTests(unittest.TestCase):
+    def test_loop_suppresses_idle_results_and_reports_claimed_jobs(self) -> None:
+        worker = SimpleNamespace(
+            run_once=Mock(
+                side_effect=[
+                    SimpleNamespace(
+                        claimed=True,
+                        job_id="job-1",
+                        status="succeeded",
+                        recovered=False,
+                    ),
+                    SimpleNamespace(
+                        claimed=False,
+                        job_id=None,
+                        status="idle",
+                        recovered=False,
+                    ),
+                ]
+            )
+        )
+        stdout = io.StringIO()
+        with (
+            contextlib.redirect_stdout(stdout),
+            patch("apps.worker.main.time.sleep", side_effect=KeyboardInterrupt),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            _run_real_worker_loop(worker, poll_seconds=2.0)
+
+        records = [json.loads(line) for line in stdout.getvalue().splitlines()]
+        self.assertEqual(records[0]["operation"], "real-worker-loop")
+        self.assertEqual(records[1]["job_id"], "job-1")
+        self.assertEqual(len(records), 2)
+
+    def test_poll_interval_reads_environment_and_rejects_busy_loop(self) -> None:
+        with patch.dict(os.environ, {"RE3D_WORKER_POLL_SECONDS": "3.5"}, clear=True):
+            self.assertEqual(_worker_poll_seconds(None), 3.5)
+        with self.assertRaises(ValueError):
+            _worker_poll_seconds(0.1)
 
 
 def create_queued_real_job(root: Path, *, slow: bool = False):
