@@ -409,10 +409,13 @@ export default function GlbViewer({
                 value={modelRotation[axis]}
                 disabled={viewerState.phase !== "ready"}
                 aria-label={`模型 ${axis.toUpperCase()} 轴旋转角度`}
-                onChange={(event) => setModelRotation((current) => ({
-                  ...current,
-                  [axis]: event.currentTarget.valueAsNumber,
-                }))}
+                onChange={(event) => {
+                  const value = event.currentTarget.valueAsNumber;
+                  setModelRotation((current) => ({
+                    ...current,
+                    [axis]: value,
+                  }));
+                }}
               />
               <output>{modelRotation[axis]}°</output>
             </label>
