@@ -60,6 +60,47 @@ class RealWorkerLoopTests(unittest.TestCase):
         self.assertEqual(records[1]["job_id"], "job-1")
         self.assertEqual(len(records), 2)
 
+    def test_loop_runs_failed_job_cleanup_on_schedule(self) -> None:
+        worker = SimpleNamespace(
+            run_once=Mock(
+                return_value=SimpleNamespace(
+                    claimed=False,
+                    job_id=None,
+                    status="idle",
+                    recovered=False,
+                )
+            )
+        )
+        cleanup = SimpleNamespace(
+            cleanup_terminal_jobs=Mock(
+                return_value={
+                    "scanned": 1,
+                    "storage_cleaned": 1,
+                    "storage_already_absent": 0,
+                    "storage_cleanup_failures": [],
+                    "skipped": 0,
+                    "cutoff": "2026-09-29T00:00:00+00:00",
+                }
+            )
+        )
+        stdout = io.StringIO()
+        with (
+            contextlib.redirect_stdout(stdout),
+            patch("apps.worker.main.time.sleep", side_effect=KeyboardInterrupt),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            _run_real_worker_loop(
+                worker,
+                poll_seconds=2.0,
+                cleanup=cleanup,
+                cleanup_interval_seconds=300,
+            )
+
+        cleanup.cleanup_terminal_jobs.assert_called_once_with()
+        records = [json.loads(line) for line in stdout.getvalue().splitlines()]
+        self.assertEqual(records[1]["operation"], "cleanup-failed-job-storage")
+        self.assertEqual(records[1]["storage_cleaned"], 1)
+
     def test_poll_interval_reads_environment_and_rejects_busy_loop(self) -> None:
         with patch.dict(os.environ, {"RE3D_WORKER_POLL_SECONDS": "3.5"}, clear=True):
             self.assertEqual(_worker_poll_seconds(None), 3.5)

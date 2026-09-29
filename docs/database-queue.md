@@ -19,7 +19,7 @@
 
 `users` 保存规范化身份、Argon2id 密码哈希和账号状态；`refresh_sessions` 保存 refresh token 摘要、轮换族和撤销状态。`job_uploads` 保存尚未提交或已经提交的上传会话，`job_upload_images` 保存各图片的平台文件名、实际格式、尺寸、字节数和 SHA-256。提交成功后，上传会话 UUID 同时成为 `reconstruction_jobs.id` 和任务目录名；半成品上传不会提前进入队列。
 
-`reconstruction_jobs.user_id` 通过外键关联真实用户，并保存执行模式、固定管线身份、输入 manifest 摘要、状态、进度、错误码和时间戳。图片、中间文件、日志和模型保存在 `Re3D-data/jobs/<job_uuid>`。
+`reconstruction_jobs.user_id` 通过外键关联真实用户，并保存执行模式、固定管线身份、输入 manifest 摘要、状态、进度、错误码、时间戳和失败任务存储清理审计。图片、中间文件、日志和模型保存在 `Re3D-data/jobs/<job_uuid>`。
 
 `worker_leases` 每行代表一个可独占资源。首期迁移创建 `gpu:0`：
 
@@ -109,7 +109,7 @@ PostgreSQL 集成测试必须使用临时 Docker 数据库：
 
 - SQLite 单元测试覆盖完整状态机和顺序租约语义；
 - PostgreSQL 18 真实迁移、并发领取、过期接管和旧 token 隔离；
-- Alembic 可从空数据库升级到 `0007_auth_action_tokens`，并完成 `head → 0001 → head` 往返；
+- Alembic 可从空数据库升级到 `0008_failed_job_storage_cleanup`，并完成 `head → 0001 → head` 往返；
 - 本机开发库使用 `re3d_app` 完成权限探针和首次迁移；
 - 测试库名称保护会拒绝开发库，临时 Docker 测试脚本会自动清理容器。
 - 开发 API 创建任务后，队列 Worker 能在 PostgreSQL 中领取、续租、执行三个模拟分支并提交终态；
@@ -120,11 +120,12 @@ PostgreSQL 集成测试必须使用临时 Docker 数据库：
 - 未提交上传支持单张删除、用户取消和超时回收；取消记录保留原因和存储清理完成时间。
 - real Worker 已实现子进程树终止、总超时、步骤事件、单调数据库进度、三分支产物哈希校验和结构健康评估，并通过轻量伪管线闭环测试。
 - 11 图 real 任务已在临时 PostgreSQL 18 上完成受租约保护的本机 GPU 验收，任务以 attempt 1、progress 100、succeeded 终止。
+- real Worker 循环会批量清理失败/取消任务目录；数据库保留清理时间、尝试次数和稳定错误码，文件系统失败可由后续扫描重试。
 
 尚未完成：
 
 - 受管理员权限保护的认证审计查询；
 - 图片 EXIF 清除；
 - GPU、显存和磁盘资源采样；
-- 失败任务目录清理和成功任务保留策略；
+- 成功任务保留策略；
 - 多 GPU 资源注册和调度。

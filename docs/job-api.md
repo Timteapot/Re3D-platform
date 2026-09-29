@@ -34,6 +34,7 @@ production 上传提交由服务端强制使用 `execution_mode=real`；客户�
 - 状态列表只读取 PostgreSQL 投影；
 - 详情在返回前验证 request、result 和 evaluation Schema 及跨文件身份；
 - 响应不包含服务器文件路径、产物 SHA-256 或私有日志；
+- 状态投影包含 `storage_cleaned_at`，用于区分按策略清理和存储异常；失败/取消任务文件清理后，详情的 `detail_state` 为 `not_available`；
 - 产物地址始终返回稳定 `/api/v1/jobs/...` 路径，即使详情通过开发兼容入口读取；
 - 取消、查询、SSE 和下载使用同一对象所有权规则；
 - 下载额外复核任务终态、固定分支/类型、规范化路径、大小和 SHA-256。

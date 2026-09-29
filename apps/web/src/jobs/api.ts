@@ -42,6 +42,7 @@ export interface Job {
   queued_at: string;
   started_at: string | null;
   finished_at: string | null;
+  storage_cleaned_at: string | null;
   version: number;
   reused: boolean;
 }

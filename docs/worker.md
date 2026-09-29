@@ -24,6 +24,7 @@
 | `process.py` | 以独立进程组运行 Re3D，监督取消、超时、租约健康并终止整棵子进程树 |
 | `settings.py` | 从参数或环境变量读取数据根目录、Worker 与 Re3D 位置 |
 | `backend/worker/queued.py` | 按 execution mode 领取任务、维持租约并推进数据库状态 |
+| `backend/jobs/cleanup.py` | 批量删除失败/取消任务目录，记录尝试和稳定错误码并安全重试 |
 | `backend/evaluation/simulation.py` | 生成不虚构几何质量分数的开发评估报告 |
 | `backend/evaluation/real.py` | 使用版本化阈值评估 SfM、深度保留率、网格和产物完整性 |
 | `apps/worker/main.py` | Windows 命令行入口和稳定退出码 |
@@ -134,7 +135,6 @@ $env:RE3D_ROOT = "D:\3Dreconstruction\Re3D"
 ## 尚未实现
 
 - GPU/CPU/磁盘资源采样；
-- 失败任务目录清理；
 - handoff、连通分量、非流形边等更完整的真实评估指标；
 - 任意时刻进程崩溃后的部分文件修复。
 
@@ -142,4 +142,6 @@ $env:RE3D_ROOT = "D:\3Dreconstruction\Re3D"
 
 ## 下一步
 
-经过所有权和产物完整性复核的下载接口及前端 GLB 查看器已经实现。下一步补充资源采样、失败任务自动清理和公开部署所需的认证加固。API 仍只读取数据库投影和受控产物，不直接运行管线。
+经过所有权和产物完整性复核的下载接口、前端 GLB 查看器，以及带数据库审计和安全重试的失败/取消任务目录清理已经实现。下一步补充资源采样、成功任务保留策略和公开部署所需的认证加固。API 仍只读取数据库投影和受控产物，不直接运行管线。
+
+自动扫描频率、宽限期、数据库审计和手工重试流程见 [`failed-job-storage-cleanup.md`](failed-job-storage-cleanup.md)。

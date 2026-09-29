@@ -15,6 +15,7 @@ from backend.db.runtime import (
     create_database_engine,
     create_session_factory,
 )
+from backend.jobs import FailedJobCleanupSettings, FailedJobStorageCleaner
 from backend.re3d_adapter import (
     AdapterError,
     RealDryRunRunner,
@@ -97,6 +98,16 @@ def build_parser() -> argparse.ArgumentParser:
     cleanup.add_argument("--database-url")
     cleanup.add_argument("--stale-after-hours", type=int)
     cleanup.add_argument("--limit", type=int)
+    cleanup_jobs = subparsers.add_parser(
+        "cleanup-failed-job-storage",
+        description=(
+            "Remove failed/cancelled task directories while retaining database audit"
+        ),
+    )
+    cleanup_jobs.add_argument("--data-root")
+    cleanup_jobs.add_argument("--database-url")
+    cleanup_jobs.add_argument("--grace-minutes", type=int)
+    cleanup_jobs.add_argument("--limit", type=int)
     return parser
 
 
@@ -158,6 +169,24 @@ def main(argv: list[str] | None = None) -> int:
                 }
             finally:
                 engine.dispose()
+        elif args.command == "cleanup-failed-job-storage":
+            database = DatabaseSettings.from_environment(args.database_url)
+            engine = create_database_engine(database)
+            try:
+                cleaner = FailedJobStorageCleaner(
+                    create_session_factory(engine),
+                    data_root=settings.data_root,
+                    settings=FailedJobCleanupSettings.from_environment(),
+                )
+                response = {
+                    "operation": "cleanup-failed-job-storage",
+                    **cleaner.cleanup_terminal_jobs(
+                        grace_minutes=args.grace_minutes,
+                        limit=args.limit,
+                    ),
+                }
+            finally:
+                engine.dispose()
         elif args.command in {
             "run-queued-once",
             "run-real-queued-once",
@@ -171,7 +200,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             engine = create_database_engine(database)
             try:
-                queue = JobQueue(create_session_factory(engine))
+                sessions = create_session_factory(engine)
+                queue = JobQueue(sessions)
                 if args.command in {"run-real-queued-once", "run-real-queued-loop"}:
                     re3d = Re3DSettings.from_environment(
                         root=args.re3d_root,
@@ -197,9 +227,16 @@ def main(argv: list[str] | None = None) -> int:
                         heartbeat_seconds=scheduler.heartbeat_seconds,
                     )
                 if args.command == "run-real-queued-loop":
+                    cleanup_settings = FailedJobCleanupSettings.from_environment()
                     _run_real_worker_loop(
                         worker,
                         poll_seconds=_worker_poll_seconds(args.poll_seconds),
+                        cleanup=FailedJobStorageCleaner(
+                            sessions,
+                            data_root=settings.data_root,
+                            settings=cleanup_settings,
+                        ),
+                        cleanup_interval_seconds=cleanup_settings.interval_seconds,
                     )
                     return 0
                 outcome = worker.run_once()
@@ -237,6 +274,8 @@ def _run_real_worker_loop(
     worker: RealQueueWorker,
     *,
     poll_seconds: float,
+    cleanup: FailedJobStorageCleaner | None = None,
+    cleanup_interval_seconds: int = 300,
 ) -> None:
     print(
         json.dumps(
@@ -248,7 +287,22 @@ def _run_real_worker_loop(
         ),
         flush=True,
     )
+    next_cleanup_at = 0.0
     while True:
+        current = time.monotonic()
+        if cleanup is not None and current >= next_cleanup_at:
+            cleanup_report = cleanup.cleanup_terminal_jobs()
+            print(
+                json.dumps(
+                    {
+                        "operation": "cleanup-failed-job-storage",
+                        **cleanup_report,
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
+            next_cleanup_at = current + cleanup_interval_seconds
         outcome = worker.run_once()
         if outcome.claimed:
             print(

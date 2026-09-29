@@ -49,7 +49,7 @@ class ProductionReadinessTests(unittest.TestCase):
                 return_value={
                     "name": "re3d_platform",
                     "role": "re3d_runtime",
-                    "migration": "0007_auth_action_tokens",
+                    "migration": "0008_failed_job_storage_cleanup",
                 },
             ),
             patch(
@@ -94,7 +94,7 @@ class ProductionReadinessTests(unittest.TestCase):
                 return_value={
                     "name": "re3d_platform",
                     "role": "re3d_runtime",
-                    "migration": "0007_auth_action_tokens",
+                    "migration": "0008_failed_job_storage_cleanup",
                 },
             ),
             patch(
@@ -119,6 +119,14 @@ class ProductionReadinessTests(unittest.TestCase):
         self.assertEqual(report["component"], "worker")
         self.assertIn("re3d", report)
         self.assertIn("scheduler", report)
+        self.assertEqual(
+            report["failed_job_cleanup"],
+            {
+                "grace_minutes": 5,
+                "interval_seconds": 300,
+                "batch_size": 100,
+            },
+        )
         self.assertNotIn("authentication", report)
         self.assertNotIn("smtp", report)
 

@@ -430,6 +430,10 @@ def _job_snapshot(job: ReconstructionJob) -> dict[str, Any]:
         "queued_at": job.queued_at,
         "started_at": job.started_at,
         "finished_at": job.finished_at,
+        "storage_cleaned_at": job.storage_cleaned_at,
+        "storage_cleanup_attempted_at": job.storage_cleanup_attempted_at,
+        "storage_cleanup_attempts": job.storage_cleanup_attempts,
+        "storage_cleanup_last_error": job.storage_cleanup_last_error,
         "version": job.version,
     }
 

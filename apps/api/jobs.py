@@ -51,6 +51,7 @@ class JobResponse(BaseModel):
     queued_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
+    storage_cleaned_at: datetime | None
     version: int
     reused: bool = False
 
@@ -74,6 +75,7 @@ class JobResponse(BaseModel):
             queued_at=snapshot["queued_at"],
             started_at=snapshot["started_at"],
             finished_at=snapshot["finished_at"],
+            storage_cleaned_at=snapshot["storage_cleaned_at"],
             version=snapshot["version"],
             reused=reused,
         )

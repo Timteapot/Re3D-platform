@@ -16,6 +16,7 @@ const job: Job = {
   queued_at: "2026-09-24T00:00:00Z",
   started_at: "2026-09-24T00:00:01Z",
   finished_at: "2026-09-24T00:00:02Z",
+  storage_cleaned_at: null,
   version: 9,
   reused: false,
 };

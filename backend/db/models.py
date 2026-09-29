@@ -384,6 +384,27 @@ class ReconstructionJob(Base):
             "queued_at",
             "created_at",
         ),
+        Index(
+            "ix_jobs_storage_cleanup",
+            "status",
+            "finished_at",
+            "storage_cleaned_at",
+        ),
+        CheckConstraint(
+            "storage_cleanup_attempts >= 0",
+            name="ck_jobs_storage_cleanup_attempts",
+        ),
+        CheckConstraint(
+            "storage_cleaned_at IS NULL OR "
+            "(status IN ('failed_input', 'failed_pipeline', "
+            "'failed_evaluation', 'cancelled') "
+            "AND storage_cleanup_attempts > 0)",
+            name="ck_jobs_storage_cleanup_terminal",
+        ),
+        CheckConstraint(
+            "storage_cleaned_at IS NULL OR storage_cleanup_last_error IS NULL",
+            name="ck_jobs_storage_cleanup_result",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
@@ -415,6 +436,19 @@ class ReconstructionJob(Base):
     queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    storage_cleaned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    storage_cleanup_attempted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    storage_cleanup_attempts: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+    storage_cleanup_last_error: Mapped[str | None] = mapped_column(String(64))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )

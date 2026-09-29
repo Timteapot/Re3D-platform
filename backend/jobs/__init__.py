@@ -8,6 +8,7 @@ from .artifacts import (
     ArtifactReader,
     ArtifactUnavailableError,
 )
+from .cleanup import FailedJobCleanupSettings, FailedJobStorageCleaner
 from .development import CreatedDevelopmentJob, DevelopmentJobService
 
 __all__ = [
@@ -19,4 +20,6 @@ __all__ = [
     "ArtifactUnavailableError",
     "CreatedDevelopmentJob",
     "DevelopmentJobService",
+    "FailedJobCleanupSettings",
+    "FailedJobStorageCleaner",
 ]

@@ -44,6 +44,15 @@ class JobDetailReader:
         try:
             layout = TaskLayout.from_data_root(self.data_root, str(job_id))
         except AdapterError:
+            if job["storage_cleaned_at"] is not None:
+                return JobDetailSnapshot(
+                    job=job,
+                    detail_state="not_available",
+                    warning_code=None,
+                    request=None,
+                    result=None,
+                    evaluation=None,
+                )
             return JobDetailSnapshot(
                 job=job,
                 detail_state="missing",

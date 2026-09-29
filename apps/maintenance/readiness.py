@@ -22,6 +22,7 @@ from backend.db.runtime import (
     SchedulerSettings,
     create_database_engine,
 )
+from backend.jobs import FailedJobCleanupSettings
 from backend.re3d_adapter.real import verify_re3d_installation
 from backend.re3d_adapter.settings import Re3DSettings, WorkerSettings
 from backend.uploads import UploadSettings
@@ -165,10 +166,16 @@ def check_production_readiness(
 
     if component in {"worker", "all"}:
         scheduler = SchedulerSettings.from_environment()
+        failed_job_cleanup = FailedJobCleanupSettings.from_environment()
         response["scheduler"] = {
             "resource_key": scheduler.resource_key,
             "lease_seconds": scheduler.lease_seconds,
             "heartbeat_seconds": scheduler.heartbeat_seconds,
+        }
+        response["failed_job_cleanup"] = {
+            "grace_minutes": failed_job_cleanup.grace_minutes,
+            "interval_seconds": failed_job_cleanup.interval_seconds,
+            "batch_size": failed_job_cleanup.batch_size,
         }
         response["re3d"] = _check_re3d_installation()
 

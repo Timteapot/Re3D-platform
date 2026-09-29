@@ -229,6 +229,11 @@ export function JobDetailPage() {
           当前展示的是开发模拟器输出：它验证队列、文件契约和评估链路，不代表真实三维重建质量。
         </div>
       ) : null}
+      {job.storage_cleaned_at ? (
+        <div className="simulation-banner" role="note">
+          该失败或取消任务的文件已按策略自动清理（{formatDate(job.storage_cleaned_at)}）；任务状态和错误码仍保留。
+        </div>
+      ) : null}
       {value.warning_code ? (
         <div className="form-notice error" role="alert">
           {warningLabels[value.warning_code] ?? "任务详情存在一致性问题。"}
@@ -251,7 +256,7 @@ export function JobDetailPage() {
             type="button"
             disabled={cancel.isPending || job.cancel_requested}
             onClick={() => {
-              if (window.confirm("确定取消这个任务吗？已生成的任务文件暂不自动删除。")) cancel.mutate();
+              if (window.confirm("确定取消这个任务吗？取消终态写入后，任务文件将由 Worker 自动清理。")) cancel.mutate();
             }}
           >
             {job.cancel_requested ? "已请求取消" : cancel.isPending ? "正在取消…" : "取消任务"}

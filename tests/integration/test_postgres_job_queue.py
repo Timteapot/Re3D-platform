@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import tempfile
 import threading
 import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import patch
 
 from sqlalchemy import create_engine, select
@@ -13,6 +15,7 @@ from backend.db.errors import LeaseLostError
 from backend.db.models import ReconstructionJob, User, WorkerLease
 from backend.db.queue import JobClaim, JobQueue
 from backend.db.state_machine import JobStatus
+from backend.jobs.cleanup import FailedJobCleanupSettings, FailedJobStorageCleaner
 from tests.integration.postgres_support import validated_test_database_url
 
 
@@ -58,6 +61,8 @@ class PostgreSQLJobQueueIntegrationTests(unittest.TestCase):
         self.queue = JobQueue(self.sessions)
         self.resource_key = f"gpu:test-{uuid.uuid4().hex[:12]}"
         self.queue.ensure_resource(self.resource_key)
+        self.temporary = tempfile.TemporaryDirectory()
+        self.data_root = Path(self.temporary.name) / "data"
         self.user_id = uuid.uuid4()
         with self.sessions.begin() as session:
             session.add(
@@ -91,6 +96,7 @@ class PostgreSQLJobQueueIntegrationTests(unittest.TestCase):
                 synchronize_session=False
             )
         self.engine.dispose()
+        self.temporary.cleanup()
 
     def enqueue(self, priority: int) -> uuid.UUID:
         job_id = uuid.uuid4()
@@ -161,6 +167,41 @@ class PostgreSQLJobQueueIntegrationTests(unittest.TestCase):
         with self.assertRaises(LeaseLostError):
             self.queue.heartbeat(first_claim)
         self.queue.advance(recovered, JobStatus.SFM, progress=10)
+
+    def test_failed_job_storage_cleanup_is_audited(self) -> None:
+        job_id = self.enqueue(priority=1)
+        task_root = self.data_root / "jobs" / str(job_id)
+        task_root.mkdir(parents=True)
+        (task_root / "private.log").write_text("private", encoding="utf-8")
+        claim = self.queue.claim_next(
+            worker_id="pg-cleanup-worker",
+            resource_key=self.resource_key,
+        )
+        self.assertIsNotNone(claim)
+        assert claim is not None
+        self.queue.advance(
+            claim,
+            JobStatus.FAILED_PIPELINE,
+            error_code="POSTGRES_CLEANUP_TEST",
+        )
+
+        cleaner = FailedJobStorageCleaner(
+            self.sessions,
+            data_root=self.data_root,
+            settings=FailedJobCleanupSettings(
+                grace_minutes=0,
+                interval_seconds=300,
+                batch_size=10,
+            ),
+        )
+        report = cleaner.cleanup_terminal_jobs(grace_minutes=0)
+
+        self.assertEqual(report["storage_cleaned"], 1)
+        self.assertFalse(task_root.exists())
+        snapshot = self.queue.get_job(job_id)
+        self.assertIsNotNone(snapshot["storage_cleaned_at"])
+        self.assertEqual(snapshot["storage_cleanup_attempts"], 1)
+        self.assertIsNone(snapshot["storage_cleanup_last_error"])
 
 
 if __name__ == "__main__":
