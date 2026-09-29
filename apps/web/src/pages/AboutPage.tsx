@@ -62,6 +62,10 @@ export function AboutPage() {
           >
             查看第三方声明源文件
           </a>
+          {" · "}
+          <a className="text-link" href="/third-party/three-LICENSE.txt">
+            查看 Three.js 许可证
+          </a>
         </div>
       </section>
     </main>

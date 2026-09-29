@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 
@@ -13,6 +13,8 @@ import {
   type JobDetail,
 } from "../jobs/api";
 import { streamJobEvents } from "../jobs/events";
+
+const GlbViewer = lazy(() => import("../jobs/GlbViewer"));
 
 const TERMINAL_STATUSES = new Set([
   "succeeded",
@@ -302,7 +304,22 @@ export function JobDetailPage() {
       </section>
 
       <section className="detail-section">
-        <div className="detail-heading"><span>02</span><div><h2>自动评估</h2><p>首期评估描述结构健康度；没有真值数据时，不把完整性检查包装成几何精度分数。</p></div></div>
+        <div className="detail-heading"><span>02</span><div><h2>在线三维预览</h2><p>查看器复用当前登录会话获取 GLB，不公开服务器文件路径或在 URL 中传递访问令牌。</p></div></div>
+        {value.result ? (
+          <Suspense fallback={<div className="viewer-loading-fallback"><span className="spinner" /><span>正在加载三维查看器代码…</span></div>}>
+            <GlbViewer
+              branches={value.result.branches}
+              executionMode={job.execution_mode}
+              fetchAuthorized={auth.fetchAuthorized}
+            />
+          </Suspense>
+        ) : (
+          <p className="empty-state">{active ? "结果生成后可在此切换三个分支并预览 GLB。" : "该任务没有可预览的重建结果。"}</p>
+        )}
+      </section>
+
+      <section className="detail-section">
+        <div className="detail-heading"><span>03</span><div><h2>自动评估</h2><p>首期评估描述结构健康度；没有真值数据时，不把完整性检查包装成几何精度分数。</p></div></div>
         {value.evaluation ? (
           <div className="evaluation-panel">
             <div className="evaluation-summary">

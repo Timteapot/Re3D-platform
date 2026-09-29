@@ -272,6 +272,24 @@ button:focus-visible, input:focus-visible, a:focus-visible {
 .artifact-download-button { padding: 7px 10px; border: 1px solid #aab7ae; border-radius: 8px; color: var(--forest); background: transparent; font-size: 11px; font-weight: 700; cursor: pointer; }
 .artifact-download-button:hover:not(:disabled) { border-color: var(--forest); background: rgba(20,61,50,0.06); }
 .artifact-download-button:disabled { cursor: wait; opacity: 0.5; }
+.viewer-loading-fallback { min-height: 420px; margin-top: 28px; display: flex; align-items: center; justify-content: center; gap: 14px; border: 1px solid var(--line); border-radius: 16px; color: var(--muted); background: #e7ebe7; font-size: 13px; }
+.glb-viewer-shell { margin-top: 28px; overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: rgba(255,255,255,0.62); }
+.glb-viewer-toolbar { min-height: 58px; padding: 10px 12px; display: flex; align-items: center; justify-content: space-between; gap: 18px; border-bottom: 1px solid var(--line); }
+.glb-branch-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.glb-branch-tabs button, .glb-reset-button { padding: 8px 13px; border: 1px solid transparent; border-radius: 999px; color: var(--muted); background: transparent; font: inherit; font-size: 12px; font-weight: 700; line-height: 1.2; cursor: pointer; }
+.glb-branch-tabs button:hover, .glb-branch-tabs button.active { border-color: #aab7ae; color: var(--forest); background: #fff; }
+.glb-branch-tabs button:focus-visible, .glb-reset-button:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+.glb-reset-button { flex: 0 0 auto; border-color: var(--line); color: var(--forest); }
+.glb-reset-button:hover:not(:disabled) { border-color: var(--forest); background: rgba(20,61,50,0.06); }
+.glb-reset-button:disabled { cursor: not-allowed; opacity: 0.45; }
+.glb-viewer-stage { position: relative; height: clamp(380px, 56vw, 640px); min-height: 320px; overflow: hidden; background: #e7ebe7; }
+.glb-viewer-canvas { position: absolute; z-index: 1; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+.glb-viewer-status { position: absolute; z-index: 2; inset: 0; padding: 28px; display: flex; align-items: center; justify-content: center; gap: 14px; color: #4e5e56; background: rgba(231,235,231,0.92); text-align: center; line-height: 1.6; pointer-events: none; }
+.glb-viewer-status.error { color: #8b3120; background: rgba(255,247,244,0.95); }
+.glb-viewer-status.empty, .glb-viewer-status.unsupported { color: #744a27; background: rgba(255,244,223,0.94); }
+.glb-viewer-meta { min-height: 48px; padding: 11px 15px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; }
+.glb-viewer-meta span { color: var(--ink); font-variant-numeric: tabular-nums; }
+.glb-viewer-meta small { margin-left: auto; color: var(--muted); }
 .evaluation-panel { margin-top: 28px; display: grid; grid-template-columns: 0.75fr 1.25fr; gap: 16px; }
 .evaluation-summary, .evaluation-branches { padding: 26px; border: 1px solid var(--line); border-radius: 16px; background: rgba(255,255,255,0.52); }
 .evaluation-summary > span { color: var(--orange); font-size: 12px; font-weight: 700; }
@@ -327,6 +345,11 @@ button:focus-visible, input:focus-visible, a:focus-visible {
   .job-status { justify-content: start; }
   .job-detail-header, .job-action-panel { align-items: flex-start; flex-direction: column; }
   .job-overview-grid, .result-branch-grid { grid-template-columns: 1fr; }
+  .glb-viewer-toolbar { align-items: stretch; flex-direction: column; }
+  .glb-reset-button { align-self: flex-start; }
+  .glb-viewer-stage { height: 420px; }
+  .glb-viewer-meta { align-items: flex-start; flex-direction: column; }
+  .glb-viewer-meta small { margin-left: 0; }
   .site-footer { flex-direction: column; }
 }
 

@@ -58,7 +58,7 @@ ETag: "<artifact-sha256>"
 
 ## 与后续模块的接口
 
-- GLB 查看器将复用同一认证 Fetch，把 GLB Blob 转成对象 URL 后交给 Three.js `GLTFLoader`；
+- GLB 查看器已复用同一认证 Fetch，把 GLB Blob 转成短期对象 URL 后交给 Three.js `GLTFLoader`；切换分支时重新执行服务端所有权和完整性复核；
 - OBJ/MTL/纹理按钮用于离线检查和学习用途；
 - 任务过期或清理后，数据库状态必须先转为 `expired`，接口随即停止提供文件；
 - 对象存储迁移时，`ArtifactReader` 的所有权和清单复核仍应保留在签名 URL 之前。

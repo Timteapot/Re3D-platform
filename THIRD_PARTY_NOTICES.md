@@ -33,6 +33,7 @@ Re3D Platform 是仅用于学习、研究和实践真实项目流程的非商业
 | React / React DOM | 19.2.0 | 前端组件与浏览器渲染 | MIT | [facebook/react](https://github.com/facebook/react) |
 | React Router DOM | 7.18.4 | 客户端路由和受保护页面 | MIT | [remix-run/react-router](https://github.com/remix-run/react-router) |
 | TanStack Query | 5.89.0 | 后续任务请求缓存与状态管理基础 | MIT | [TanStack/query](https://github.com/TanStack/query) |
+| three | 0.186.1 | GLB 解析、WebGL 渲染和三维交互控制 | MIT | [上游](https://github.com/mrdoob/three.js)；[随前端分发的许可证](apps/web/public/third-party/three-LICENSE.txt) |
 | Vite | 7.3.6 | 开发服务器和生产构建 | MIT | [vitejs/vite](https://github.com/vitejs/vite) |
 | TypeScript | 5.9.2 | 静态类型检查 | Apache-2.0 | [microsoft/TypeScript](https://github.com/microsoft/TypeScript) |
 | Vitest | 5.0.1 | 前端单元与组件测试 | MIT | [vitest-dev/vitest](https://github.com/vitest-dev/vitest) |
@@ -49,4 +50,4 @@ Re3D Platform 是仅用于学习、研究和实践真实项目流程的非商业
 - 更换依赖版本、部署方式或项目用途时重新检查许可证；
 - 第三方软件按其许可证提供，项目不额外提供适销性或特定用途保证。
 
-最后核对日期：2026-09-24。
+最后核对日期：2026-09-29。

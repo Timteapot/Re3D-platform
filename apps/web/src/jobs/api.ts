@@ -190,12 +190,14 @@ export function cancelJob(
 export async function fetchJobArtifact(
   fetchAuthorized: AuthorizedFetch,
   artifact: ArtifactSummary,
+  signal?: AbortSignal,
 ): Promise<Blob> {
   if (artifact.download_url === null) {
     throw new ApiError(404, "该产物当前不可下载");
   }
   const response = await fetchAuthorized(artifact.download_url, {
     headers: { Accept: artifact.content_type },
+    ...(signal ? { signal } : {}),
   });
   if (!response.ok) throw await readApiError(response);
   return response.blob();

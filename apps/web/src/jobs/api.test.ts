@@ -111,11 +111,17 @@ describe("job upload API", () => {
       content_type: "model/gltf-binary",
       download_url: "/api/v1/development/jobs/job-id/artifacts/A-v4/glb",
     };
+    const controller = new AbortController();
 
-    const downloaded = await fetchJobArtifact(fetchAuthorized, artifact);
+    const downloaded = await fetchJobArtifact(
+      fetchAuthorized,
+      artifact,
+      controller.signal,
+    );
 
     expect(fetchAuthorized).toHaveBeenCalledWith(artifact.download_url, {
       headers: { Accept: "model/gltf-binary" },
+      signal: controller.signal,
     });
     expect(downloaded).toBeInstanceOf(Blob);
     expect(downloaded.size).toBe(4);
