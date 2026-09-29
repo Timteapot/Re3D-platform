@@ -108,6 +108,24 @@ class PostgreSQLApiWorkerFlowTests(unittest.TestCase):
         self.engine.dispose()
         self.temporary.cleanup()
 
+    def test_refresh_rotation_inserts_successor_before_linking_it(self) -> None:
+        response = self.client.post("/api/v1/auth/refresh")
+        self.assertEqual(response.status_code, 200, response.text)
+
+        with self.sessions() as session:
+            refresh_sessions = list(
+                session.query(RefreshSession)
+                .filter(RefreshSession.user_id == self.user_id)
+                .all()
+            )
+
+        self.assertEqual(len(refresh_sessions), 2)
+        active = [item for item in refresh_sessions if item.revoked_at is None]
+        replaced = [item for item in refresh_sessions if item.revoked_at is not None]
+        self.assertEqual(len(active), 1)
+        self.assertEqual(len(replaced), 1)
+        self.assertEqual(replaced[0].replaced_by_id, active[0].id)
+
     def test_api_postgresql_worker_and_artifacts_form_a_closed_loop(self) -> None:
         upload_response = self.client.post(
             "/api/v1/uploads",

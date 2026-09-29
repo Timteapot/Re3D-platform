@@ -321,6 +321,11 @@ class AuthService:
                         refresh_expires_at=_as_utc(current.expires_at),
                         refresh_family_id=current.family_id,
                     )
+                    # ``replaced_by_id`` is a scalar self-referencing foreign key,
+                    # so SQLAlchemy cannot infer that the pending successor must be
+                    # inserted before the current row is updated.  Flush the new
+                    # session first while keeping both writes in this transaction.
+                    session.flush()
                     current.revoked_at = now
                     current.last_used_at = now
                     current.replaced_by_id = issued.refresh_session_id

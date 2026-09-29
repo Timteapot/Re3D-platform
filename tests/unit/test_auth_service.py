@@ -139,6 +139,11 @@ class AuthServiceTests(unittest.TestCase):
             sessions = session.execute(select(RefreshSession)).scalars().all()
         self.assertEqual(len(sessions), 2)
         self.assertEqual(len({item.family_id for item in sessions}), 1)
+        sessions_by_id = {item.id: item for item in sessions}
+        self.assertEqual(
+            sessions_by_id[issued.refresh_session_id].replaced_by_id,
+            rotated.refresh_session_id,
+        )
         self.assertNotIn(
             issued.refresh_token,
             {item.token_sha256 for item in sessions},
