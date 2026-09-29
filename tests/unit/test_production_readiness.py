@@ -155,11 +155,17 @@ class ProductionReadinessTests(unittest.TestCase):
                 role_name="re3d_runtime",
                 role_capabilities=(False, False, False, False, False),
             )
-        with self.assertRaisesRegex(ValueError, "administrative"):
+        with self.assertRaisesRegex(ValueError, "restricted runtime"):
             _validate_production_database_identity(
                 database_name="re3d_platform",
                 role_name="re3d_runtime",
                 role_capabilities=(False, True, False, False, False),
+            )
+        with self.assertRaisesRegex(ValueError, "restricted runtime"):
+            _validate_production_database_identity(
+                database_name="re3d_platform",
+                role_name="re3d_migrator",
+                role_capabilities=(False,) * 8,
             )
 
     def test_storage_check_enforces_operator_selected_free_space_floor(self) -> None:

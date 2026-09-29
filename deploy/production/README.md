@@ -15,6 +15,8 @@
 3. 创建仓库外的生产数据目录，评估容量后明确 `RE3D_MIN_FREE_DISK_BYTES`。
 4. 先迁移生产数据库，再执行对应组件检查。
 
+生产数据库角色拆分、迁移、备份和临时恢复演练见 [`../postgres/README.md`](../postgres/README.md)。API/Worker 的 `DATABASE_URL` 只能使用 `re3d_runtime`，不能使用管理员或 `re3d_migrator`。
+
 ```powershell
 Copy-Item .env.production.example .env.production
 & .\deploy\production\check-production-readiness.ps1 -Component all
@@ -31,13 +33,13 @@ Copy-Item .env.production.example .env.production
 - `worker`：不要求 JWT/SMTP 密钥，检查受限 PostgreSQL、租约参数、数据盘、固定 Re3D tag/commit/config 和驱动 Python。
 - `all`：执行两组检查，适用于首个单机 Windows 生产验收环境。
 
-数据库检查会拒绝 SQLite、开发/测试库、`postgres` 用户，以及拥有 superuser、建库、建角色、复制或绕过行安全权限的账户。存储检查会拒绝代码仓库内部目录、不可写目录和低于显式容量下限的磁盘。
+数据库检查会拒绝 SQLite、开发/测试库、`postgres`/`re3d_migrator` 用户，以及拥有 superuser、建库、建角色、复制、绕过行安全、临时表或 schema 创建权限的账户。存储检查会拒绝代码仓库内部目录、不可写目录和低于显式容量下限的磁盘。
 
 ## 检查通过不等于允许公网发布
 
 该检查只能证明配置与依赖符合当前程序契约。以下阻断项仍需逐步实现和验收：
 
-- 生产数据库创建、迁移与备份恢复演练；
+- 在真实目标 PostgreSQL 上执行已验收的建库/迁移脚本，并完成一次异地备份恢复演练；
 - 前端静态构建、反向代理、TLS 和安全响应头；
 - 任务并发、每日次数、存储配额及接口限流；
 - 成功任务数据保留期和定时清理；

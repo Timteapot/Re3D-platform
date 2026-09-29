@@ -1,0 +1,52 @@
+\set ON_ERROR_STOP on
+
+SELECT (version_num = :'expected_revision') AS revision_ok
+FROM alembic_version
+\gset
+\if :revision_ok
+\else
+    \echo 'Restored migration revision does not match the codebase.'
+    \quit 4
+\endif
+
+SELECT NOT EXISTS (
+    SELECT required.name
+    FROM (
+        VALUES
+            ('alembic_version'),
+            ('auth_action_request_buckets'),
+            ('auth_action_tokens'),
+            ('auth_events'),
+            ('auth_registration_buckets'),
+            ('auth_throttle_buckets'),
+            ('job_upload_images'),
+            ('job_uploads'),
+            ('reconstruction_jobs'),
+            ('refresh_sessions'),
+            ('users'),
+            ('worker_leases')
+    ) AS required(name)
+    WHERE to_regclass(format('public.%I', required.name)) IS NULL
+) AS schema_ok \gset
+\if :schema_ok
+\else
+    \echo 'Restored database is missing a required table.'
+    \quit 4
+\endif
+
+\if :{?expected_probe_email}
+SELECT EXISTS (
+    SELECT 1 FROM users WHERE email = :'expected_probe_email'
+) AS probe_row_ok \gset
+\if :probe_row_ok
+\else
+    \echo 'Restored database is missing the expected acceptance row.'
+    \quit 4
+\endif
+\endif
+
+SELECT
+    current_database() AS restored_database,
+    :'expected_revision' AS migration_revision,
+    12 AS required_table_count,
+    'verified' AS restore_status;

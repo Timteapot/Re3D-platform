@@ -1,0 +1,109 @@
+\set ON_ERROR_STOP on
+\getenv migrator_password RE3D_MIGRATOR_PASSWORD
+\getenv runtime_password RE3D_RUNTIME_PASSWORD
+
+DO $bootstrap$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM pg_database AS database
+        JOIN pg_roles AS owner ON owner.oid = database.datdba
+        WHERE database.datname = 're3d_platform'
+          AND owner.rolname <> 're3d_migrator'
+    ) THEN
+        RAISE EXCEPTION
+            'existing re3d_platform database is not owned by re3d_migrator';
+    END IF;
+END
+$bootstrap$;
+
+\echo 'Creating production migration and runtime roles...'
+DO $bootstrap$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 're3d_migrator') THEN
+        CREATE ROLE re3d_migrator NOLOGIN;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 're3d_runtime') THEN
+        CREATE ROLE re3d_runtime NOLOGIN;
+    END IF;
+END
+$bootstrap$;
+
+ALTER ROLE re3d_migrator
+    NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT
+    NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 2;
+ALTER ROLE re3d_runtime
+    NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT
+    NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 50;
+
+DO $bootstrap$
+DECLARE
+    membership record;
+BEGIN
+    FOR membership IN
+        SELECT member.rolname AS member_name, parent.rolname AS parent_name
+        FROM pg_auth_members AS links
+        JOIN pg_roles AS member ON member.oid = links.member
+        JOIN pg_roles AS parent ON parent.oid = links.roleid
+        WHERE member.rolname IN ('re3d_migrator', 're3d_runtime')
+    LOOP
+        EXECUTE format(
+            'REVOKE %I FROM %I',
+            membership.parent_name,
+            membership.member_name
+        );
+    END LOOP;
+END
+$bootstrap$;
+
+ALTER ROLE re3d_migrator PASSWORD :'migrator_password';
+ALTER ROLE re3d_migrator LOGIN;
+ALTER ROLE re3d_runtime PASSWORD :'runtime_password';
+ALTER ROLE re3d_runtime LOGIN;
+
+SELECT format(
+    'CREATE DATABASE %I WITH OWNER = %I ENCODING = %L TEMPLATE = template0',
+    're3d_platform',
+    're3d_migrator',
+    'UTF8'
+)
+WHERE NOT EXISTS (
+    SELECT 1 FROM pg_database WHERE datname = 're3d_platform'
+) \gexec
+
+REVOKE ALL ON DATABASE re3d_platform FROM PUBLIC;
+GRANT CONNECT ON DATABASE re3d_platform TO re3d_migrator, re3d_runtime;
+REVOKE CREATE, TEMPORARY ON DATABASE re3d_platform FROM re3d_runtime;
+
+\connect re3d_platform
+
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+GRANT USAGE, CREATE ON SCHEMA public TO re3d_migrator;
+GRANT USAGE ON SCHEMA public TO re3d_runtime;
+REVOKE CREATE ON SCHEMA public FROM re3d_runtime;
+
+ALTER ROLE re3d_migrator IN DATABASE re3d_platform SET search_path = public;
+ALTER ROLE re3d_runtime IN DATABASE re3d_platform SET search_path = public;
+
+ALTER DEFAULT PRIVILEGES FOR ROLE re3d_migrator IN SCHEMA public
+    REVOKE ALL ON TABLES FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE re3d_migrator IN SCHEMA public
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO re3d_runtime;
+ALTER DEFAULT PRIVILEGES FOR ROLE re3d_migrator IN SCHEMA public
+    REVOKE ALL ON SEQUENCES FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE re3d_migrator IN SCHEMA public
+    GRANT USAGE, SELECT ON SEQUENCES TO re3d_runtime;
+
+\echo 'Production roles and database ownership are ready.'
+SELECT
+    role.rolname,
+    role.rolsuper,
+    role.rolcreatedb,
+    role.rolcreaterole,
+    role.rolinherit,
+    role.rolreplication,
+    role.rolbypassrls,
+    role.rolconnlimit
+FROM pg_roles AS role
+WHERE role.rolname IN ('re3d_migrator', 're3d_runtime')
+ORDER BY role.rolname;

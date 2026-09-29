@@ -191,7 +191,22 @@ def _check_production_database(database: DatabaseSettings) -> dict[str, str]:
                         """
                         SELECT current_database(), current_user,
                                rolsuper, rolcreatedb, rolcreaterole,
-                               rolreplication, rolbypassrls
+                               rolreplication, rolbypassrls,
+                               has_database_privilege(
+                                   current_user,
+                                   current_database(),
+                                   'CREATE'
+                               ),
+                               has_database_privilege(
+                                   current_user,
+                                   current_database(),
+                                   'TEMPORARY'
+                               ),
+                               has_schema_privilege(
+                                   current_user,
+                                   'public',
+                                   'CREATE'
+                               )
                         FROM pg_roles
                         WHERE rolname = current_user
                         """
@@ -240,9 +255,10 @@ def _validate_production_database_identity(
     }
     if database_name in reserved_databases or database_name.endswith("_test"):
         raise ValueError("production must use a dedicated non-development database")
-    if role_name == "postgres" or any(role_capabilities):
+    if role_name in {"postgres", "re3d_migrator"} or any(role_capabilities):
         raise ValueError(
-            "production database role must not be superuser or hold administrative roles"
+            "production database role must be the restricted runtime identity "
+            "without administrative, temporary, or schema-creation privileges"
         )
 
 

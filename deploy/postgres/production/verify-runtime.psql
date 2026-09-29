@@ -1,0 +1,115 @@
+\set ON_ERROR_STOP on
+
+SELECT (
+    current_database() = 're3d_platform'
+    AND current_user = 're3d_runtime'
+) AS identity_ok \gset
+\if :identity_ok
+\else
+    \echo 'Runtime database identity is incorrect.'
+    \quit 3
+\endif
+
+SELECT NOT (
+    role.rolsuper OR role.rolcreatedb OR role.rolcreaterole
+    OR role.rolinherit OR role.rolreplication OR role.rolbypassrls
+) AND role.rolconnlimit = 50 AS role_flags_ok
+FROM pg_roles AS role
+WHERE role.rolname = current_user
+\gset
+\if :role_flags_ok
+\else
+    \echo 'Runtime role flags are not restricted.'
+    \quit 3
+\endif
+
+SELECT NOT EXISTS (
+    SELECT 1
+    FROM pg_auth_members AS membership
+    JOIN pg_roles AS member ON member.oid = membership.member
+    WHERE member.rolname = current_user
+) AS memberships_ok \gset
+\if :memberships_ok
+\else
+    \echo 'Runtime role must not inherit another role.'
+    \quit 3
+\endif
+
+SELECT (
+    has_database_privilege(current_user, current_database(), 'CONNECT')
+    AND NOT has_database_privilege(current_user, current_database(), 'CREATE')
+    AND NOT has_database_privilege(current_user, current_database(), 'TEMPORARY')
+    AND has_schema_privilege(current_user, 'public', 'USAGE')
+    AND NOT has_schema_privilege(current_user, 'public', 'CREATE')
+) AS boundary_ok \gset
+\if :boundary_ok
+\else
+    \echo 'Runtime database or schema privileges are too broad.'
+    \quit 3
+\endif
+
+SELECT (
+    count(*) > 0
+    AND bool_and(tableowner = 're3d_migrator')
+) AS ownership_ok
+FROM pg_tables
+WHERE schemaname = 'public'
+\gset
+\if :ownership_ok
+\else
+    \echo 'Migrated tables must be owned by re3d_migrator.'
+    \quit 3
+\endif
+
+SELECT (
+    count(*) > 0
+    AND bool_and(
+        has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'SELECT')
+        AND has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'INSERT')
+        AND has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'UPDATE')
+        AND has_table_privilege(current_user, format('%I.%I', schemaname, tablename), 'DELETE')
+        AND NOT has_table_privilege(
+            current_user,
+            format('%I.%I', schemaname, tablename),
+            'TRUNCATE,REFERENCES,TRIGGER'
+        )
+    )
+) AS application_tables_ok
+FROM pg_tables
+WHERE schemaname = 'public'
+  AND tablename <> 'alembic_version'
+\gset
+\if :application_tables_ok
+\else
+    \echo 'Runtime application-table privileges are incomplete or too broad.'
+    \quit 3
+\endif
+
+SELECT (
+    has_table_privilege(current_user, 'public.alembic_version', 'SELECT')
+    AND NOT has_table_privilege(
+        current_user,
+        'public.alembic_version',
+        'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'
+    )
+) AS migration_table_ok \gset
+\if :migration_table_ok
+\else
+    \echo 'Runtime role must have read-only access to alembic_version.'
+    \quit 3
+\endif
+
+SELECT (version_num = :'expected_revision') AS revision_ok
+FROM alembic_version
+\gset
+\if :revision_ok
+\else
+    \echo 'Production migration revision does not match the codebase.'
+    \quit 3
+\endif
+
+SELECT
+    current_database() AS database_name,
+    current_user AS role_name,
+    :'expected_revision' AS migration_revision,
+    'restricted' AS privilege_boundary;
