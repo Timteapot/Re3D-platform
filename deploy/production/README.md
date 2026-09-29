@@ -69,6 +69,8 @@ Copy-Item .env.production.example .env.production
 
 `run-caddy.ps1` 拒绝非回环地址上的明文 HTTP。Caddy 为 `/api/*` 和 `/health/*` 提供同源代理、单请求体上限和禁止缓存策略，为带内容哈希的 `/assets/*` 提供不可变缓存，其余页面执行 SPA 回退和重新验证缓存；同时设置 CSP、点击劫持防护、MIME 嗅探防护、来源策略和权限策略。默认 `27MB` 为单张 25 MiB 图片和 multipart 开销预留空间，修改 `UPLOAD_MAX_FILE_BYTES` 时必须同步复核该值。API 自身不对公网监听，Worker 不开启网络端口，PostgreSQL 也不应直接暴露到互联网。
 
+基于 WinSW 的三个独立 Windows 虚拟账户、自动启动、失败重启、日志轮转、最小 ACL、安装和卸载流程见 [`windows-services/README.md`](windows-services/README.md)。仓库已完成无系统改动的服务包生成验收；实际服务器安装、重启和故障恢复仍需单独验收。
+
 ## 非公网生产拓扑验收
 
 验收会构建前端，启动一次性 PostgreSQL 18，应用全部迁移，再启动生产模式 API、持续 Worker 和仅绑定回环地址的 Caddy。它检查生产路由边界、SPA 回退、受保护 API 的 401 透传、超限请求拒绝、缓存规则、安全响应头和监听范围；结束时自动删除数据库容器、临时密钥、测试数据和全部子进程。
@@ -85,7 +87,7 @@ Copy-Item .env.production.example .env.production
 该检查只能证明配置与依赖符合当前程序契约。以下阻断项仍需逐步实现和验收：
 
 - 在真实目标 PostgreSQL 上执行已验收的建库/迁移脚本，并完成一次异地备份恢复演练；
-- 将 API、Worker 和 Caddy 安装为隔离服务账户下的 Windows 服务，配置自动启动、失败重启和日志轮转；
+- 在目标服务器安装已生成的 API、Worker 和 Caddy Windows 服务，并完成重启、故障恢复、GPU 与证书权限验收；
 - 使用真实域名验证公网 DNS、Caddy 自动 TLS、80/443 防火墙边界和外部访问；
 - 任务并发、每日次数、存储配额及接口限流；
 - 成功任务数据保留期和定时清理；

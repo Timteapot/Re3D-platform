@@ -117,7 +117,7 @@ cd D:\3Dreconstruction\Re3D-platform
   .\.venv\Scripts\python.exe -m apps.worker.main run-queued-once
 ```
 
-当前命令每次最多领取一个任务；没有任务时返回 `{"claimed": false, "status": "idle"}`。长期轮询服务、退避和 Windows 服务托管将在真实执行控制器阶段补充。
+`run-real-queued-once` 每次最多领取一个真实任务；没有任务时返回 `{"claimed": false, "status": "idle"}`。生产入口使用 `run-real-queued-loop` 持续领取任务，空闲时按 `RE3D_WORKER_POLL_SECONDS` 休眠；WinSW 服务包已提供自动启动、失败退避重启和日志轮转，但仍需在目标服务器完成安装验收。
 
 查询结果：
 

@@ -55,8 +55,9 @@ Mailpit 仅通过开发脚本作为独立 Docker 容器运行，不进入平台�
 | 依赖 | 验收版本 | 用途 | 许可证 | 上游 |
 |---|---:|---|---|---|
 | Caddy | 2.11.4 | 前端静态文件、同源反向代理、TLS 与安全响应头 | Apache-2.0 | [caddyserver/caddy](https://github.com/caddyserver/caddy) |
+| WinSW | 2.12.0 | 将 API、Worker 和 Caddy 前台入口包装为 Windows 服务 | MIT | [winsw/winsw](https://github.com/winsw/winsw) |
 
-Caddy 二进制不提交到本仓库。Windows 非公网验收使用官方标准二进制，并在运行前核对实际版本；真实服务器应从官方发行渠道独立安装，并按其许可证保留声明。
+Caddy 和 WinSW 二进制均不提交到本仓库。Windows 非公网验收使用官方标准 Caddy 二进制；服务安装器要求 WinSW 2.12.0。真实服务器应从各自官方发行渠道独立取得二进制，并按其许可证保留声明。
 
 ## 分发边界
 
