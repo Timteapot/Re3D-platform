@@ -4,6 +4,7 @@ import asyncio
 import json
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -27,6 +28,8 @@ from backend.jobs.development import DevelopmentJobService
 
 
 CurrentUserDependency = Callable[..., UserIdentity]
+STABLE_JOB_PREFIX = "/api/v1/jobs"
+LEGACY_DEVELOPMENT_JOB_PREFIX = "/api/v1/development/jobs"
 
 
 class SimulatedJobCreate(BaseModel):
@@ -174,7 +177,7 @@ def _summarize_result(result: dict[str, Any]) -> ResultSummary:
                         size_bytes=artifact["size_bytes"],
                         content_type=artifact["content_type"],
                         download_url=(
-                            f"/api/v1/development/jobs/{result['job_id']}"
+                            f"{STABLE_JOB_PREFIX}/{result['job_id']}"
                             f"/artifacts/{name}/{artifact['kind']}"
                             if artifact["kind"] in {"glb", "obj", "mtl", "texture"}
                             else None
@@ -225,15 +228,10 @@ def encode_job_event(snapshot: dict[str, Any]) -> str:
 
 
 def create_development_job_router(
-    queue: JobQueue,
     development_jobs: DevelopmentJobService,
     current_user: CurrentUserDependency,
-    *,
-    poll_seconds: float = 1.0,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v1/development", tags=["development"])
-    details = JobDetailReader(queue, data_root=development_jobs.data_root)
-    artifacts = ArtifactReader(queue, data_root=development_jobs.data_root)
 
     @router.post(
         "/simulated-jobs",
@@ -257,7 +255,28 @@ def create_development_job_router(
             response.status_code = status.HTTP_200_OK
         return JobResponse.from_snapshot(created.snapshot, reused=created.reused)
 
-    @router.get("/jobs", response_model=list[JobResponse])
+    return router
+
+
+def create_job_router(
+    queue: JobQueue,
+    *,
+    data_root: Path,
+    current_user: CurrentUserDependency,
+    poll_seconds: float = 1.0,
+    prefix: str = STABLE_JOB_PREFIX,
+    tags: list[str] | None = None,
+    include_in_schema: bool = True,
+) -> APIRouter:
+    router = APIRouter(
+        prefix=prefix,
+        tags=tags or ["jobs"],
+        include_in_schema=include_in_schema,
+    )
+    details = JobDetailReader(queue, data_root=data_root)
+    artifacts = ArtifactReader(queue, data_root=data_root)
+
+    @router.get("", response_model=list[JobResponse])
     def list_jobs(
         limit: int = 50,
         user: UserIdentity = Depends(current_user),
@@ -272,7 +291,7 @@ def create_development_job_router(
             for snapshot in queue.list_jobs(user_id=user.id, limit=limit)
         ]
 
-    @router.get("/jobs/{job_id}", response_model=JobResponse)
+    @router.get("/{job_id}", response_model=JobResponse)
     def get_job(
         job_id: uuid.UUID,
         user: UserIdentity = Depends(current_user),
@@ -284,7 +303,7 @@ def create_development_job_router(
         except JobNotFoundError as exc:
             raise HTTPException(status_code=404, detail="job not found") from exc
 
-    @router.get("/jobs/{job_id}/detail", response_model=JobDetailResponse)
+    @router.get("/{job_id}/detail", response_model=JobDetailResponse)
     def get_job_detail(
         job_id: uuid.UUID,
         user: UserIdentity = Depends(current_user),
@@ -296,7 +315,7 @@ def create_development_job_router(
         except JobNotFoundError as exc:
             raise HTTPException(status_code=404, detail="job not found") from exc
 
-    @router.get("/jobs/{job_id}/artifacts/{branch}/{kind}")
+    @router.get("/{job_id}/artifacts/{branch}/{kind}")
     def download_job_artifact(
         job_id: uuid.UUID,
         branch: ArtifactBranch,
@@ -331,7 +350,7 @@ def create_development_job_router(
             },
         )
 
-    @router.post("/jobs/{job_id}/cancel", response_model=JobResponse)
+    @router.post("/{job_id}/cancel", response_model=JobResponse)
     def cancel_job(
         job_id: uuid.UUID,
         user: UserIdentity = Depends(current_user),
@@ -343,7 +362,7 @@ def create_development_job_router(
             raise HTTPException(status_code=404, detail="job not found") from exc
         return JobResponse.from_snapshot(snapshot)
 
-    @router.get("/jobs/{job_id}/events")
+    @router.get("/{job_id}/events")
     async def stream_job_events(
         job_id: uuid.UUID,
         request: Request,

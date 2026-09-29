@@ -33,7 +33,7 @@ export async function streamJobEvents(
   signal: AbortSignal,
 ): Promise<void> {
   const response = await fetchAuthorized(
-    `/api/v1/development/jobs/${jobId}/events`,
+    `/api/v1/jobs/${jobId}/events`,
     { headers: { Accept: "text/event-stream" }, signal },
   );
   if (!response.ok) throw await readApiError(response);

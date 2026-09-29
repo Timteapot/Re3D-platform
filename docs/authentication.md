@@ -12,7 +12,7 @@
 | POST | `/api/v1/auth/logout` | 撤销当前 refresh session 并清除 Cookie |
 | GET | `/api/v1/auth/me` | 使用 Bearer access token 返回当前用户 |
 
-认证路由在 development、test 和 production 环境均注册。开发模拟任务路由仍只在 development/test 注册，但现在也必须提供合法 Bearer token；客户端不再能够通过请求体或查询参数声明 `user_id`。
+认证路由和稳定 `/api/v1/jobs` 任务访问路由在 development、test 和 production 环境均注册。开发模拟任务创建路由仍只在 development/test 注册，但也必须提供合法 Bearer token；客户端不能通过请求体或查询参数声明 `user_id`。
 
 ## 2. 数据模型
 

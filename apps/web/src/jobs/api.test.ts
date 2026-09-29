@@ -7,6 +7,7 @@ import {
   deleteUploadedImage,
   fetchJobArtifact,
   getJobDetail,
+  listJobs,
   submitUpload,
   uploadImage,
   type UploadSession,
@@ -84,15 +85,19 @@ describe("job upload API", () => {
     const request = vi.fn().mockResolvedValue({ job: { status: "queued" } });
     const jobId = "a43a63ce-b317-4ef4-bfea-8bff2a5f8341";
 
+    await listJobs(request);
+    expect(request).toHaveBeenCalledWith("/api/v1/jobs?limit=20");
+    request.mockClear();
+
     await getJobDetail(request, jobId);
     expect(request).toHaveBeenCalledWith(
-      `/api/v1/development/jobs/${jobId}/detail`,
+      `/api/v1/jobs/${jobId}/detail`,
     );
 
     request.mockClear();
     await cancelJob(request, jobId);
     expect(request).toHaveBeenCalledWith(
-      `/api/v1/development/jobs/${jobId}/cancel`,
+      `/api/v1/jobs/${jobId}/cancel`,
       { method: "POST" },
     );
   });
@@ -109,7 +114,7 @@ describe("job upload API", () => {
       kind: "glb",
       size_bytes: 4,
       content_type: "model/gltf-binary",
-      download_url: "/api/v1/development/jobs/job-id/artifacts/A-v4/glb",
+      download_url: "/api/v1/jobs/job-id/artifacts/A-v4/glb",
     };
     const controller = new AbortController();
 

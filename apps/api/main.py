@@ -9,7 +9,11 @@ from fastapi import FastAPI
 from sqlalchemy import Engine
 
 from apps.api.auth import create_auth_router
-from apps.api.jobs import create_development_job_router
+from apps.api.jobs import (
+    LEGACY_DEVELOPMENT_JOB_PREFIX,
+    create_development_job_router,
+    create_job_router,
+)
 from apps.api.uploads import create_upload_router
 from backend.auth import AuthService, AuthSettings
 from backend.db.queue import JobQueue
@@ -80,6 +84,16 @@ def create_app(
     auth_router, current_user = create_auth_router(resolved_services.auth)
     app.include_router(auth_router)
 
+    poll_seconds = 0.05 if environment == "test" else 1.0
+    app.include_router(
+        create_job_router(
+            resolved_services.queue,
+            data_root=resolved_services.development_jobs.data_root,
+            current_user=current_user,
+            poll_seconds=poll_seconds,
+        )
+    )
+
     if environment not in DEVELOPMENT_ENVIRONMENTS:
         return app
 
@@ -87,10 +101,19 @@ def create_app(
 
     app.include_router(
         create_development_job_router(
-            resolved_services.queue,
             resolved_services.development_jobs,
             current_user,
-            poll_seconds=0.05 if environment == "test" else 1.0,
+        )
+    )
+    app.include_router(
+        create_job_router(
+            resolved_services.queue,
+            data_root=resolved_services.development_jobs.data_root,
+            current_user=current_user,
+            poll_seconds=poll_seconds,
+            prefix=LEGACY_DEVELOPMENT_JOB_PREFIX,
+            tags=["development"],
+            include_in_schema=False,
         )
     )
 

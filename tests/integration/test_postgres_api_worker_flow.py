@@ -167,7 +167,7 @@ class PostgreSQLApiWorkerFlowTests(unittest.TestCase):
         self.assertEqual(worker_result["status"], "succeeded")
 
         completed_response = self.client.get(
-            f"/api/v1/development/jobs/{job_id}",
+            f"/api/v1/jobs/{job_id}",
             headers={"Authorization": f"Bearer {self.access_token}"},
         )
         self.assertEqual(completed_response.status_code, 200)
@@ -175,7 +175,7 @@ class PostgreSQLApiWorkerFlowTests(unittest.TestCase):
         self.assertEqual(completed["status"], "succeeded")
         self.assertEqual(completed["progress"], 100)
         detail_response = self.client.get(
-            f"/api/v1/development/jobs/{job_id}/detail",
+            f"/api/v1/jobs/{job_id}/detail",
             headers={"Authorization": f"Bearer {self.access_token}"},
         )
         self.assertEqual(detail_response.status_code, 200)

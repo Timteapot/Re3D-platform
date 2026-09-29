@@ -19,9 +19,9 @@ API 进程不执行重建，只负责校验请求、创建任务文件和写队�
 
 ## 2. 安全边界
 
-当前路由使用 `/api/v1/development` 前缀，只有 `APP_ENV=development` 或 `APP_ENV=test` 时才注册。`APP_ENV=production` 时这些路由返回 404。
+创建模拟任务的路由使用 `/api/v1/development` 前缀，只有 `APP_ENV=development` 或 `APP_ENV=test` 时才注册。任务列表、详情、取消、SSE 和产物下载使用稳定的 `/api/v1/jobs` 前缀，在 development、test 和 production 环境注册。旧 `/api/v1/development/jobs` 仅作为本机迁移兼容路径保留，不进入 OpenAPI，production 环境返回 404。
 
-开发任务接口必须使用 Bearer access token，服务端从令牌和数据库取得内部用户 ID，不再接受客户端提交的 `user_id`。这些任务路由仍只能绑定 `127.0.0.1` 用于本机联调，不能暴露到公开互联网。
+所有任务接口都必须使用 Bearer access token，服务端从令牌和数据库取得内部用户 ID，不再接受客户端提交的 `user_id`。稳定路由已经具备生产环境注册边界，但在邮箱验证、限流、配额、保留期和代理加固完成前仍不能暴露到公开互联网。
 
 旧的 `simulated-jobs` 接口仍生成平台开发字节；新的上传接口会保存并校验真实 JPEG/PNG。两者进入的仍是 simulated Worker：模拟 GLB 是格式合法的空场景，不包含网格、材质或纹理。评估报告因此将整体状态写为 `not_available`、分数写为 `null`，只把文件完整性标为通过，避免伪造质量结论。
 
@@ -123,7 +123,7 @@ cd D:\3Dreconstruction\Re3D-platform
 
 ```powershell
 Invoke-RestMethod `
-  -Uri "http://127.0.0.1:8000/api/v1/development/jobs/$($job.job_id)" `
+  -Uri "http://127.0.0.1:8000/api/v1/jobs/$($job.job_id)" `
   -Headers $headers
 ```
 
@@ -131,13 +131,13 @@ Invoke-RestMethod `
 
 ```powershell
 Invoke-RestMethod `
-  -Uri "http://127.0.0.1:8000/api/v1/development/jobs/$($job.job_id)/detail" `
+  -Uri "http://127.0.0.1:8000/api/v1/jobs/$($job.job_id)/detail" `
   -Headers $headers
 ```
 
 详情响应不会返回服务器路径、产物 SHA 或任意诊断文件内容。API 先按 Bearer token 校验任务所有权，再从固定的 `RE3D_DATA_ROOT/jobs/<job_uuid>` 读取请求、结果与评估契约；身份、执行模式或评估来源哈希不一致时，只返回稳定的警告码，不继续展示文件内容。
 
-浏览器任务详情页使用 `GET /api/v1/development/jobs/{job_id}/events` 接收 SSE。由于访问令牌不放在 URL 中，前端使用带 `Authorization` 请求头的 Fetch 流读取事件，而不是原生 `EventSource`；连接失败时保留 5 秒轮询作为降级路径。终态任务发送最后一个状态事件后主动关闭流。
+浏览器任务详情页使用 `GET /api/v1/jobs/{job_id}/events` 接收 SSE。由于访问令牌不放在 URL 中，前端使用带 `Authorization` 请求头的 Fetch 流读取事件，而不是原生 `EventSource`；连接失败时保留 5 秒轮询作为降级路径。终态任务发送最后一个状态事件后主动关闭流。
 
 成功任务的详情响应为每个产物提供受控 `download_url`。浏览器仍使用带 `Authorization` 请求头的 Fetch 获取二进制 Blob，再触发本地保存，不把 access token 放进查询参数或普通链接。服务端只接受固定的 A-v4/B-v2/C 和 glb/obj/mtl/texture 选择器，并在返回文件前复核所有权、成功终态、契约路径、大小和 SHA-256。完整边界见 [`artifact-downloads.md`](artifact-downloads.md)。
 
@@ -170,13 +170,13 @@ Re3D-data/jobs/<job_uuid>/
 | DELETE | `/api/v1/uploads/{upload_id}/images/{image_id}` | 删除未提交上传中的一张图片 |
 | POST | `/api/v1/uploads/{upload_id}/cancel` | 取消未提交上传并清理任务目录 |
 | POST | `/api/v1/uploads/{upload_id}/submit` | 复核输入并创建队列任务；无请求体时默认 simulated，开发验证可显式提交 `{"execution_mode":"real"}` |
-| GET | `/api/v1/development/jobs` | 列出当前用户最近的任务 |
+| GET | `/api/v1/jobs` | 列出当前用户最近的任务 |
 | POST | `/api/v1/development/simulated-jobs` | 以当前登录用户创建幂等模拟任务 |
-| GET | `/api/v1/development/jobs/{job_id}` | 查询当前用户的任务 |
-| GET | `/api/v1/development/jobs/{job_id}/detail` | 返回契约校验后的输入、三分支结果和评估摘要 |
-| GET | `/api/v1/development/jobs/{job_id}/artifacts/{branch}/{kind}` | 下载当前用户成功任务中通过完整性复核的固定产物 |
-| GET | `/api/v1/development/jobs/{job_id}/events` | 返回当前用户任务的 SSE 状态流 |
-| POST | `/api/v1/development/jobs/{job_id}/cancel` | 取消当前用户的任务 |
+| GET | `/api/v1/jobs/{job_id}` | 查询当前用户的任务 |
+| GET | `/api/v1/jobs/{job_id}/detail` | 返回契约校验后的输入、三分支结果和评估摘要 |
+| GET | `/api/v1/jobs/{job_id}/artifacts/{branch}/{kind}` | 下载当前用户成功任务中通过完整性复核的固定产物 |
+| GET | `/api/v1/jobs/{job_id}/events` | 返回当前用户任务的 SSE 状态流 |
+| POST | `/api/v1/jobs/{job_id}/cancel` | 取消当前用户的任务 |
 
 查询、取消或下载其他用户的任务会统一返回 404，避免泄露任务是否存在。用户 ID 只来自服务端验证后的 access token。
 
@@ -204,6 +204,6 @@ Re3D-data/jobs/<job_uuid>/
 - GPU、显存和磁盘资源采样；
 - 基于真值或人工标注校准真实评估阈值；
 - 失败任务目录自动清理；
-- 将当前开发任务路由迁移为通过生产安全验收的稳定接口。
+- 对稳定任务接口增加生产限流、配额、审计和反向代理验收。
 
 2026-09-25 已完成 11 图真实 GPU 闭环验收，记录见 [`real-gpu-acceptance-2026-09-25.md`](real-gpu-acceptance-2026-09-25.md)。该结果证明本机平台编排和真实进程控制边界可工作，不代表系统已具备公开部署条件。

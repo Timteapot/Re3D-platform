@@ -12,7 +12,7 @@
 | DELETE | `/api/v1/uploads/{upload_id}/images/{image_id}` | 删除未提交会话中的一张图片 |
 | POST | `/api/v1/uploads/{upload_id}/cancel` | 取消会话并删除未提交任务目录 |
 | POST | `/api/v1/uploads/{upload_id}/submit` | 校验完整输入、生成契约并原子创建队列任务 |
-| GET | `/api/v1/development/jobs?limit=20` | 查询当前用户最近任务 |
+| GET | `/api/v1/jobs?limit=20` | 查询当前用户最近任务 |
 
 所有接口都要求 Bearer access token。查询其他用户的上传会话返回 404，不通过 ID 暴露对象是否存在。
 

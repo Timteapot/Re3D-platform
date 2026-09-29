@@ -2,10 +2,10 @@
 
 ## 当前范围
 
-开发 API 为成功任务提供以下接口：
+稳定任务 API 为成功任务提供以下接口：
 
 ```text
-GET /api/v1/development/jobs/{job_id}/artifacts/{branch}/{kind}
+GET /api/v1/jobs/{job_id}/artifacts/{branch}/{kind}
 ```
 
 固定选择器：
@@ -13,7 +13,7 @@ GET /api/v1/development/jobs/{job_id}/artifacts/{branch}/{kind}
 - `branch`：`A-v4`、`B-v2`、`C`；
 - `kind`：`glb`、`obj`、`mtl`、`texture`。
 
-该路由与当前任务详情路由一样，只在 `APP_ENV=development` 或 `APP_ENV=test` 时注册。它用于本机完整开发闭环；公开部署前需要将稳定的任务读取接口从 development 路由迁移到生产路由，并重新完成安全验收。
+该路由与任务列表、详情、取消和 SSE 一样，在 development、test 和 production 环境注册。旧 `/api/v1/development/jobs/...` 路径仅在 development/test 保留为迁移兼容入口，并从 OpenAPI 隐藏。路由可在 production 注册只表示接口边界已经稳定，不代表邮箱验证、限流、配额、保留期和部署加固已经完成。
 
 ## 服务端判定顺序
 

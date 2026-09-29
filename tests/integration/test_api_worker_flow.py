@@ -126,7 +126,7 @@ class ApiWorkerFlowTests(unittest.TestCase):
         self.assertEqual(worker_response["status"], "succeeded")
 
         response = self.client.get(
-            f"/api/v1/development/jobs/{job_id}",
+            f"/api/v1/jobs/{job_id}",
             headers=self.auth_headers(self.access_token),
         )
         self.assertEqual(response.status_code, 200)
@@ -135,7 +135,7 @@ class ApiWorkerFlowTests(unittest.TestCase):
         self.assertEqual(completed["progress"], 100)
 
         detail_response = self.client.get(
-            f"/api/v1/development/jobs/{job_id}/detail",
+            f"/api/v1/jobs/{job_id}/detail",
             headers=self.auth_headers(self.access_token),
         )
         self.assertEqual(detail_response.status_code, 200)
@@ -153,7 +153,7 @@ class ApiWorkerFlowTests(unittest.TestCase):
         self.assertNotIn("sha256", detail["result"]["branches"][0]["artifacts"][0])
         artifact_summary = detail["result"]["branches"][0]["artifacts"][0]
         artifact_url = (
-            f"/api/v1/development/jobs/{job_id}/artifacts/A-v4/glb"
+            f"/api/v1/jobs/{job_id}/artifacts/A-v4/glb"
         )
         self.assertEqual(artifact_summary["download_url"], artifact_url)
         unauthenticated = self.client.get(artifact_url)
@@ -171,7 +171,7 @@ class ApiWorkerFlowTests(unittest.TestCase):
         self.assertIn("A-v4-mesh.glb", downloaded.headers["content-disposition"])
 
         stream = self.client.get(
-            f"/api/v1/development/jobs/{job_id}/events",
+            f"/api/v1/jobs/{job_id}/events",
             headers=self.auth_headers(self.access_token),
         )
         self.assertEqual(stream.status_code, 200)
@@ -223,36 +223,48 @@ class ApiWorkerFlowTests(unittest.TestCase):
             email="different-owner@example.com",
         )
         hidden = self.client.get(
-            f"/api/v1/development/jobs/{job_id}",
+            f"/api/v1/jobs/{job_id}",
             headers=self.auth_headers(other_access_token),
         )
         self.assertEqual(hidden.status_code, 404)
         hidden_detail = self.client.get(
-            f"/api/v1/development/jobs/{job_id}/detail",
+            f"/api/v1/jobs/{job_id}/detail",
             headers=self.auth_headers(other_access_token),
         )
         self.assertEqual(hidden_detail.status_code, 404)
         hidden_stream = self.client.get(
-            f"/api/v1/development/jobs/{job_id}/events",
+            f"/api/v1/jobs/{job_id}/events",
             headers=self.auth_headers(other_access_token),
         )
         self.assertEqual(hidden_stream.status_code, 404)
         hidden_artifact = self.client.get(
-            f"/api/v1/development/jobs/{job_id}/artifacts/A-v4/glb",
+            f"/api/v1/jobs/{job_id}/artifacts/A-v4/glb",
             headers=self.auth_headers(other_access_token),
         )
         self.assertEqual(hidden_artifact.status_code, 404)
         pending_artifact = self.client.get(
-            f"/api/v1/development/jobs/{job_id}/artifacts/A-v4/glb",
+            f"/api/v1/jobs/{job_id}/artifacts/A-v4/glb",
             headers=self.auth_headers(self.access_token),
         )
         self.assertEqual(pending_artifact.status_code, 409)
         cancelled = self.client.post(
-            f"/api/v1/development/jobs/{job_id}/cancel",
+            f"/api/v1/jobs/{job_id}/cancel",
             headers=self.auth_headers(self.access_token),
         )
         self.assertEqual(cancelled.status_code, 200)
         self.assertEqual(cancelled.json()["status"], "cancelled")
+        legacy = self.client.get(
+            f"/api/v1/development/jobs/{job_id}",
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(legacy.status_code, 200)
+        self.assertEqual(legacy.json()["job_id"], job_id)
+        development_paths = self.client.get("/openapi.json").json()["paths"]
+        self.assertIn("/api/v1/jobs/{job_id}", development_paths)
+        self.assertNotIn(
+            "/api/v1/development/jobs/{job_id}",
+            development_paths,
+        )
 
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
@@ -287,17 +299,31 @@ class ApiWorkerFlowTests(unittest.TestCase):
                 headers=self.auth_headers(self.access_token),
             )
             self.assertEqual(response.status_code, 404)
-            artifact_response = production.get(
-                f"/api/v1/development/jobs/{job_id}/artifacts/A-v4/glb",
+            stable_job = production.get(
+                f"/api/v1/jobs/{job_id}",
                 headers=self.auth_headers(self.access_token),
             )
-            self.assertEqual(artifact_response.status_code, 404)
+            self.assertEqual(stable_job.status_code, 200)
+            self.assertEqual(stable_job.json()["status"], "cancelled")
+            artifact_response = production.get(
+                f"/api/v1/jobs/{job_id}/artifacts/A-v4/glb",
+                headers=self.auth_headers(self.access_token),
+            )
+            self.assertEqual(artifact_response.status_code, 409)
+            legacy_job = production.get(
+                f"/api/v1/development/jobs/{job_id}",
+                headers=self.auth_headers(self.access_token),
+            )
+            self.assertEqual(legacy_job.status_code, 404)
             upload_response = production.post(
                 "/api/v1/uploads",
                 json={"idempotency_key": "must-not-upload"},
                 headers=self.auth_headers(self.access_token),
             )
             self.assertEqual(upload_response.status_code, 404)
+            openapi_paths = production.get("/openapi.json").json()["paths"]
+            self.assertIn("/api/v1/jobs/{job_id}", openapi_paths)
+            self.assertNotIn("/api/v1/development/jobs/{job_id}", openapi_paths)
             self.assertEqual(production.get("/api/v1/auth/me").status_code, 401)
         finally:
             production.close()
@@ -417,7 +443,7 @@ class ApiWorkerFlowTests(unittest.TestCase):
         self.assertEqual(late_image.status_code, 409)
 
         listed = self.client.get(
-            "/api/v1/development/jobs",
+            "/api/v1/jobs",
             headers=self.auth_headers(self.access_token),
         )
         self.assertEqual(listed.status_code, 200)
@@ -481,7 +507,7 @@ class ApiWorkerFlowTests(unittest.TestCase):
         self.assertEqual(submitted.status_code, 422)
         self.assertEqual(
             self.client.get(
-                "/api/v1/development/jobs",
+                "/api/v1/jobs",
                 headers=self.auth_headers(self.access_token),
             ).json(),
             [],

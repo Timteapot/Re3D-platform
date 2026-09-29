@@ -168,21 +168,21 @@ export function submitUpload(
 }
 
 export function listJobs(request: AuthorizedRequest): Promise<Job[]> {
-  return request<Job[]>("/api/v1/development/jobs?limit=20");
+  return request<Job[]>("/api/v1/jobs?limit=20");
 }
 
 export function getJobDetail(
   request: AuthorizedRequest,
   jobId: string,
 ): Promise<JobDetail> {
-  return request<JobDetail>(`/api/v1/development/jobs/${jobId}/detail`);
+  return request<JobDetail>(`/api/v1/jobs/${jobId}/detail`);
 }
 
 export function cancelJob(
   request: AuthorizedRequest,
   jobId: string,
 ): Promise<Job> {
-  return request<Job>(`/api/v1/development/jobs/${jobId}/cancel`, {
+  return request<Job>(`/api/v1/jobs/${jobId}/cancel`, {
     method: "POST",
   });
 }

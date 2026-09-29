@@ -52,7 +52,7 @@ describe("job event stream", () => {
 
     expect(received).toEqual([job]);
     expect(fetchAuthorized).toHaveBeenCalledWith(
-      `/api/v1/development/jobs/${job.job_id}/events`,
+      `/api/v1/jobs/${job.job_id}/events`,
       expect.objectContaining({ headers: { Accept: "text/event-stream" } }),
     );
   });
