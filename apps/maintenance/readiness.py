@@ -197,6 +197,18 @@ def check_production_readiness(
         scheduler = SchedulerSettings.from_environment()
         failed_job_cleanup = FailedJobCleanupSettings.from_environment()
         success_retention = SuccessRetentionSettings.from_environment()
+        if (
+            success_retention.input_retention_days,
+            success_retention.runtime_retention_days,
+            success_retention.artifact_retention_days,
+        ) != (30, 30, 30):
+            raise ValueError(
+                "production successful-task retention tiers must all be 30 days"
+            )
+        if not success_retention.scheduled_dry_run_enabled:
+            raise ValueError(
+                "production scheduled retention dry-run must be enabled"
+            )
         resource_monitor = ResourceMonitorSettings.from_environment()
         response["scheduler"] = {
             "resource_key": scheduler.resource_key,
@@ -213,6 +225,12 @@ def check_production_readiness(
             "runtime_days": success_retention.runtime_retention_days,
             "artifact_days": success_retention.artifact_retention_days,
             "batch_size": success_retention.cleanup_batch_size,
+            "scheduled_dry_run_enabled": (
+                success_retention.scheduled_dry_run_enabled
+            ),
+            "scheduled_dry_run_interval_seconds": (
+                success_retention.scheduled_dry_run_interval_seconds
+            ),
             "audit_backend": "database",
             "execution_requires_delete_confirmation": True,
         }

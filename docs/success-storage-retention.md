@@ -23,6 +23,8 @@ SUCCESS_INPUT_RETENTION_DAYS=30
 SUCCESS_RUNTIME_RETENTION_DAYS=30
 SUCCESS_ARTIFACT_RETENTION_DAYS=30
 SUCCESS_RETENTION_CLEANUP_BATCH_SIZE=50
+SUCCESS_RETENTION_DRY_RUN_ENABLED=true
+SUCCESS_RETENTION_DRY_RUN_INTERVAL_SECONDS=86400
 ```
 
 每个已设置天数必须在 1–3650 之间。候选时间以数据库 `finished_at` 为准，而不是容易被复制或修改的文件时间。
@@ -47,15 +49,11 @@ SUCCESS_RETENTION_CLEANUP_BATCH_SIZE=50
 
 `--execute` 与 `--confirm-delete` 必须同时出现；只提供其中一个会以退出码 2 拒绝运行。`--env-file` 由 Python 进程直接读取，不依赖 PowerShell 脚本执行策略，且不会把连接串打印到输出。
 
-计划任务的首阶段应只运行以下命令：
+启用 `SUCCESS_RETENTION_DRY_RUN_ENABLED` 后，持续 Worker 使用自身已有的隔离虚拟账户，在启动时执行一次 dry-run，之后按 `SUCCESS_RETENTION_DRY_RUN_INTERVAL_SECONDS` 周期执行。生产默认间隔为 86400 秒。每次运行都标记为 `scheduled` 并写入数据库审计，同时在 Worker 标准输出写入一条无敏感信息 JSON 摘要。
 
-```powershell
-.\.venv\Scripts\python.exe -m apps.worker.main cleanup-success-job-storage `
-  --env-file .env.worker.production `
-  --trigger scheduled
-```
+周期入口硬编码调用 `execute=False`，不能通过环境变量切换为删除。实际删除只保留在独立命令中，仍需要 `--execute --confirm-delete`。这样不需要额外 Windows 计划任务账户，也不会把 Worker 环境文件和数据目录权限授予 `SYSTEM`、`LOCAL SERVICE` 或 `NETWORK SERVICE`。
 
-三层成功任务数据的保留期已统一确定为 30 天，并写入开发及生产配置示例。2026-09-30 对开发库执行的首轮 dry-run 显示三个层级候选数均为 0，没有删除文件。成功任务清理不会接入常驻重建循环；目标服务器仍需先完成备份确认和多轮计划 dry-run，再单独决定是否为计划任务增加两个删除确认参数。
+三层成功任务数据的保留期已统一确定为 30 天，并写入开发及生产配置示例。2026-09-30 对开发库执行的首轮 dry-run 显示三个层级候选数均为 0，没有删除文件。目标服务器仍需启动服务并观察多轮周期审计，之后再单独验收人工双确认删除。
 
 ## 路径安全
 

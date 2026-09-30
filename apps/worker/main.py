@@ -289,6 +289,7 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 if args.command == "run-real-queued-loop":
                     cleanup_settings = FailedJobCleanupSettings.from_environment()
+                    retention_settings = SuccessRetentionSettings.from_environment()
                     _run_real_worker_loop(
                         worker,
                         poll_seconds=_worker_poll_seconds(args.poll_seconds),
@@ -298,6 +299,18 @@ def main(argv: list[str] | None = None) -> int:
                             settings=cleanup_settings,
                         ),
                         cleanup_interval_seconds=cleanup_settings.interval_seconds,
+                        success_retention=(
+                            SuccessRetentionRunner(
+                                sessions,
+                                data_root=settings.data_root,
+                                settings=retention_settings,
+                            )
+                            if retention_settings.scheduled_dry_run_enabled
+                            else None
+                        ),
+                        retention_interval_seconds=(
+                            retention_settings.scheduled_dry_run_interval_seconds
+                        ),
                     )
                     return 0
                 outcome = worker.run_once()
@@ -337,6 +350,8 @@ def _run_real_worker_loop(
     poll_seconds: float,
     cleanup: FailedJobStorageCleaner | None = None,
     cleanup_interval_seconds: int = 300,
+    success_retention: SuccessRetentionRunner | None = None,
+    retention_interval_seconds: int = 86_400,
 ) -> None:
     print(
         json.dumps(
@@ -344,11 +359,16 @@ def _run_real_worker_loop(
                 "operation": "real-worker-loop",
                 "status": "started",
                 "poll_seconds": poll_seconds,
+                "success_retention_dry_run_enabled": success_retention is not None,
+                "success_retention_interval_seconds": (
+                    retention_interval_seconds if success_retention is not None else None
+                ),
             }
         ),
         flush=True,
     )
     next_cleanup_at = 0.0
+    next_retention_at = 0.0
     while True:
         current = time.monotonic()
         if cleanup is not None and current >= next_cleanup_at:
@@ -364,6 +384,22 @@ def _run_real_worker_loop(
                 flush=True,
             )
             next_cleanup_at = current + cleanup_interval_seconds
+        if success_retention is not None and current >= next_retention_at:
+            retention_report = success_retention.run(
+                execute=False,
+                trigger="scheduled",
+            )
+            print(
+                json.dumps(
+                    {
+                        "operation": "cleanup-success-job-storage",
+                        **retention_report,
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
+            next_retention_at = current + retention_interval_seconds
         outcome = worker.run_once()
         if outcome.claimed:
             print(

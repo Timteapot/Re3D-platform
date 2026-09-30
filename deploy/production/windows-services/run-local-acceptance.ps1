@@ -115,7 +115,12 @@ try {
         "APP_ENV=production",
         "RE3D_DATA_ROOT=$normalizedDataRoot",
         "RE3D_ROOT=$normalizedRe3DRoot",
-        "RE3D_DRIVER_PYTHON=$normalizedDriverPython"
+        "RE3D_DRIVER_PYTHON=$normalizedDriverPython",
+        "SUCCESS_INPUT_RETENTION_DAYS=30",
+        "SUCCESS_RUNTIME_RETENTION_DAYS=30",
+        "SUCCESS_ARTIFACT_RETENTION_DAYS=30",
+        "SUCCESS_RETENTION_DRY_RUN_ENABLED=true",
+        "SUCCESS_RETENTION_DRY_RUN_INTERVAL_SECONDS=86400"
     ) -join [Environment]::NewLine
     [IO.File]::WriteAllText(
         $apiEnvironment,

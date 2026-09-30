@@ -95,6 +95,10 @@ class ProductionReadinessTests(unittest.TestCase):
                 "postgresql+psycopg://re3d_runtime:database-secret@"
                 "127.0.0.1:5432/re3d_platform"
             ),
+            "SUCCESS_INPUT_RETENTION_DAYS": "30",
+            "SUCCESS_RUNTIME_RETENTION_DAYS": "30",
+            "SUCCESS_ARTIFACT_RETENTION_DAYS": "30",
+            "SUCCESS_RETENTION_DRY_RUN_ENABLED": "true",
         }
         with (
             patch.dict(os.environ, environment, clear=True),
@@ -147,16 +151,48 @@ class ProductionReadinessTests(unittest.TestCase):
         self.assertEqual(
             report["success_retention"],
             {
-                "input_days": None,
-                "runtime_days": None,
-                "artifact_days": None,
+                "input_days": 30,
+                "runtime_days": 30,
+                "artifact_days": 30,
                 "batch_size": 50,
+                "scheduled_dry_run_enabled": True,
+                "scheduled_dry_run_interval_seconds": 86400,
                 "audit_backend": "database",
                 "execution_requires_delete_confirmation": True,
             },
         )
         self.assertNotIn("authentication", report)
         self.assertNotIn("smtp", report)
+
+    def test_worker_check_requires_fixed_retention_policy(self) -> None:
+        environment = {
+            "APP_ENV": "production",
+            "DATABASE_URL": (
+                "postgresql+psycopg://re3d_runtime:database-secret@"
+                "127.0.0.1:5432/re3d_platform"
+            ),
+        }
+        with (
+            patch.dict(os.environ, environment, clear=True),
+            patch(
+                "apps.maintenance.readiness._check_production_database",
+                return_value={
+                    "name": "re3d_platform",
+                    "role": "re3d_runtime",
+                    "migration": "0011_success_retention_runs",
+                },
+            ),
+            patch(
+                "apps.maintenance.readiness._check_production_storage",
+                return_value={
+                    "data_root": "D:/Re3D-data-production",
+                    "free_bytes": 100,
+                    "minimum_free_bytes": 50,
+                },
+            ),
+        ):
+            with self.assertRaisesRegex(ValueError, "retention tiers"):
+                check_production_readiness(component="worker")
 
     def test_api_check_rejects_trusting_every_forwarded_address(self) -> None:
         environment = {

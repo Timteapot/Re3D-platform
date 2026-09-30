@@ -370,6 +370,17 @@ $workerLoopEvidence = @(
 if ($workerLoopEvidence.Count -eq 0) {
     throw "Worker logs do not show entry into the real queue loop."
 }
+$workerRetentionEvidence = @(
+    Get-ChildItem -LiteralPath $workerService.log_directory -File |
+        ForEach-Object { Get-Content -LiteralPath $_.FullName -Tail 200 } |
+        Select-String -Pattern (
+            '"operation"\s*:\s*"cleanup-success-job-storage".*' +
+            '"mode"\s*:\s*"dry_run"'
+        )
+)
+if ($workerRetentionEvidence.Count -eq 0) {
+    throw "Worker logs do not show the audited successful-task retention dry-run."
+}
 
 $report = [ordered]@{
     status = "accepted"
@@ -385,6 +396,7 @@ $report = [ordered]@{
         public_home = "pass"
         proxied_health = "pass"
         protected_api_boundary = "pass"
+        retention_dry_run = "pass"
         security_headers = "pass"
         deployment_identity = "pass"
     }

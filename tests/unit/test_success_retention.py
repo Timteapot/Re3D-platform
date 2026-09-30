@@ -381,9 +381,28 @@ class SuccessRetentionTests(unittest.TestCase):
         self.assertIsNone(settings.input_retention_days)
         self.assertIsNone(settings.runtime_retention_days)
         self.assertIsNone(settings.artifact_retention_days)
+        self.assertFalse(settings.scheduled_dry_run_enabled)
+        self.assertEqual(settings.scheduled_dry_run_interval_seconds, 86_400)
+
+        with patch.dict(
+            "os.environ",
+            {
+                "SUCCESS_INPUT_RETENTION_DAYS": "30",
+                "SUCCESS_RETENTION_DRY_RUN_ENABLED": "true",
+                "SUCCESS_RETENTION_DRY_RUN_INTERVAL_SECONDS": "3600",
+            },
+            clear=True,
+        ):
+            scheduled = SuccessRetentionSettings.from_environment()
+        self.assertTrue(scheduled.scheduled_dry_run_enabled)
+        self.assertEqual(scheduled.scheduled_dry_run_interval_seconds, 3600)
 
         with self.assertRaisesRegex(ValueError, "SUCCESS_ARTIFACT"):
             SuccessRetentionSettings(artifact_retention_days=0)
+        with self.assertRaisesRegex(ValueError, "DRY_RUN_INTERVAL"):
+            SuccessRetentionSettings(scheduled_dry_run_interval_seconds=60)
+        with self.assertRaisesRegex(ValueError, "at least one retention tier"):
+            SuccessRetentionSettings(scheduled_dry_run_enabled=True)
 
 
 if __name__ == "__main__":

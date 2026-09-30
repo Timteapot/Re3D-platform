@@ -225,7 +225,13 @@ try {
         "RE3D_LEASE_SECONDS=60",
         "RE3D_HEARTBEAT_SECONDS=20",
         "RE3D_WORKER_POLL_SECONDS=1",
-        "RE3D_WORKER_ID=acceptance-worker"
+        "RE3D_WORKER_ID=acceptance-worker",
+        "SUCCESS_INPUT_RETENTION_DAYS=30",
+        "SUCCESS_RUNTIME_RETENTION_DAYS=30",
+        "SUCCESS_ARTIFACT_RETENTION_DAYS=30",
+        "SUCCESS_RETENTION_CLEANUP_BATCH_SIZE=50",
+        "SUCCESS_RETENTION_DRY_RUN_ENABLED=true",
+        "SUCCESS_RETENTION_DRY_RUN_INTERVAL_SECONDS=86400"
     ) -join [Environment]::NewLine
     [IO.File]::WriteAllText(
         $apiEnvironmentPath,
@@ -292,17 +298,21 @@ try {
         if ($workerProcess.HasExited) {
             Read-Re3DProcessFailure -Name "Production Worker" -StandardOutput $workerOut -StandardError $workerErr
         }
-        if (
-            (Test-Path -LiteralPath $workerOut) -and
-            (Get-Content -LiteralPath $workerOut -Raw) -match '"operation": "real-worker-loop"'
-        ) {
-            $workerReady = $true
-            break
+        if (Test-Path -LiteralPath $workerOut) {
+            $workerOutput = Get-Content -LiteralPath $workerOut -Raw
+            if (
+                $workerOutput -match '"operation": "real-worker-loop"' -and
+                $workerOutput -match '"operation": "cleanup-success-job-storage"' -and
+                $workerOutput -match '"mode": "dry_run"'
+            ) {
+                $workerReady = $true
+                break
+            }
         }
         Start-Sleep -Milliseconds 250
     }
     if (-not $workerReady) {
-        throw "Production Worker did not enter the real queue loop."
+        throw "Production Worker did not enter the queue loop and audit retention dry-run."
     }
 
     $caddyArguments = (

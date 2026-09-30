@@ -48,6 +48,8 @@ class SuccessRetentionSettings:
     runtime_retention_days: int | None = None
     artifact_retention_days: int | None = None
     cleanup_batch_size: int = 50
+    scheduled_dry_run_enabled: bool = False
+    scheduled_dry_run_interval_seconds: int = 86_400
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -60,6 +62,22 @@ class SuccessRetentionSettings:
         if not 1 <= self.cleanup_batch_size <= 1000:
             raise ValueError(
                 "SUCCESS_RETENTION_CLEANUP_BATCH_SIZE must be between 1 and 1000"
+            )
+        if not 3600 <= self.scheduled_dry_run_interval_seconds <= 7 * 86_400:
+            raise ValueError(
+                "SUCCESS_RETENTION_DRY_RUN_INTERVAL_SECONDS must be between "
+                "3600 and 604800"
+            )
+        if self.scheduled_dry_run_enabled and all(
+            value is None
+            for value in (
+                self.input_retention_days,
+                self.runtime_retention_days,
+                self.artifact_retention_days,
+            )
+        ):
+            raise ValueError(
+                "scheduled retention dry-run requires at least one retention tier"
             )
 
     @classmethod
@@ -77,6 +95,14 @@ class SuccessRetentionSettings:
             cleanup_batch_size=_environment_integer(
                 "SUCCESS_RETENTION_CLEANUP_BATCH_SIZE",
                 50,
+            ),
+            scheduled_dry_run_enabled=_environment_boolean(
+                "SUCCESS_RETENTION_DRY_RUN_ENABLED",
+                False,
+            ),
+            scheduled_dry_run_interval_seconds=_environment_integer(
+                "SUCCESS_RETENTION_DRY_RUN_INTERVAL_SECONDS",
+                86_400,
             ),
         )
 
@@ -410,3 +436,15 @@ def _environment_integer(name: str, default: int) -> int:
         return int(configured)
     except ValueError as exc:
         raise ValueError(f"{name} must be an integer") from exc
+
+
+def _environment_boolean(name: str, default: bool) -> bool:
+    configured = os.environ.get(name)
+    if configured is None:
+        return default
+    normalized = configured.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean")

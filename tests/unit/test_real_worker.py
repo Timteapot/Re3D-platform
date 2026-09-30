@@ -101,6 +101,53 @@ class RealWorkerLoopTests(unittest.TestCase):
         self.assertEqual(records[1]["operation"], "cleanup-failed-job-storage")
         self.assertEqual(records[1]["storage_cleaned"], 1)
 
+    def test_loop_runs_only_audited_retention_dry_run_on_schedule(self) -> None:
+        worker = SimpleNamespace(
+            run_once=Mock(
+                return_value=SimpleNamespace(
+                    claimed=False,
+                    job_id=None,
+                    status="idle",
+                    recovered=False,
+                )
+            )
+        )
+        retention = SimpleNamespace(
+            run=Mock(
+                return_value={
+                    "run_id": "00000000-0000-0000-0000-000000000001",
+                    "trigger": "scheduled",
+                    "mode": "dry_run",
+                    "tiers": {},
+                }
+            )
+        )
+        stdout = io.StringIO()
+        with (
+            contextlib.redirect_stdout(stdout),
+            patch("apps.worker.main.time.sleep", side_effect=KeyboardInterrupt),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            _run_real_worker_loop(
+                worker,
+                poll_seconds=2.0,
+                success_retention=retention,
+                retention_interval_seconds=86_400,
+            )
+
+        retention.run.assert_called_once_with(
+            execute=False,
+            trigger="scheduled",
+        )
+        records = [json.loads(line) for line in stdout.getvalue().splitlines()]
+        self.assertTrue(records[0]["success_retention_dry_run_enabled"])
+        self.assertEqual(
+            records[0]["success_retention_interval_seconds"],
+            86_400,
+        )
+        self.assertEqual(records[1]["operation"], "cleanup-success-job-storage")
+        self.assertEqual(records[1]["mode"], "dry_run")
+
     def test_poll_interval_reads_environment_and_rejects_busy_loop(self) -> None:
         with patch.dict(os.environ, {"RE3D_WORKER_POLL_SECONDS": "3.5"}, clear=True):
             self.assertEqual(_worker_poll_seconds(None), 3.5)
