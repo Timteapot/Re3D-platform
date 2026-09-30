@@ -24,6 +24,26 @@
 
 安装时 API 与 Worker 环境文件会被改为只允许 `Administrators`、`SYSTEM` 和对应服务 SID 读取。安装后普通开发账户可能无法继续读取这两个文件，这是预期的生产权限边界。
 
+## 0. 目标主机安装前预检
+
+在复制生产秘密或注册服务之前，先从提升权限的 PowerShell 7 运行只读主机预检：
+
+```powershell
+& .\deploy\production\windows-services\test-target-host-prerequisites.ps1 `
+    -DataRoot D:\Re3D-data-production `
+    -Re3DRoot D:\Re3D `
+    -WinSWPath C:\Install\WinSW-x64.exe `
+    -CaddyPath 'C:\Program Files\Caddy\caddy.exe' `
+    -PostgreSQLBin 'C:\Program Files\PostgreSQL\18\bin' `
+    -SiteAddress https://re3d.user-domain.cn `
+    -DatabaseHost 127.0.0.1 `
+    -ReportPath C:\Install\re3d-target-host-preflight.json
+```
+
+脚本不会安装软件、创建目录、修改注册表、打开端口或注册服务。它检查 Windows/管理员和 64 位进程、PowerShell 7、Git、Node.js、npm、项目 Python 3.12 虚拟环境、PostgreSQL 18 客户端、WinSW 2.12.0、Caddy 2.11.4、NVIDIA GPU、系统盘和数据盘空间、冻结 Re3D 提交、服务名与 80/443/8000 端口、数据库 TCP、公开 DNS 和常见待重启标记。JSON 报告只包含主机清单和稳定检查结果，不读取或输出数据库、JWT、Cookie、SMTP 密码。
+
+返回码 `0` 表示没有 blocker；返回码 `2` 表示仍存在安装阻断项。Windows 客户端版本或待重启状态会以 warning 呈现，其中待重启应在安装前处理。该检查面向尚未安装三个 Re3D 服务的全新目标主机；升级已有安装时端口和服务名会按预期报告冲突，应改走后续升级流程，而不是忽略报告。
+
 ## 1. 准备二进制与生产文件
 
 从官方 Release 获取 `WinSW-x64.exe` 2.12.0 和 Caddy 2.11.4，不要把它们提交到仓库。先完成生产前端构建、数据库迁移和 API/Worker 就绪检查：
@@ -147,6 +167,7 @@ Get-CimInstance Win32_Service |
 
 仓库已经验证服务包生成、源提交绑定、XML 结构、秘密隔离和清理，并提供安装后只读验收脚本，但当前开发机没有安装这些服务。目标服务器仍必须完成：
 
+- 运行安装前主机预检并归档无 blocker 的 JSON 报告；
 - 以管理员权限安装并确认三个 `StartName` 均为预期虚拟账户；
 - 重启服务器，确认自动启动顺序和 Caddy 外部可用性；
 - 人工终止一次子进程，确认 10/30/60 秒失败重启和日志连续性；

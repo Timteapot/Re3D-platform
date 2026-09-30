@@ -18,6 +18,8 @@
 
 生产数据库角色拆分、迁移、备份和临时恢复演练见 [`../postgres/README.md`](../postgres/README.md)。API/Worker 的 `DATABASE_URL` 只能使用 `re3d_runtime`，不能使用管理员或 `re3d_migrator`。
 
+目标 Windows 主机在生成或安装服务包前，应先执行 [`windows-services/test-target-host-prerequisites.ps1`](windows-services/test-target-host-prerequisites.ps1)。该脚本只读检查操作系统、提升权限、固定工具版本、GPU、磁盘、Re3D 基线、端口、数据库连通性、DNS 和待重启状态，并可归档无秘密 JSON 报告；具体参数和返回码见 [`windows-services/README.md`](windows-services/README.md)。
+
 ```powershell
 Copy-Item .env.production.example .env.production
 & .\deploy\production\check-production-readiness.ps1 -Component all

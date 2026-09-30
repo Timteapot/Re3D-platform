@@ -4,7 +4,7 @@ Re3D Platform 是基于 Re3D 三维重建管线的非商业学习与工程实践
 
 ## 当前状态
 
-阶段 0 的核心验收闭环已经完成，项目已完成阶段 4 的首个本机真实 GPU 闭环验收，并完成 Windows 单机生产拓扑的非公网验收，尚未进入公开部署阶段。
+核心功能闭环、首轮本机真实 GPU 验收和 Windows 单机生产拓扑的非公网验收已经完成。项目当前处于部署工程阶段：可进入目标 Windows 服务器安装和内部验收，但在公网安全、配额、集中监控、生产邮件以及真实主机故障恢复完成前，不具备公开发布条件。
 
 - Re3D 活动基线标签：`re3d-pipeline-v1.1.0`
 - Re3D 活动基线提交：`2c5ba174dae9fe53dcec8f7d8466793fdebf0c58`
@@ -14,7 +14,7 @@ Re3D Platform 是基于 Re3D 三维重建管线的非商业学习与工程实践
 - 平台代码目录：`D:\3Dreconstruction\Re3D-platform`
 - 运行数据目录：`D:\3Dreconstruction\Re3D-data`
 
-基线的完整哈希和验证结果见 [`config/pipeline-baseline.json`](config/pipeline-baseline.json)，总体实施计划见 [`PROJECT_PLAN.md`](PROJECT_PLAN.md)，平台直接依赖声明见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
+基线的完整哈希和验证结果见 [`config/pipeline-baseline.json`](config/pipeline-baseline.json)，总体实施计划见 [`PROJECT_PLAN.md`](PROJECT_PLAN.md)，平台直接依赖声明见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。当前完成度和待办以 [`docs/progress.md`](docs/progress.md) 为准，服务间数据流和模块边界以 [`docs/module-integration.md`](docs/module-integration.md) 为准。
 
 当前已经可以通过 React 页面注册、登录、恢复会话、上传真实 JPEG/PNG 输入并创建任务。development/test 的默认网页提交进入模拟队列并允许显式 real；production 由服务端强制创建 real 任务。独立的真实 Worker 在 PostgreSQL 租约下监督 Re3D 子进程，处理取消、总超时和租约丢失，并汇总三分支产物和结构健康评估。2026-09-25 已使用 11 张真实图片完成本机 GPU 闭环验收；任务详情页现可通过受所有权保护的稳定任务 API 下载清单内 GLB、OBJ、MTL 和纹理，并可在 Three.js 查看器中切换和交互预览三分支 GLB。任务 API 边界见 [`docs/job-api.md`](docs/job-api.md)，上传边界见 [`docs/image-uploads.md`](docs/image-uploads.md)，下载边界见 [`docs/artifact-downloads.md`](docs/artifact-downloads.md)，查看器边界见 [`docs/glb-viewer.md`](docs/glb-viewer.md)，实测证据见 [`docs/real-gpu-acceptance-2026-09-25.md`](docs/real-gpu-acceptance-2026-09-25.md)。
 
@@ -42,7 +42,7 @@ tests                    集成、端到端与测试夹具
 1. 复制 `.env.example` 为 `.env`，只在本机填写密钥和数据库凭据。
 2. 保证 `RE3D_ROOT` 指向已通过 `doctor.ps1` 检查的 Re3D 基线。
 3. 保证 `RE3D_DATA_ROOT` 位于代码仓库之外。
-4. 成功任务三层保留期已统一确定为 30 天，持续 Worker 默认每日执行受审计 dry-run；公开部署前仍需在目标服务器观察周期结果，并明确生产任务限额、存储配额、域名、TLS、邮件服务和备份策略。
+4. 成功任务原图、中间文件和产物三层保留期均为 30 天；持续 Worker 每 24 小时执行一次受审计 dry-run，实际删除只能通过人工双确认命令触发。
 
 本地邮箱验证与密码重置使用只绑定回环地址的 Mailpit：
 
@@ -61,7 +61,7 @@ tests                    集成、端到端与测试夹具
 
 脚本不会覆盖已有配置，且只输出不含秘密的就绪检查结果。说明见 [`deploy/development/README.md`](deploy/development/README.md)。
 
-生产配置模板、按 `api` / `worker` / `all` 区分的无秘密就绪检查、前端生产构建、API/Worker 启动入口、Caddy 同源代理和本机闭环验收见 [`deploy/production/README.md`](deploy/production/README.md)。生产 PostgreSQL 的管理员/迁移/运行权限拆分以及备份恢复流程见 [`deploy/postgres/README.md`](deploy/postgres/README.md)。这些检查和脚本用于提前拒绝开发库、管理员数据库账户、不安全 Cookie、非 HTTPS 公共地址、未加密 SMTP、漂移的 Re3D 基线和不足的数据盘；检查通过本身不代表允许开放公网。
+生产配置模板、按 `api` / `worker` / `all` 区分的无秘密就绪检查、前端生产构建、API/Worker 启动入口、Caddy 同源代理和本机闭环验收见 [`deploy/production/README.md`](deploy/production/README.md)。生产 PostgreSQL 的管理员/迁移/运行权限拆分以及备份恢复流程见 [`deploy/postgres/README.md`](deploy/postgres/README.md)。目标 Windows 主机安装前还应运行 [`test-target-host-prerequisites.ps1`](deploy/production/windows-services/test-target-host-prerequisites.ps1)，生成不含秘密的主机阻断项报告。这些检查用于提前拒绝开发库、管理员数据库账户、不安全 Cookie、非 HTTPS 公共地址、未加密 SMTP、漂移的 Re3D 基线、不兼容工具链和不足的数据盘；检查通过本身不代表允许开放公网。
 
 `.env`、用户数据、模型权重和运行产物不得提交到 Git。
 
@@ -88,7 +88,15 @@ Vite 开发服务器只绑定 `127.0.0.1:5173`，并将 `/api` 代理到本机 F
 
 ## 下一步
 
-运行契约、Windows Worker、三分支模拟器、PostgreSQL 租约队列、认证、数据库共享登录/注册/认证邮件请求限流、脱敏认证审计及保留期清理、邮箱验证与密码重置前后端闭环、未验证账号任务创建权限控制、真实图片上传、数据库共享任务提交限额、任务创建/取消审计、上传磁盘安全线、稳定任务访问 API、任务详情/SSE、受控真实 Re3D 子进程、产物汇总、首版结构评估、受鉴权产物下载、三分支 GLB 在线预览、真实任务资源采样、失败/取消任务文件自动清理、30 天成功任务分层保留、每日 dry-run 及运行审计、生产配置就绪检查、生产 PostgreSQL 权限/备份恢复合同、Windows 单机静态站点/API/持续 Worker/Caddy 非公网拓扑验收，以及绑定发布身份的 Windows 服务包、权限配置和安装后只读验收脚本已经完成。目标服务器服务安装与实测、生产邮件服务、管理员审计查询、生产限额定值、成功任务周期观察和人工删除验收、单用户存储配额、普通接口/IP 限流、集中资源监控告警及真实服务器备份仍是公开部署前置条件。
+当前按以下顺序推进，不把“代码已实现”与“公网可用”混为一谈：
+
+1. 在目标 Windows 服务器运行安装前只读预检，解决工具链、GPU、数据盘、端口、PostgreSQL、域名 DNS 和重启状态阻断项；
+2. 生成并安装绑定发布提交的 API、Worker、Caddy 服务包，完成服务重启、进程故障恢复、GPU 权限和真实域名 TLS 验收；
+3. 配置生产 SMTP、验证码、普通接口/IP 限流、单用户存储配额和管理员审计查询；
+4. 接入集中监控与告警，并在真实服务器执行备份恢复、并发压力和低磁盘演练；
+5. 观察多轮每日保留策略 dry-run，确认备份后再验收一次人工双确认删除。
+
+因此当前版本可用于目标服务器部署工程和内部验收，不应直接向公开互联网开放注册与重建。
 
 数据库队列的设计、初始化和当前边界见 [`docs/database-queue.md`](docs/database-queue.md)。
 失败/取消任务的自动文件清理、审计字段和人工重试命令见 [`docs/failed-job-storage-cleanup.md`](docs/failed-job-storage-cleanup.md)。

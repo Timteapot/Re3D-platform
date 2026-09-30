@@ -27,7 +27,7 @@
 | `/api/v1/development/simulated-jobs` | 已注册 | 不注册 |
 | `/api/v1/development/jobs` 兼容入口 | 已注册但不进入 OpenAPI | 不注册 |
 
-production 上传提交由服务端强制使用 `execution_mode=real`；客户端不能在生产环境创建模拟任务。稳定上传提交已接入数据库共享的单用户待处理任务数和滚动 24 小时次数限制；具体合同见 [`task-submission-policy.md`](task-submission-policy.md)。存储配额、普通接口/IP 限流、保留期和部署加固仍是公开启用前置条件。
+production 上传提交由服务端强制使用 `execution_mode=real`；客户端不能在生产环境创建模拟任务。稳定上传提交已接入数据库共享的单用户待处理任务数和滚动 24 小时次数限制；具体合同见 [`task-submission-policy.md`](task-submission-policy.md)。成功任务三层保留期已经固定为 30 天并接入每日受审计 dry-run；存储配额、普通接口/IP 限流、目标服务器周期观察和部署加固仍是公开启用前置条件。
 
 ## 响应边界
 
