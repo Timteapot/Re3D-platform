@@ -56,8 +56,9 @@ Mailpit 仅通过开发脚本作为独立 Docker 容器运行，不进入平台�
 |---|---:|---|---|---|
 | Caddy | 2.11.4 | 前端静态文件、同源反向代理、TLS 与安全响应头 | Apache-2.0 | [caddyserver/caddy](https://github.com/caddyserver/caddy) |
 | WinSW | 2.12.0 | 将 API、Worker 和 Caddy 前台入口包装为 Windows 服务 | MIT | [winsw/winsw](https://github.com/winsw/winsw) |
+| NVIDIA 显示驱动 / `nvidia-smi` | 由目标主机安装 | 只读查询 GPU 利用率、显存和温度 | NVIDIA 软件许可条款 | [NVSMI 官方说明](https://developer.nvidia.com/system-management-interface)；[NVIDIA EULA](https://docs.nvidia.com/cuda/eula/) |
 
-Caddy 和 WinSW 二进制均不提交到本仓库。Windows 非公网验收使用官方标准 Caddy 二进制；服务安装器要求 WinSW 2.12.0。真实服务器应从各自官方发行渠道独立取得二进制，并按其许可证保留声明。
+Caddy、WinSW 和 NVIDIA 驱动工具均不提交到本仓库。Windows 非公网验收使用官方标准 Caddy 二进制；服务安装器要求 WinSW 2.12.0。`nvidia-smi` 随目标主机 NVIDIA 驱动提供，Worker 只使用其查询能力，不修改 GPU 状态。真实服务器应从各自官方发行渠道独立取得二进制，并按其许可证保留声明。
 
 ## 分发边界
 
@@ -67,4 +68,4 @@ Caddy 和 WinSW 二进制均不提交到本仓库。Windows 非公网验收使�
 - 更换依赖版本、部署方式或项目用途时重新检查许可证；
 - 第三方软件按其许可证提供，项目不额外提供适销性或特定用途保证。
 
-最后核对日期：2026-09-29。
+最后核对日期：2026-09-30。

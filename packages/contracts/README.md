@@ -10,6 +10,7 @@
 | `pipeline-event` | Worker | API/进度投影器 | `pipeline-events.jsonl` |
 | `pipeline-result` | Worker | API、评估器 | `pipeline-result.json` |
 | `evaluation` | 评估器 | API、前端 | `evaluation.json` |
+| `resource-sample` | 真实 Worker | 私有运维诊断 | `resource-samples.jsonl` |
 
 Schema 使用 JSON Schema Draft 2020-12，`contract_version` 固定为 `1.0`。首期不允许普通用户改变分支或 Re3D 基线，因此请求 Schema 将三分支、标签、提交和配置哈希固定为常量。
 
@@ -22,7 +23,7 @@ python -m pip install -r requirements-dev.txt
 python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
-示例位于 `examples/v1/valid`。事件示例是 JSONL，每一行必须独立符合 `pipeline-event.schema.json`。
+示例位于 `examples/v1/valid`。事件和资源采样示例是 JSONL，每一行必须分别独立符合对应 Schema。资源采样是任务私有运维证据，不进入用户 API 或质量评分。
 
 ## 版本规则
 

@@ -28,6 +28,7 @@ apps/api                 FastAPI API
 apps/worker              GPU 任务执行器
 backend/re3d_adapter     Re3D 运行契约与产物解析
 backend/evaluation       自动评估规则
+backend/monitoring       真实任务私有资源采样
 packages/contracts       共享 Schema 与生成类型
 packages/ui              可选共享 UI 组件
 config                   固定基线和非敏感配置
@@ -86,7 +87,8 @@ Vite 开发服务器只绑定 `127.0.0.1:5173`，并将 `/api` 代理到本机 F
 
 ## 下一步
 
-运行契约、Windows Worker、三分支模拟器、PostgreSQL 租约队列、认证、数据库共享登录/注册/认证邮件请求限流、脱敏认证审计及保留期清理、邮箱验证与密码重置前后端闭环、未验证账号任务创建权限控制、真实图片上传、稳定任务访问 API、任务详情/SSE、受控真实 Re3D 子进程、产物汇总、首版结构评估、受鉴权产物下载、三分支 GLB 在线预览、失败/取消任务文件自动清理、生产配置就绪检查、生产 PostgreSQL 权限/备份恢复合同、Windows 单机静态站点/API/持续 Worker/Caddy 非公网拓扑验收，以及绑定发布身份的 Windows 服务包、权限配置和安装后只读验收脚本已经完成。目标服务器服务安装与实测、生产邮件服务、审计查询权限、任务配额、资源监控、真实服务器备份和成功任务数据保留策略仍是公开部署前置条件。
+运行契约、Windows Worker、三分支模拟器、PostgreSQL 租约队列、认证、数据库共享登录/注册/认证邮件请求限流、脱敏认证审计及保留期清理、邮箱验证与密码重置前后端闭环、未验证账号任务创建权限控制、真实图片上传、稳定任务访问 API、任务详情/SSE、受控真实 Re3D 子进程、产物汇总、首版结构评估、受鉴权产物下载、三分支 GLB 在线预览、真实任务资源采样、失败/取消任务文件自动清理、生产配置就绪检查、生产 PostgreSQL 权限/备份恢复合同、Windows 单机静态站点/API/持续 Worker/Caddy 非公网拓扑验收，以及绑定发布身份的 Windows 服务包、权限配置和安装后只读验收脚本已经完成。目标服务器服务安装与实测、生产邮件服务、审计查询权限、任务配额、集中资源监控告警、真实服务器备份和成功任务数据保留策略仍是公开部署前置条件。
 
 数据库队列的设计、初始化和当前边界见 [`docs/database-queue.md`](docs/database-queue.md)。
 失败/取消任务的自动文件清理、审计字段和人工重试命令见 [`docs/failed-job-storage-cleanup.md`](docs/failed-job-storage-cleanup.md)。
+真实任务 CPU、内存、数据盘和 GPU 私有采样契约见 [`docs/resource-monitoring.md`](docs/resource-monitoring.md)。

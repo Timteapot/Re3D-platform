@@ -256,7 +256,7 @@ export function WorkspacePage() {
         <div>
           <p className="eyebrow">RECONSTRUCTION WORKSPACE</p>
           <h1>你好，{auth.user?.username}</h1>
-          <p>上传真实 JPEG/PNG 输入并创建开发任务。当前 Worker 仍生成模拟三分支结果，不代表真实 GPU 重建已经执行。</p>
+          <p>上传真实 JPEG/PNG 输入并创建重建任务。开发环境默认使用模拟消费者，生产环境由服务端强制使用真实 Re3D；任务详情会明确标识执行模式。</p>
         </div>
         <span className="session-state">
           <i aria-hidden="true" /> 会话有效

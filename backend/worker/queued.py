@@ -11,6 +11,11 @@ from backend.db.heartbeat import LeaseHeartbeatLoop
 from backend.db.queue import JobClaim, JobQueue
 from backend.db.state_machine import JobStatus, TERMINAL_STATUSES
 from backend.evaluation import RealEvaluator, SimulationEvaluator
+from backend.monitoring import (
+    ResourceMonitor,
+    ResourceMonitorSettings,
+    ResourceSampler,
+)
 from backend.re3d_adapter.contracts import load_json_contract
 from backend.re3d_adapter.errors import (
     AdapterError,
@@ -147,6 +152,7 @@ class QueuedRealWorker:
         lease_seconds: int = 60,
         heartbeat_seconds: int = 20,
         process_poll_seconds: float = 0.25,
+        resource_monitor_settings: ResourceMonitorSettings | None = None,
         installation_verifier: Callable[
             [Path, dict[str, Any]], None
         ] = verify_re3d_installation,
@@ -160,6 +166,9 @@ class QueuedRealWorker:
         self.lease_seconds = lease_seconds
         self.heartbeat_seconds = heartbeat_seconds
         self.process_poll_seconds = process_poll_seconds
+        self.resource_monitor_settings = (
+            resource_monitor_settings or ResourceMonitorSettings.from_environment()
+        )
         self.installation_verifier = installation_verifier
 
     def run_once(self) -> QueuedJobOutcome:
@@ -226,6 +235,18 @@ class QueuedRealWorker:
                     )
 
             reporter = _RealProgressReporter(self.queue, claim, journal)
+            resource_monitor = ResourceMonitor(
+                layout.resolve("runtime/metrics/resource-samples.jsonl"),
+                sampler=ResourceSampler(
+                    data_root=self.data_root,
+                    job_id=job_id,
+                    attempt=claim.attempt,
+                    worker_id=self.worker_id,
+                    resource_key=self.resource_key,
+                    nvidia_smi_path=self.resource_monitor_settings.nvidia_smi_path,
+                ),
+                settings=self.resource_monitor_settings,
+            )
             _advance_to(self.queue, claim, JobStatus.SFM, progress=5)
             with LeaseHeartbeatLoop(
                 self.queue,
@@ -233,37 +254,38 @@ class QueuedRealWorker:
                 interval_seconds=self.heartbeat_seconds,
                 lease_seconds=self.lease_seconds,
             ) as heartbeat_loop:
-                outcome = RealPipelineRunner(
-                    layout,
-                    re3d_root=self.re3d_root,
-                    driver_python=self.driver_python,
-                    installation_verifier=self.installation_verifier,
-                ).run(
-                    cancel_requested=lambda: heartbeat_loop.cancel_requested,
-                    health_check=heartbeat_loop.raise_if_failed,
-                    on_step=reporter.on_step,
-                    poll_seconds=self.process_poll_seconds,
-                    timeout_seconds=_remaining_timeout_seconds(
-                        database_job["started_at"],
-                        request["limits"]["timeout_seconds"],
-                    ),
-                )
-                reporter.finish()
-                heartbeat_loop.raise_if_failed()
-                _advance_to(
-                    self.queue,
-                    claim,
-                    JobStatus.VALIDATING_OUTPUT,
-                    progress=94,
-                )
-                _advance_to(
-                    self.queue,
-                    claim,
-                    JobStatus.EVALUATING,
-                    progress=97,
-                )
-                RealEvaluator(layout).run()
-                heartbeat_loop.raise_if_failed()
+                with resource_monitor:
+                    outcome = RealPipelineRunner(
+                        layout,
+                        re3d_root=self.re3d_root,
+                        driver_python=self.driver_python,
+                        installation_verifier=self.installation_verifier,
+                    ).run(
+                        cancel_requested=lambda: heartbeat_loop.cancel_requested,
+                        health_check=heartbeat_loop.raise_if_failed,
+                        on_step=reporter.on_step,
+                        poll_seconds=self.process_poll_seconds,
+                        timeout_seconds=_remaining_timeout_seconds(
+                            database_job["started_at"],
+                            request["limits"]["timeout_seconds"],
+                        ),
+                    )
+                    reporter.finish()
+                    heartbeat_loop.raise_if_failed()
+                    _advance_to(
+                        self.queue,
+                        claim,
+                        JobStatus.VALIDATING_OUTPUT,
+                        progress=94,
+                    )
+                    _advance_to(
+                        self.queue,
+                        claim,
+                        JobStatus.EVALUATING,
+                        progress=97,
+                    )
+                    RealEvaluator(layout).run()
+                    heartbeat_loop.raise_if_failed()
             if journal is not None and not journal.has_terminal_event:
                 journal.append(
                     "job_succeeded",

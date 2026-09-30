@@ -8,7 +8,7 @@
 
 真实 dry-run 要求 `execution_mode: real`，会调用 Re3D `scripts/run_pipeline.py --dry-run`，但只打印预期命令，不运行 COLMAP、模型或 OpenMVS。它生成预检报告，不生成 `pipeline-result.json`，因此不能被解释为重建成功。
 
-真实队列执行使用独立命令 `run-real-queued-once`。没有该显式命令时，默认模拟 Worker 不会领取 real 任务。当前网页仍固定提交 simulated，real 模式只通过开发 API 显式请求，防止误启动耗时 GPU 作业。
+真实队列执行使用独立命令 `run-real-queued-once` 或持续的 `run-real-queued-loop`。没有该显式命令时，模拟 Worker 不会领取 real 任务。开发/测试环境的网页提交默认为 simulated，real 可由开发 API 显式请求；production 上传提交由服务端强制为 real。
 
 ## 模块职责
 
@@ -22,6 +22,7 @@
 | `simulation.py` | 模拟阶段、生成三分支 GLB、恢复检查点并汇总结果 |
 | `real.py` | 校验 Re3D Git/配置身份、执行 dry-run/真实管线、映射步骤并汇总产物 |
 | `process.py` | 以独立进程组运行 Re3D，监督取消、超时、租约健康并终止整棵子进程树 |
+| `backend/monitoring/resources.py` | 在真实任务期间采样 CPU、内存、数据盘和 NVIDIA GPU，写入私有 JSONL |
 | `settings.py` | 从参数或环境变量读取数据根目录、Worker 与 Re3D 位置 |
 | `backend/worker/queued.py` | 按 execution mode 领取任务、维持租约并推进数据库状态 |
 | `backend/jobs/cleanup.py` | 批量删除失败/取消任务目录，记录尝试和稳定错误码并安全重试 |
@@ -134,7 +135,7 @@ $env:RE3D_ROOT = "D:\3Dreconstruction\Re3D"
 
 ## 尚未实现
 
-- GPU/CPU/磁盘资源采样；
+- 集中资源监控、阈值告警和运维保留策略（任务级 CPU/内存/数据盘/GPU JSONL 采样已完成）；
 - handoff、连通分量、非流形边等更完整的真实评估指标；
 - 任意时刻进程崩溃后的部分文件修复。
 
@@ -142,6 +143,7 @@ $env:RE3D_ROOT = "D:\3Dreconstruction\Re3D"
 
 ## 下一步
 
-经过所有权和产物完整性复核的下载接口、前端 GLB 查看器，以及带数据库审计和安全重试的失败/取消任务目录清理已经实现。下一步补充资源采样、成功任务保留策略和公开部署所需的认证加固。API 仍只读取数据库投影和受控产物，不直接运行管线。
+经过所有权和产物完整性复核的下载接口、前端 GLB 查看器、任务级资源采样，以及带数据库审计和安全重试的失败/取消任务目录清理已经实现。下一步补充集中监控告警、成功任务保留策略和公开部署所需的认证加固。API 仍只读取数据库投影和受控产物，不直接运行管线。
 
 自动扫描频率、宽限期、数据库审计和手工重试流程见 [`failed-job-storage-cleanup.md`](failed-job-storage-cleanup.md)。
+真实任务私有资源样本、配置和保留语义见 [`resource-monitoring.md`](resource-monitoring.md)。

@@ -177,6 +177,19 @@ class QueuedRealWorkerTests(unittest.TestCase):
                 self.assertTrue(
                     any(event["type"] == "stage_started" for event in events)
                 )
+                resource_samples = [
+                    json.loads(line)
+                    for line in layout.resolve(
+                        "runtime/metrics/resource-samples.jsonl"
+                    ).read_text(encoding="utf-8").splitlines()
+                ]
+                self.assertGreaterEqual(len(resource_samples), 2)
+                self.assertTrue(
+                    all(sample["job_id"] == request["job_id"] for sample in resource_samples)
+                )
+                self.assertTrue(
+                    all(sample["status"] == "partial" for sample in resource_samples)
+                )
             finally:
                 engine.dispose()
 

@@ -127,6 +127,14 @@ class ProductionReadinessTests(unittest.TestCase):
                 "batch_size": 100,
             },
         )
+        self.assertEqual(
+            report["resource_monitor"],
+            {
+                "enabled": True,
+                "interval_seconds": 15,
+                "nvidia_smi_configured": False,
+            },
+        )
         self.assertNotIn("authentication", report)
         self.assertNotIn("smtp", report)
 

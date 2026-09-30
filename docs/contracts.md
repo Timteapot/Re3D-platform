@@ -14,6 +14,7 @@ API/编排器
        ↓
 Worker 获取租约并校验请求
   ├─ 追加 manifests/pipeline-events.jsonl
+  ├─ 追加 runtime/metrics/resource-samples.jsonl（仅 real）
   ├─ 调用固定版本 Re3D
   ├─ 校验并归档 output/A-v4、output/B-v2、output/C
   └─ 原子写入 manifests/pipeline-result.json
@@ -74,7 +75,11 @@ JSON Schema 能校验单个事件；序号连续性、合法状态转换和终�
 
 评分允许为 `null`。在评估规则尚未校准时，平台可以只显示 `pass/warning/fail/not_available` 和原始指标，不应为了页面效果强行生成总分。
 
-## 7. 路径与安全
+## 7. 资源采样契约
+
+`resource-samples.jsonl` 是真实 Worker 生成的任务私有运维证据。每行包含任务和尝试身份、CPU、物理内存、数据盘、NVIDIA GPU 指标及稳定错误码。它不作为用户 API 响应，不参与质量评分，采样失败也不会改变重建终态。
+
+## 8. 路径与安全
 
 所有跨组件契约只允许使用任务根目录内的正斜杠相对路径：
 
@@ -85,7 +90,7 @@ JSON Schema 能校验单个事件；序号连续性、合法状态转换和终�
 
 Worker 将相对路径解析为绝对路径后，还必须再次检查最终路径位于当前 `jobs/<job_uuid>` 内。Schema 校验是第一层约束，不能替代文件系统边界检查。
 
-## 8. 与当前 Re3D 的映射
+## 9. 与当前 Re3D 的映射
 
 | Re3D 现有信息 | v1 契约位置 |
 |---|---|
@@ -95,5 +100,6 @@ Worker 将相对路径解析为绝对路径后，还必须再次检查最终路�
 | `artifact_manifest.json` | result 分支 artifacts |
 | `outputs/<scene>/validation.json` | result output validation、evaluation mesh/artifacts |
 | CLI 阶段输出 | 由适配器转换为版本化 event，不直接向前端透传 |
+| Windows/Linux 主机计数器与 `nvidia-smi` | 任务私有 `resource-sample` JSONL |
 
-下一实现步骤是编写 Windows Worker 适配器：读取请求、校验基线、把任务相对目录映射到 Re3D、生成结构化事件并归一化结果。该步骤需要对 Re3D 增加可配置的工作/输出/日志根目录，不能继续依赖算法仓库下固定的 `work`、`outputs` 和 `logs`。
+当前 Windows Worker 已完成上述请求校验、隔离目录、事件、结果、评估和资源采样接入。后续契约工作主要是保持向后兼容，并在接入集中监控时不向用户侧泄露主机级运维信息。

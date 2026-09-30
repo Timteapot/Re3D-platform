@@ -23,6 +23,7 @@ from backend.db.runtime import (
     create_database_engine,
 )
 from backend.jobs import FailedJobCleanupSettings
+from backend.monitoring import ResourceMonitorSettings
 from backend.re3d_adapter.real import verify_re3d_installation
 from backend.re3d_adapter.settings import Re3DSettings, WorkerSettings
 from backend.uploads import UploadSettings
@@ -80,6 +81,7 @@ def check_local_readiness() -> dict[str, Any]:
         )
 
     worker = WorkerSettings.from_environment()
+    resource_monitor = ResourceMonitorSettings.from_environment()
     if not worker.data_root.is_dir():
         raise ValueError("RE3D_DATA_ROOT must be an existing directory")
     if not os.access(worker.data_root, os.W_OK):
@@ -114,6 +116,11 @@ def check_local_readiness() -> dict[str, Any]:
             "tag": baseline["tag"],
         },
         "data_root": str(worker.data_root),
+        "resource_monitor": {
+            "enabled": resource_monitor.enabled,
+            "interval_seconds": resource_monitor.interval_seconds,
+            "nvidia_smi_configured": resource_monitor.nvidia_smi_path is not None,
+        },
         "smtp": smtp_summary,
     }
 
@@ -167,6 +174,7 @@ def check_production_readiness(
     if component in {"worker", "all"}:
         scheduler = SchedulerSettings.from_environment()
         failed_job_cleanup = FailedJobCleanupSettings.from_environment()
+        resource_monitor = ResourceMonitorSettings.from_environment()
         response["scheduler"] = {
             "resource_key": scheduler.resource_key,
             "lease_seconds": scheduler.lease_seconds,
@@ -176,6 +184,11 @@ def check_production_readiness(
             "grace_minutes": failed_job_cleanup.grace_minutes,
             "interval_seconds": failed_job_cleanup.interval_seconds,
             "batch_size": failed_job_cleanup.batch_size,
+        }
+        response["resource_monitor"] = {
+            "enabled": resource_monitor.enabled,
+            "interval_seconds": resource_monitor.interval_seconds,
+            "nvidia_smi_configured": resource_monitor.nvidia_smi_path is not None,
         }
         response["re3d"] = _check_re3d_installation()
 
