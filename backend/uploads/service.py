@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from backend.db.models import JobUpload, JobUploadImage, ReconstructionJob
 from backend.db.queue import JobQueue
+from backend.jobs.policy import TaskSubmissionPolicy, TaskSubmissionSettings
 from backend.re3d_adapter.contracts import validate_contract
 from backend.re3d_adapter.events import utc_now
 from backend.re3d_adapter.io import atomic_write_json, sha256_file
@@ -53,12 +54,14 @@ class UploadService:
         *,
         data_root: Path,
         settings: UploadSettings | None = None,
+        submission_settings: TaskSubmissionSettings | None = None,
         baseline_path: Path = DEFAULT_BASELINE_PATH,
     ) -> None:
         self.sessions = session_factory
         self.queue = queue
         self.data_root = data_root.expanduser().resolve()
         self.settings = settings or UploadSettings()
+        self.submission_policy = TaskSubmissionPolicy(submission_settings)
         self.baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
 
     def create(
@@ -447,6 +450,14 @@ class UploadService:
                 if len(images) != upload.image_count:
                     raise UploadConflictError("upload image count is inconsistent")
 
+                # Locking the owning user serializes concurrent submissions for
+                # that account on PostgreSQL. The job insert stays in this same
+                # transaction, so a later submit observes the committed job.
+                self.submission_policy.enforce_in_session(
+                    session,
+                    user_id=user_id,
+                )
+
                 layout = TaskLayout.from_data_root(self.data_root, str(upload.id))
                 manifest = _build_manifest(layout, images, upload.total_bytes)
                 manifest_path = layout.resolve("input/input-manifest.json")
@@ -473,6 +484,13 @@ class UploadService:
                     config_sha256=request["pipeline"]["config_sha256"],
                     input_manifest_sha256=manifest_sha256,
                     idempotency_key=queue_key,
+                )
+                self.submission_policy.record_in_session(
+                    session,
+                    action="job_submitted",
+                    user_id=user_id,
+                    job_id=upload.id,
+                    execution_mode=execution_mode,
                 )
                 now = _database_now(session)
                 upload.status = "submitted"

@@ -15,7 +15,7 @@ from .errors import (
     LeaseLostError,
     QueueConflictError,
 )
-from .models import ReconstructionJob, WorkerLease
+from .models import ReconstructionJob, TaskActionEvent, WorkerLease
 from .state_machine import JobStatus, TERMINAL_STATUSES, assert_transition
 
 
@@ -297,7 +297,10 @@ class JobQueue:
         job_id: uuid.UUID,
         *,
         user_id: uuid.UUID | None = None,
+        audit: bool = False,
     ) -> JobStatus:
+        if audit and user_id is None:
+            raise ValueError("audited cancellation requires user_id")
         with self.session_factory.begin() as session:
             now = _database_now(session)
             query = select(ReconstructionJob).where(ReconstructionJob.id == job_id)
@@ -309,6 +312,7 @@ class JobQueue:
             status = JobStatus(job.status)
             if status in TERMINAL_STATUSES:
                 return status
+            changed = False
             if status in {
                 JobStatus.DRAFT,
                 JobStatus.UPLOADING,
@@ -318,10 +322,31 @@ class JobQueue:
                 assert_transition(status, JobStatus.CANCELLED)
                 job.status = JobStatus.CANCELLED.value
                 job.finished_at = now
+                changed = True
             else:
-                job.cancel_requested = True
+                if not job.cancel_requested:
+                    job.cancel_requested = True
+                    changed = True
+            if not changed:
+                return JobStatus(job.status)
             job.updated_at = now
             job.version += 1
+            if audit:
+                session.add(
+                    TaskActionEvent(
+                        id=uuid.uuid4(),
+                        action="cancel_requested",
+                        outcome="success",
+                        user_id=user_id,
+                        job_id=job.id,
+                        execution_mode=job.execution_mode,
+                        reason_code=(
+                            "CANCELLED_BEFORE_EXECUTION"
+                            if JobStatus(job.status) is JobStatus.CANCELLED
+                            else "CANCELLATION_SIGNALLED"
+                        ),
+                    )
+                )
             return JobStatus(job.status)
 
     def get_job(

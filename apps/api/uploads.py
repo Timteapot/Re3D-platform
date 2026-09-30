@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from apps.api.auth import CurrentUserDependency, VerifiedUserDependency
 from backend.auth import UserIdentity
+from backend.jobs import TaskSubmissionLimitError
 from backend.uploads import (
     UploadConflictError,
     UploadNotFoundError,
@@ -215,6 +216,15 @@ def create_upload_router(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except UploadValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except TaskSubmissionLimitError as exc:
+            headers = {"X-Re3D-Error-Code": exc.reason_code}
+            if exc.retry_after_seconds is not None:
+                headers["Retry-After"] = str(exc.retry_after_seconds)
+            raise HTTPException(
+                status_code=429,
+                detail=str(exc),
+                headers=headers,
+            ) from exc
         return SubmittedJobResponse(
             job_id=job["id"],
             status=job["status"],

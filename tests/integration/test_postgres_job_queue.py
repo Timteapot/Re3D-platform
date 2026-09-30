@@ -16,6 +16,12 @@ from backend.db.models import ReconstructionJob, User, WorkerLease
 from backend.db.queue import JobClaim, JobQueue
 from backend.db.state_machine import JobStatus
 from backend.jobs.cleanup import FailedJobCleanupSettings, FailedJobStorageCleaner
+from backend.jobs.policy import (
+    PENDING_LIMIT_CODE,
+    TaskSubmissionLimitError,
+    TaskSubmissionPolicy,
+    TaskSubmissionSettings,
+)
 from tests.integration.postgres_support import validated_test_database_url
 
 
@@ -168,6 +174,64 @@ class PostgreSQLJobQueueIntegrationTests(unittest.TestCase):
             self.queue.heartbeat(first_claim)
         self.queue.advance(recovered, JobStatus.SFM, progress=10)
 
+    def test_concurrent_user_submissions_are_serialized_by_policy(self) -> None:
+        policy = TaskSubmissionPolicy(
+            TaskSubmissionSettings(
+                max_pending_jobs=1,
+                max_submissions_per_24h=2,
+            )
+        )
+        first_ready = threading.Event()
+        second_started = threading.Event()
+        release_first = threading.Event()
+        results: list[str] = []
+        failures: list[BaseException] = []
+        job_ids = [uuid.uuid4(), uuid.uuid4()]
+        self.job_ids = getattr(self, "job_ids", []) + job_ids
+
+        def enqueue_with_policy(index: int) -> None:
+            try:
+                if index == 1:
+                    first_ready.wait(timeout=5)
+                    second_started.set()
+                with self.sessions.begin() as session:
+                    policy.enforce_in_session(session, user_id=self.user_id)
+                    self.queue.enqueue_in_session(
+                        session,
+                        job_id=job_ids[index],
+                        user_id=self.user_id,
+                        execution_mode="simulated",
+                        pipeline_tag="re3d-pipeline-v1.1.0",
+                        pipeline_commit=PIPELINE_COMMIT,
+                        config_sha256=CONFIG_SHA256,
+                        input_manifest_sha256="b" * 64,
+                        idempotency_key=uuid.uuid4().hex * 2,
+                    )
+                    if index == 0:
+                        first_ready.set()
+                        release_first.wait(timeout=5)
+                results.append("accepted")
+            except TaskSubmissionLimitError as exc:
+                results.append(exc.reason_code)
+            except BaseException as exc:  # pragma: no cover - diagnostic path
+                failures.append(exc)
+
+        workers = [
+            threading.Thread(target=enqueue_with_policy, args=(index,))
+            for index in range(2)
+        ]
+        for worker in workers:
+            worker.start()
+        self.assertTrue(first_ready.wait(timeout=5))
+        self.assertTrue(second_started.wait(timeout=5))
+        release_first.set()
+        for worker in workers:
+            worker.join(timeout=10)
+
+        self.assertFalse(any(worker.is_alive() for worker in workers))
+        self.assertEqual(failures, [])
+        self.assertCountEqual(results, ["accepted", PENDING_LIMIT_CODE])
+
     def test_failed_job_storage_cleanup_is_audited(self) -> None:
         job_id = self.enqueue(priority=1)
         task_root = self.data_root / "jobs" / str(job_id)
@@ -184,6 +248,9 @@ class PostgreSQLJobQueueIntegrationTests(unittest.TestCase):
             JobStatus.FAILED_PIPELINE,
             error_code="POSTGRES_CLEANUP_TEST",
         )
+        terminal_snapshot = self.queue.get_job(job_id)
+        finished_at = terminal_snapshot["finished_at"]
+        assert finished_at is not None
 
         cleaner = FailedJobStorageCleaner(
             self.sessions,
@@ -194,7 +261,10 @@ class PostgreSQLJobQueueIntegrationTests(unittest.TestCase):
                 batch_size=10,
             ),
         )
-        report = cleaner.cleanup_terminal_jobs(grace_minutes=0)
+        report = cleaner.cleanup_terminal_jobs(
+            now=finished_at + timedelta(seconds=1),
+            grace_minutes=0,
+        )
 
         self.assertEqual(report["storage_cleaned"], 1)
         self.assertFalse(task_root.exists())

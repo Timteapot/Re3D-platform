@@ -22,7 +22,7 @@ from backend.db.runtime import (
     SchedulerSettings,
     create_database_engine,
 )
-from backend.jobs import FailedJobCleanupSettings
+from backend.jobs import FailedJobCleanupSettings, TaskSubmissionSettings
 from backend.monitoring import ResourceMonitorSettings
 from backend.re3d_adapter.real import verify_re3d_installation
 from backend.re3d_adapter.settings import Re3DSettings, WorkerSettings
@@ -40,6 +40,9 @@ def check_local_readiness() -> dict[str, Any]:
         raise ValueError("APP_ENV must be development for local readiness checks")
 
     AuthSettings.from_environment(environment=environment)
+    task_submission = TaskSubmissionSettings.from_environment(
+        environment=environment
+    )
     email = AuthEmailSettings.from_environment(environment=environment)
     if email.host is None:
         raise ValueError("SMTP_HOST is required for local email acceptance")
@@ -121,6 +124,12 @@ def check_local_readiness() -> dict[str, Any]:
             "interval_seconds": resource_monitor.interval_seconds,
             "nvidia_smi_configured": resource_monitor.nvidia_smi_path is not None,
         },
+        "task_submission": {
+            "max_pending_jobs": task_submission.max_pending_jobs,
+            "max_submissions_per_24h": (
+                task_submission.max_submissions_per_24h
+            ),
+        },
         "smtp": smtp_summary,
     }
 
@@ -155,6 +164,9 @@ def check_production_readiness(
         email = AuthEmailSettings.from_environment(environment=environment)
         _validate_production_email_identity(email)
         uploads = UploadSettings.from_environment()
+        task_submission = TaskSubmissionSettings.from_environment(
+            environment=environment
+        )
         response["authentication"] = {
             "cookie_secure": auth.cookie_secure,
             "trusted_proxy_network_count": len(auth.trusted_proxy_cidrs),
@@ -165,6 +177,12 @@ def check_production_readiness(
             "max_file_bytes": uploads.max_file_bytes,
             "max_total_bytes": uploads.max_total_bytes,
             "max_pixels": uploads.max_pixels,
+        }
+        response["task_submission"] = {
+            "max_pending_jobs": task_submission.max_pending_jobs,
+            "max_submissions_per_24h": (
+                task_submission.max_submissions_per_24h
+            ),
         }
 
     database = DatabaseSettings.from_environment()

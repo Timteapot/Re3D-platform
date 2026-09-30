@@ -6,6 +6,7 @@ import json
 import tempfile
 import unittest
 import uuid
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -15,8 +16,14 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from apps.worker.main import main as worker_main
-from backend.db.models import Base, JobUpload
+from backend.db.models import Base, JobUpload, TaskActionEvent, User
 from backend.db.queue import JobQueue
+from backend.jobs import (
+    PENDING_LIMIT_CODE,
+    SUBMISSION_WINDOW_LIMIT_CODE,
+    TaskSubmissionLimitError,
+    TaskSubmissionSettings,
+)
 from backend.uploads import (
     UploadConflictError,
     UploadNotFoundError,
@@ -37,6 +44,16 @@ class UploadServiceTests(unittest.TestCase):
         self.engine = create_engine(self.database_url)
         Base.metadata.create_all(self.engine)
         self.sessions = sessionmaker(bind=self.engine, expire_on_commit=False)
+        self.user_id = uuid.uuid4()
+        with self.sessions.begin() as session:
+            session.add(
+                User(
+                    id=self.user_id,
+                    username="upload-unit-user",
+                    email="upload-unit@example.com",
+                    password_hash="not-used-by-upload-tests",
+                )
+            )
         self.queue = JobQueue(self.sessions)
         self.service = UploadService(
             self.sessions,
@@ -48,7 +65,6 @@ class UploadServiceTests(unittest.TestCase):
                 max_pixels=1_000_000,
             ),
         )
-        self.user_id = uuid.uuid4()
 
     def tearDown(self) -> None:
         self.engine.dispose()
@@ -191,6 +207,108 @@ class UploadServiceTests(unittest.TestCase):
                 user_id=self.user_id,
                 execution_mode="simulated",
             )
+
+    def test_submission_limits_and_task_action_audit(self) -> None:
+        service = UploadService(
+            self.sessions,
+            self.queue,
+            data_root=self.data_root,
+            settings=UploadSettings(
+                max_file_bytes=4096,
+                max_total_bytes=20_000,
+                max_pixels=1_000_000,
+            ),
+            submission_settings=TaskSubmissionSettings(
+                max_pending_jobs=1,
+                max_submissions_per_24h=2,
+            ),
+        )
+
+        first = self._prepare_upload(service, "limited-submission-001")
+        first_job = service.submit(
+            upload_id=first["upload_id"],
+            user_id=self.user_id,
+        )
+
+        second = self._prepare_upload(service, "limited-submission-002")
+        with self.assertRaises(TaskSubmissionLimitError) as pending_context:
+            service.submit(
+                upload_id=second["upload_id"],
+                user_id=self.user_id,
+            )
+        self.assertEqual(
+            pending_context.exception.reason_code,
+            PENDING_LIMIT_CODE,
+        )
+        self.assertEqual(
+            service.get(
+                upload_id=second["upload_id"],
+                user_id=self.user_id,
+            )["status"],
+            "uploading",
+        )
+
+        self.queue.request_cancel(
+            first_job["id"],
+            user_id=self.user_id,
+            audit=True,
+        )
+        second_job = service.submit(
+            upload_id=second["upload_id"],
+            user_id=self.user_id,
+        )
+        self.queue.request_cancel(
+            second_job["id"],
+            user_id=self.user_id,
+            audit=True,
+        )
+        # Repeating an already-applied cancellation is idempotent and does not
+        # append another audit row.
+        self.queue.request_cancel(
+            second_job["id"],
+            user_id=self.user_id,
+            audit=True,
+        )
+
+        third = self._prepare_upload(service, "limited-submission-003")
+        with self.assertRaises(TaskSubmissionLimitError) as daily_context:
+            service.submit(
+                upload_id=third["upload_id"],
+                user_id=self.user_id,
+            )
+        self.assertEqual(
+            daily_context.exception.reason_code,
+            SUBMISSION_WINDOW_LIMIT_CODE,
+        )
+        self.assertIsNotNone(daily_context.exception.retry_after_seconds)
+
+        with self.sessions() as session:
+            events = list(
+                session.query(TaskActionEvent)
+                .order_by(TaskActionEvent.occurred_at, TaskActionEvent.id)
+            )
+        self.assertEqual(
+            Counter(event.action for event in events),
+            Counter({"job_submitted": 2, "cancel_requested": 2}),
+        )
+
+    def _prepare_upload(
+        self,
+        service: UploadService,
+        idempotency_token: str,
+    ) -> dict:
+        upload, _ = service.create(
+            user_id=self.user_id,
+            idempotency_token=idempotency_token,
+        )
+        for index, color in enumerate(((70, 10, 10), (10, 70, 10), (10, 10, 70))):
+            service.add_image(
+                upload_id=upload["upload_id"],
+                user_id=self.user_id,
+                source=io.BytesIO(self.png_bytes(color)),
+                original_name=f"limited-{index}.png",
+            )
+        return upload
 
     def test_delete_image_and_cancel_remove_mutable_upload_storage(self) -> None:
         upload, _ = self.service.create(

@@ -30,7 +30,7 @@ Copy-Item .env.production.example .env.production
 & .\deploy\production\check-production-readiness.ps1 -Component worker
 ```
 
-- `api`：检查生产认证约束、HTTPS 公共地址、上传限制、SMTP STARTTLS、受限 PostgreSQL、迁移版本和数据盘。
+- `api`：检查生产认证约束、HTTPS 公共地址、上传限制、显式任务提交限额、SMTP STARTTLS、受限 PostgreSQL、迁移版本和数据盘。
 - `worker`：不要求 JWT/SMTP 密钥，检查受限 PostgreSQL、租约参数、数据盘、资源采样配置、固定 Re3D tag/commit/config 和驱动 Python。
 - `all`：执行两组检查，适用于首个单机 Windows 生产验收环境。
 
@@ -89,7 +89,7 @@ Copy-Item .env.production.example .env.production
 - 在真实目标 PostgreSQL 上执行已验收的建库/迁移脚本，并完成一次异地备份恢复演练；
 - 在目标服务器安装已生成的 API、Worker 和 Caddy Windows 服务，并完成重启、故障恢复、GPU 与证书权限验收；
 - 使用真实域名验证公网 DNS、Caddy 自动 TLS、80/443 防火墙边界和外部访问；
-- 任务并发、每日次数、存储配额及接口限流；
+- 确认待处理任务数和每日次数的生产取值，并补齐存储配额及普通接口/IP 限流；
 - 成功任务数据保留期和对应清理执行器（失败/取消任务已由 Worker 自动清理）；
 - 将已有任务级 GPU、CPU、内存和数据盘样本接入集中监控与告警；
 - 生产 SMTP、验证码/防滥用策略和隐私说明验收。

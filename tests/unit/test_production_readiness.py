@@ -35,6 +35,8 @@ class ProductionReadinessTests(unittest.TestCase):
             ),
             "JWT_SECRET": secret,
             "REFRESH_COOKIE_SECURE": "true",
+            "RE3D_USER_MAX_PENDING_JOBS": "2",
+            "RE3D_USER_MAX_SUBMISSIONS_PER_24H": "10",
             "SMTP_FROM": "no-reply@user-domain.cn",
             "SMTP_HOST": "smtp.mail-provider.cn",
             "SMTP_PASSWORD": "smtp-secret",
@@ -49,7 +51,7 @@ class ProductionReadinessTests(unittest.TestCase):
                 return_value={
                     "name": "re3d_platform",
                     "role": "re3d_runtime",
-                    "migration": "0008_failed_job_storage_cleanup",
+                    "migration": "0009_task_submission_policy",
                 },
             ),
             patch(
@@ -78,6 +80,13 @@ class ProductionReadinessTests(unittest.TestCase):
         self.assertNotIn(secret, serialized)
         self.assertNotIn("database-secret", serialized)
         self.assertNotIn("smtp-secret", serialized)
+        self.assertEqual(
+            report["task_submission"],
+            {
+                "max_pending_jobs": 2,
+                "max_submissions_per_24h": 10,
+            },
+        )
 
     def test_worker_check_does_not_require_web_or_email_secrets(self) -> None:
         environment = {
@@ -94,7 +103,7 @@ class ProductionReadinessTests(unittest.TestCase):
                 return_value={
                     "name": "re3d_platform",
                     "role": "re3d_runtime",
-                    "migration": "0008_failed_job_storage_cleanup",
+                    "migration": "0009_task_submission_policy",
                 },
             ),
             patch(

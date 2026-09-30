@@ -208,6 +208,8 @@ try {
         "UPLOAD_MAX_FILE_BYTES=26214400",
         "UPLOAD_MAX_TOTAL_BYTES=1073741824",
         "UPLOAD_MAX_PIXELS=50000000",
+        "RE3D_USER_MAX_PENDING_JOBS=2",
+        "RE3D_USER_MAX_SUBMISSIONS_PER_24H=10",
         "SMTP_HOST=127.0.0.1",
         "SMTP_PORT=1",
         "SMTP_FROM=no-reply@acceptance.local",

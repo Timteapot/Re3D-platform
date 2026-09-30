@@ -59,6 +59,9 @@ class User(Base):
         cascade="all, delete-orphan",
     )
     auth_events: Mapped[list[AuthEvent]] = relationship(back_populates="user")
+    task_action_events: Mapped[list[TaskActionEvent]] = relationship(
+        back_populates="user"
+    )
     auth_action_tokens: Mapped[list[AuthActionToken]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
@@ -171,6 +174,55 @@ class AuthThrottleBucket(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )
+
+
+class TaskActionEvent(Base):
+    __tablename__ = "task_action_events"
+    __table_args__ = (
+        CheckConstraint(
+            "action IN ('job_submitted', 'cancel_requested')",
+            name="ck_task_action_events_action",
+        ),
+        CheckConstraint(
+            "outcome IN ('success', 'blocked', 'reuse')",
+            name="ck_task_action_events_outcome",
+        ),
+        CheckConstraint(
+            "execution_mode IN ('simulated', 'real')",
+            name="ck_task_action_events_execution_mode",
+        ),
+        Index(
+            "ix_task_action_events_user_occurred",
+            "user_id",
+            "occurred_at",
+        ),
+        Index(
+            "ix_task_action_events_job_occurred",
+            "job_id",
+            "occurred_at",
+        ),
+        Index(
+            "ix_task_action_events_action_occurred",
+            "action",
+            "occurred_at",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    action: Mapped[str] = mapped_column(String(24), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("users.id", ondelete="SET NULL"),
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    execution_mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason_code: Mapped[str | None] = mapped_column(String(64))
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+    user: Mapped[User | None] = relationship(back_populates="task_action_events")
 
 
 class AuthRegistrationBucket(Base):

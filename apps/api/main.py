@@ -27,6 +27,7 @@ from backend.db.runtime import (
     create_database_engine,
     create_session_factory,
 )
+from backend.jobs import TaskSubmissionSettings
 from backend.jobs.development import DevelopmentJobService
 from backend.uploads import UploadService, UploadSettings
 
@@ -67,6 +68,9 @@ def build_services(*, environment: str) -> AppServices:
         queue,
         data_root=Path(configured_data_root),
         settings=UploadSettings.from_environment(),
+        submission_settings=TaskSubmissionSettings.from_environment(
+            environment=environment
+        ),
     )
     return AppServices(engine, queue, development_jobs, auth, uploads)
 

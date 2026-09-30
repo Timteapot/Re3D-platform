@@ -18,6 +18,7 @@ from apps.worker.main import main as worker_main
 from backend.auth import AuthService, AuthSettings
 from backend.db.models import AuthEvent, Base, ReconstructionJob, User
 from backend.db.queue import JobQueue
+from backend.jobs import TaskSubmissionPolicy, TaskSubmissionSettings
 from backend.jobs.development import DevelopmentJobService
 from backend.uploads import UploadService
 
@@ -748,6 +749,92 @@ class ApiWorkerFlowTests(unittest.TestCase):
             ).json(),
             [],
         )
+
+    def test_upload_submission_limits_return_stable_429_contract(self) -> None:
+        self.services.uploads.submission_policy = TaskSubmissionPolicy(
+            TaskSubmissionSettings(
+                max_pending_jobs=1,
+                max_submissions_per_24h=2,
+            )
+        )
+
+        def prepare(token: str, color_offset: int) -> str:
+            created = self.client.post(
+                "/api/v1/uploads",
+                json={"idempotency_key": token},
+                headers=self.auth_headers(self.access_token),
+            )
+            self.assertEqual(created.status_code, 201)
+            upload_id = created.json()["upload_id"]
+            for index in range(3):
+                uploaded = self.client.post(
+                    f"/api/v1/uploads/{upload_id}/images",
+                    files={
+                        "file": (
+                            f"limit-{index}.png",
+                            self.png_bytes(
+                                (
+                                    color_offset + index,
+                                    40 + index,
+                                    80 + index,
+                                )
+                            ),
+                            "image/png",
+                        )
+                    },
+                    headers=self.auth_headers(self.access_token),
+                )
+                self.assertEqual(uploaded.status_code, 201)
+            return upload_id
+
+        first_id = prepare("limit-api-upload-001", 10)
+        first = self.client.post(
+            f"/api/v1/uploads/{first_id}/submit",
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(first.status_code, 202)
+
+        second_id = prepare("limit-api-upload-002", 20)
+        pending = self.client.post(
+            f"/api/v1/uploads/{second_id}/submit",
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(pending.status_code, 429)
+        self.assertEqual(
+            pending.headers["x-re3d-error-code"],
+            "PENDING_JOB_LIMIT_REACHED",
+        )
+        self.assertEqual(
+            pending.json()["detail"],
+            "pending reconstruction job limit reached",
+        )
+
+        cancelled = self.client.post(
+            f"/api/v1/jobs/{first_id}/cancel",
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(cancelled.status_code, 200)
+        second = self.client.post(
+            f"/api/v1/uploads/{second_id}/submit",
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(second.status_code, 202)
+        self.client.post(
+            f"/api/v1/jobs/{second_id}/cancel",
+            headers=self.auth_headers(self.access_token),
+        )
+
+        third_id = prepare("limit-api-upload-003", 30)
+        daily = self.client.post(
+            f"/api/v1/uploads/{third_id}/submit",
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(daily.status_code, 429)
+        self.assertEqual(
+            daily.headers["x-re3d-error-code"],
+            "SUBMISSION_WINDOW_LIMIT_REACHED",
+        )
+        self.assertGreater(int(daily.headers["retry-after"]), 0)
 
     def test_real_submission_is_explicit_and_simulation_worker_does_not_claim_it(self) -> None:
         created = self.client.post(

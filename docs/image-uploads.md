@@ -30,10 +30,11 @@
 
 1. 锁定上传会话；
 2. 验证至少三张图片以及数据库计数；
-3. 重新检查目录文件集合、大小和 SHA-256；
-4. 原子写入 `input-manifest.json` 和 `pipeline-request.json`；
-5. 插入 `queued` 任务；
-6. 把上传状态改为 `submitted`。
+3. 锁定所属用户，并检查非终态任务数与滚动 24 小时提交数；
+4. 重新检查目录文件集合、大小和 SHA-256；
+5. 原子写入 `input-manifest.json` 和 `pipeline-request.json`；
+6. 插入 `queued` 任务和 `job_submitted` 审计；
+7. 把上传状态改为 `submitted`。
 
 因此未完成的上传不会被 Worker 领取，数据库也不会出现已经提交但没有队列任务的正常状态。
 
@@ -59,6 +60,8 @@ UPLOAD_MAX_TOTAL_BYTES=1073741824
 UPLOAD_MAX_PIXELS=50000000
 UPLOAD_STALE_AFTER_HOURS=24
 UPLOAD_CLEANUP_BATCH_SIZE=100
+RE3D_USER_MAX_PENDING_JOBS=3
+RE3D_USER_MAX_SUBMISSIONS_PER_24H=20
 ```
 
 服务会拒绝不合理的配置值。反向代理仍需设置请求体大小、请求速率和连接超时；应用层限制不能替代代理层的早期拒绝。
@@ -80,7 +83,7 @@ cd D:\3Dreconstruction\Re3D-platform
 - 分块/断点续传和大文件对象存储；
 - EXIF 隐私元数据清除策略；当前保留原始图片内容；
 - 浏览器刷新后恢复未提交上传会话；
-- 用户配额、并发数和提交频率限制；
+- 存储容量配额，以及上传/查询/下载等普通接口的账户与 IP 限流；
 - 上传病毒扫描、隔离进程解码和代理层请求限制；
 - 真实图片质量预检；
 - 任务详情、取消、SSE 进度和结果页面。

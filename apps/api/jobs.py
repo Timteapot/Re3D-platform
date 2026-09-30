@@ -359,7 +359,7 @@ def create_job_router(
         user: UserIdentity = Depends(current_user),
     ) -> JobResponse:
         try:
-            queue.request_cancel(job_id, user_id=user.id)
+            queue.request_cancel(job_id, user_id=user.id, audit=True)
             snapshot = queue.get_job(job_id, user_id=user.id)
         except JobNotFoundError as exc:
             raise HTTPException(status_code=404, detail="job not found") from exc
