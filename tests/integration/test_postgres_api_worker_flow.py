@@ -6,6 +6,7 @@ import json
 import tempfile
 import unittest
 import uuid
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -21,10 +22,12 @@ from backend.db.models import (
     JobUpload,
     ReconstructionJob,
     RefreshSession,
+    TaskActionEvent,
     User,
     WorkerLease,
 )
 from backend.db.queue import JobQueue
+from backend.jobs import TaskSubmissionPolicy, TaskSubmissionSettings
 from backend.jobs.development import DevelopmentJobService
 from backend.uploads import UploadService
 from tests.integration.postgres_support import validated_test_database_url
@@ -331,6 +334,134 @@ class PostgreSQLApiWorkerFlowTests(unittest.TestCase):
         self.assertEqual(expired["status"], "cancelled")
         self.assertEqual(expired["cancellation_reason"], "expired")
         self.assertIsNotNone(expired["storage_cleaned_at"])
+
+    def test_postgresql_submission_limits_and_task_audit(self) -> None:
+        self.services.uploads.submission_policy = TaskSubmissionPolicy(
+            TaskSubmissionSettings(
+                max_pending_jobs=1,
+                max_submissions_per_24h=2,
+            )
+        )
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+
+        first_id = self.prepare_upload(
+            token="postgres-limit-001",
+            color_offset=10,
+        )
+        first = self.client.post(
+            f"/api/v1/uploads/{first_id}/submit",
+            headers=headers,
+        )
+        self.assertEqual(first.status_code, 202, first.text)
+        self.job_ids.append(first_id)
+
+        second_id = self.prepare_upload(
+            token="postgres-limit-002",
+            color_offset=30,
+        )
+        pending = self.client.post(
+            f"/api/v1/uploads/{second_id}/submit",
+            headers=headers,
+        )
+        self.assertEqual(pending.status_code, 429, pending.text)
+        self.assertEqual(
+            pending.headers["x-re3d-error-code"],
+            "PENDING_JOB_LIMIT_REACHED",
+        )
+        self.assertNotIn("retry-after", pending.headers)
+        with self.sessions() as session:
+            self.assertIsNone(session.get(ReconstructionJob, second_id))
+            second_upload = session.get(JobUpload, second_id)
+            assert second_upload is not None
+            self.assertEqual(second_upload.status, "uploading")
+
+        first_cancelled = self.client.post(
+            f"/api/v1/jobs/{first_id}/cancel",
+            headers=headers,
+        )
+        self.assertEqual(first_cancelled.status_code, 200)
+        self.assertEqual(first_cancelled.json()["status"], "cancelled")
+
+        second = self.client.post(
+            f"/api/v1/uploads/{second_id}/submit",
+            headers=headers,
+        )
+        self.assertEqual(second.status_code, 202, second.text)
+        self.job_ids.append(second_id)
+        repeated = self.client.post(
+            f"/api/v1/uploads/{second_id}/submit",
+            headers=headers,
+        )
+        self.assertEqual(repeated.status_code, 202, repeated.text)
+        self.assertEqual(repeated.json()["job_id"], str(second_id))
+
+        second_cancelled = self.client.post(
+            f"/api/v1/jobs/{second_id}/cancel",
+            headers=headers,
+        )
+        self.assertEqual(second_cancelled.status_code, 200)
+
+        third_id = self.prepare_upload(
+            token="postgres-limit-003",
+            color_offset=50,
+        )
+        daily = self.client.post(
+            f"/api/v1/uploads/{third_id}/submit",
+            headers=headers,
+        )
+        self.assertEqual(daily.status_code, 429, daily.text)
+        self.assertEqual(
+            daily.headers["x-re3d-error-code"],
+            "SUBMISSION_WINDOW_LIMIT_REACHED",
+        )
+        self.assertGreater(int(daily.headers["retry-after"]), 0)
+
+        with self.sessions() as session:
+            events = list(
+                session.query(TaskActionEvent)
+                .filter(TaskActionEvent.user_id == self.user_id)
+                .all()
+            )
+            jobs = list(
+                session.query(ReconstructionJob)
+                .filter(ReconstructionJob.user_id == self.user_id)
+                .all()
+            )
+        self.assertEqual(len(jobs), 2)
+        self.assertEqual(
+            Counter(event.action for event in events),
+            Counter({"job_submitted": 2, "cancel_requested": 2}),
+        )
+
+    def prepare_upload(self, *, token: str, color_offset: int) -> uuid.UUID:
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+        created = self.client.post(
+            "/api/v1/uploads",
+            json={"idempotency_key": token},
+            headers=headers,
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        upload_id = uuid.UUID(created.json()["upload_id"])
+        for index in range(3):
+            uploaded = self.client.post(
+                f"/api/v1/uploads/{upload_id}/images",
+                files={
+                    "file": (
+                        f"postgres-limit-{index}.png",
+                        self.png_bytes(
+                            (
+                                color_offset + index,
+                                70 + index,
+                                100 + index,
+                            )
+                        ),
+                        "image/png",
+                    )
+                },
+                headers=headers,
+            )
+            self.assertEqual(uploaded.status_code, 201, uploaded.text)
+        return upload_id
 
     @staticmethod
     def png_bytes(color: tuple[int, int, int]) -> bytes:
