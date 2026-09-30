@@ -213,7 +213,8 @@ def check_production_readiness(
             "runtime_days": success_retention.runtime_retention_days,
             "artifact_days": success_retention.artifact_retention_days,
             "batch_size": success_retention.cleanup_batch_size,
-            "execution_requires_explicit_flag": True,
+            "audit_backend": "database",
+            "execution_requires_delete_confirmation": True,
         }
         response["resource_monitor"] = {
             "enabled": resource_monitor.enabled,

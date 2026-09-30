@@ -111,7 +111,7 @@ PostgreSQL 集成测试必须使用临时 Docker 数据库：
 
 - SQLite 单元测试覆盖完整状态机和顺序租约语义；
 - PostgreSQL 18 真实迁移、并发领取、过期接管和旧 token 隔离；
-- Alembic 可从空数据库升级到 `0010_success_storage_retention`，并完成 `head → 0001 → head` 往返；
+- Alembic 可从空数据库升级到 `0011_success_retention_runs`，并完成 `head → 0001 → head` 往返；
 - 本机开发库使用 `re3d_app` 完成权限探针和首次迁移；
 - 测试库名称保护会拒绝开发库，临时 Docker 测试脚本会自动清理容器。
 - 开发 API 创建任务后，队列 Worker 能在 PostgreSQL 中领取、续租、执行三个模拟分支并提交终态；

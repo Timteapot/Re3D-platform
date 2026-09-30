@@ -51,7 +51,7 @@ class ProductionReadinessTests(unittest.TestCase):
                 return_value={
                     "name": "re3d_platform",
                     "role": "re3d_runtime",
-                    "migration": "0010_success_storage_retention",
+                    "migration": "0011_success_retention_runs",
                 },
             ),
             patch(
@@ -103,7 +103,7 @@ class ProductionReadinessTests(unittest.TestCase):
                 return_value={
                     "name": "re3d_platform",
                     "role": "re3d_runtime",
-                    "migration": "0010_success_storage_retention",
+                    "migration": "0011_success_retention_runs",
                 },
             ),
             patch(
@@ -151,7 +151,8 @@ class ProductionReadinessTests(unittest.TestCase):
                 "runtime_days": None,
                 "artifact_days": None,
                 "batch_size": 50,
-                "execution_requires_explicit_flag": True,
+                "audit_backend": "database",
+                "execution_requires_delete_confirmation": True,
             },
         )
         self.assertNotIn("authentication", report)

@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    JSON,
     String,
     UniqueConstraint,
     Uuid,
@@ -550,6 +551,72 @@ class ReconstructionJob(Base):
 
     user: Mapped[User] = relationship(back_populates="jobs")
     lease: Mapped[WorkerLease | None] = relationship(back_populates="job")
+
+
+class SuccessRetentionRun(Base):
+    __tablename__ = "success_retention_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "trigger IN ('manual', 'scheduled')",
+            name="ck_success_retention_runs_trigger",
+        ),
+        CheckConstraint(
+            "mode IN ('dry_run', 'execute')",
+            name="ck_success_retention_runs_mode",
+        ),
+        CheckConstraint(
+            "status IN ('running', 'succeeded', 'failed')",
+            name="ck_success_retention_runs_status",
+        ),
+        CheckConstraint(
+            "input_retention_days IS NULL OR "
+            "input_retention_days BETWEEN 1 AND 3650",
+            name="ck_success_retention_runs_input_days",
+        ),
+        CheckConstraint(
+            "runtime_retention_days IS NULL OR "
+            "runtime_retention_days BETWEEN 1 AND 3650",
+            name="ck_success_retention_runs_runtime_days",
+        ),
+        CheckConstraint(
+            "artifact_retention_days IS NULL OR "
+            "artifact_retention_days BETWEEN 1 AND 3650",
+            name="ck_success_retention_runs_artifact_days",
+        ),
+        CheckConstraint(
+            "batch_size BETWEEN 1 AND 1000",
+            name="ck_success_retention_runs_batch_size",
+        ),
+        CheckConstraint(
+            "(status = 'running' AND finished_at IS NULL "
+            "AND report IS NULL AND error_code IS NULL) OR "
+            "(status = 'succeeded' AND finished_at IS NOT NULL "
+            "AND report IS NOT NULL AND error_code IS NULL) OR "
+            "(status = 'failed' AND finished_at IS NOT NULL "
+            "AND report IS NULL AND error_code IS NOT NULL)",
+            name="ck_success_retention_runs_result",
+        ),
+        Index(
+            "ix_success_retention_runs_started",
+            "started_at",
+            "status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    trigger: Mapped[str] = mapped_column(String(16), nullable=False)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    input_retention_days: Mapped[int | None] = mapped_column(Integer)
+    runtime_retention_days: Mapped[int | None] = mapped_column(Integer)
+    artifact_retention_days: Mapped[int | None] = mapped_column(Integer)
+    batch_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    report: Mapped[dict[str, object] | None] = mapped_column(JSON)
+    error_code: Mapped[str | None] = mapped_column(String(64))
 
 
 class WorkerLease(Base):

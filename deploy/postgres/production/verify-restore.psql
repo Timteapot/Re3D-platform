@@ -23,6 +23,7 @@ SELECT NOT EXISTS (
             ('job_uploads'),
             ('reconstruction_jobs'),
             ('refresh_sessions'),
+            ('success_retention_runs'),
             ('users'),
             ('worker_leases')
     ) AS required(name)
@@ -48,5 +49,5 @@ SELECT EXISTS (
 SELECT
     current_database() AS restored_database,
     :'expected_revision' AS migration_revision,
-    12 AS required_table_count,
+    13 AS required_table_count,
     'verified' AS restore_status;

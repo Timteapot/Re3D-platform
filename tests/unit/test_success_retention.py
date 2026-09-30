@@ -11,14 +11,18 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from apps.worker.main import main as worker_main
-from backend.db.models import Base, ReconstructionJob
+from backend.db.models import Base, ReconstructionJob, SuccessRetentionRun
 from backend.db.queue import JobQueue
 from backend.db.state_machine import JobStatus
-from backend.jobs import SuccessJobStorageCleaner, SuccessRetentionSettings
+from backend.jobs import (
+    SuccessJobStorageCleaner,
+    SuccessRetentionRunner,
+    SuccessRetentionSettings,
+)
 
 
 PIPELINE_COMMIT = "2c5ba174dae9fe53dcec8f7d8466793fdebf0c58"
@@ -228,6 +232,148 @@ class SuccessRetentionTests(unittest.TestCase):
         self.assertEqual(report["mode"], "dry_run")
         self.assertEqual(report["tiers"]["input"]["candidates"], 1)
         self.assertTrue(images.is_dir())
+        with self.sessions() as session:
+            audit = session.execute(select(SuccessRetentionRun)).scalar_one()
+        self.assertEqual(audit.trigger, "manual")
+        self.assertEqual(audit.mode, "dry_run")
+        self.assertEqual(audit.status, "succeeded")
+        self.assertEqual(audit.input_retention_days, 1)
+        self.assertEqual(audit.report["tiers"]["input"]["candidates"], 1)
+
+    def test_execute_requires_separate_delete_confirmation(self) -> None:
+        now = datetime.now(timezone.utc)
+        job_id = self.create_success(finished_at=now - timedelta(days=2))
+        output = self.jobs_root / str(job_id) / "output"
+        stderr = io.StringIO()
+        with (
+            patch.dict(
+                "os.environ",
+                {"SUCCESS_ARTIFACT_RETENTION_DAYS": "1"},
+                clear=True,
+            ),
+            contextlib.redirect_stderr(stderr),
+        ):
+            exit_code = worker_main(
+                [
+                    "cleanup-success-job-storage",
+                    "--database-url",
+                    self.database_url,
+                    "--data-root",
+                    str(self.data_root),
+                    "--execute",
+                ]
+            )
+        self.assertEqual(exit_code, 2)
+        self.assertIn("--confirm-delete", stderr.getvalue())
+        self.assertTrue(output.is_dir())
+        with self.sessions() as session:
+            audits = list(session.execute(select(SuccessRetentionRun)).scalars())
+        self.assertEqual(audits, [])
+
+    def test_confirmed_execute_deletes_and_audits_the_run(self) -> None:
+        now = datetime.now(timezone.utc)
+        job_id = self.create_success(finished_at=now - timedelta(days=2))
+        task_root = self.jobs_root / str(job_id)
+        stdout = io.StringIO()
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "SUCCESS_INPUT_RETENTION_DAYS": "1",
+                    "SUCCESS_RUNTIME_RETENTION_DAYS": "1",
+                    "SUCCESS_ARTIFACT_RETENTION_DAYS": "1",
+                },
+                clear=True,
+            ),
+            contextlib.redirect_stdout(stdout),
+        ):
+            exit_code = worker_main(
+                [
+                    "cleanup-success-job-storage",
+                    "--database-url",
+                    self.database_url,
+                    "--data-root",
+                    str(self.data_root),
+                    "--trigger",
+                    "scheduled",
+                    "--execute",
+                    "--confirm-delete",
+                ]
+            )
+        self.assertEqual(exit_code, 0)
+        report = json.loads(stdout.getvalue())
+        self.assertEqual(report["mode"], "execute")
+        self.assertEqual(report["tiers"]["artifacts"]["cleaned"], 1)
+        self.assertFalse((task_root / "input/images").exists())
+        self.assertFalse((task_root / "runtime").exists())
+        self.assertFalse((task_root / "output").exists())
+        with self.sessions() as session:
+            audit = session.execute(select(SuccessRetentionRun)).scalar_one()
+        self.assertEqual(audit.trigger, "scheduled")
+        self.assertEqual(audit.mode, "execute")
+        self.assertEqual(audit.status, "succeeded")
+        self.assertEqual(audit.report["tiers"]["artifacts"]["cleaned"], 1)
+
+    def test_env_file_supports_scheduled_dry_run_without_scripts(self) -> None:
+        now = datetime.now(timezone.utc)
+        self.create_success(finished_at=now - timedelta(days=2))
+        env_file = self.root / "retention.env"
+        env_file.write_text(
+            "\n".join(
+                (
+                    f"DATABASE_URL={self.database_url}",
+                    f"RE3D_DATA_ROOT={self.data_root}",
+                    "SUCCESS_INPUT_RETENTION_DAYS=1",
+                    "SUCCESS_RUNTIME_RETENTION_DAYS=1",
+                    "SUCCESS_ARTIFACT_RETENTION_DAYS=1",
+                    "SUCCESS_RETENTION_CLEANUP_BATCH_SIZE=10",
+                )
+            ),
+            encoding="utf-8",
+        )
+        stdout = io.StringIO()
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            contextlib.redirect_stdout(stdout),
+        ):
+            exit_code = worker_main(
+                [
+                    "cleanup-success-job-storage",
+                    "--env-file",
+                    str(env_file),
+                    "--trigger",
+                    "scheduled",
+                ]
+            )
+        self.assertEqual(exit_code, 0)
+        report = json.loads(stdout.getvalue())
+        self.assertEqual(report["trigger"], "scheduled")
+        self.assertEqual(report["mode"], "dry_run")
+        with self.sessions() as session:
+            audit = session.execute(select(SuccessRetentionRun)).scalar_one()
+        self.assertEqual(audit.trigger, "scheduled")
+        self.assertEqual(audit.status, "succeeded")
+
+    def test_runner_audits_stable_failure_without_exception_text(self) -> None:
+        runner = SuccessRetentionRunner(
+            self.sessions,
+            data_root=self.data_root,
+            settings=self.settings,
+        )
+        with (
+            patch.object(
+                runner.cleaner,
+                "cleanup_due_jobs",
+                side_effect=OSError("private filesystem detail"),
+            ),
+            self.assertRaises(OSError),
+        ):
+            runner.run(trigger="scheduled")
+        with self.sessions() as session:
+            audit = session.execute(select(SuccessRetentionRun)).scalar_one()
+        self.assertEqual(audit.status, "failed")
+        self.assertEqual(audit.error_code, "SUCCESS_RETENTION_RUN_FAILED")
+        self.assertIsNone(audit.report)
 
     def test_settings_are_optional_and_validate_ranges(self) -> None:
         with patch.dict("os.environ", {}, clear=True):

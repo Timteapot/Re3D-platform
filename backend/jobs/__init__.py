@@ -19,6 +19,7 @@ from .policy import (
 )
 from .retention import (
     SuccessJobStorageCleaner,
+    SuccessRetentionRunner,
     SuccessRetentionSettings,
 )
 
@@ -36,6 +37,7 @@ __all__ = [
     "PENDING_LIMIT_CODE",
     "SUBMISSION_WINDOW_LIMIT_CODE",
     "SuccessJobStorageCleaner",
+    "SuccessRetentionRunner",
     "SuccessRetentionSettings",
     "TaskSubmissionLimitError",
     "TaskSubmissionPolicy",

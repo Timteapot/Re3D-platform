@@ -12,7 +12,7 @@
 
 产物层清理成功后，任务从 `succeeded` 转为 `expired`，API 不再生成下载 URL，产物下载接口也不再返回文件。保留的小型 manifest 和评估报告用于解释历史任务，不包含原图或模型正文。
 
-迁移 `0010_success_storage_retention` 增加三个完成时间，以及最近尝试时间、尝试次数和稳定错误码。删除失败不会伪造完成时间，后续执行可以重试。
+迁移 `0010_success_storage_retention` 增加三个完成时间，以及最近尝试时间、尝试次数和稳定错误码。删除失败不会伪造完成时间，后续执行可以重试。迁移 `0011_success_retention_runs` 记录每次人工或计划运行的模式、策略快照、开始/完成时间、状态和无敏感信息统计摘要。
 
 ## 配置不等于自动删除
 
@@ -27,24 +27,35 @@ SUCCESS_RETENTION_CLEANUP_BATCH_SIZE=50
 
 每个已设置天数必须在 1–3650 之间。候选时间以数据库 `finished_at` 为准，而不是容易被复制或修改的文件时间。
 
-命令默认只预演，不修改数据库或文件：
+命令默认只预演，不修改任务状态或文件，但会向 `success_retention_runs` 写入审计记录：
 
 ```powershell
-python -m apps.worker.main cleanup-success-job-storage `
-  --database-url $env:DATABASE_URL `
-  --data-root D:\3Dreconstruction\Re3D-data
+.\.venv\Scripts\python.exe -m apps.worker.main cleanup-success-job-storage `
+  --env-file .env `
+  --trigger manual
 ```
 
 只有在人工检查预演数量并确认保留策略后，才允许显式执行：
 
 ```powershell
-python -m apps.worker.main cleanup-success-job-storage `
-  --database-url $env:DATABASE_URL `
-  --data-root D:\3Dreconstruction\Re3D-data `
-  --execute
+.\.venv\Scripts\python.exe -m apps.worker.main cleanup-success-job-storage `
+  --env-file .env `
+  --trigger manual `
+  --execute `
+  --confirm-delete
 ```
 
-三层成功任务数据的保留期已统一确定为 30 天，并写入开发及生产配置示例。2026-09-30 对开发库执行的 dry-run 显示三个层级候选数均为 0，没有删除文件或写入清理审计状态。成功任务清理尚未自动接入常驻 Worker；下一步需要完成备份确认，再把显式执行安排到受控计划任务。
+`--execute` 与 `--confirm-delete` 必须同时出现；只提供其中一个会以退出码 2 拒绝运行。`--env-file` 由 Python 进程直接读取，不依赖 PowerShell 脚本执行策略，且不会把连接串打印到输出。
+
+计划任务的首阶段应只运行以下命令：
+
+```powershell
+.\.venv\Scripts\python.exe -m apps.worker.main cleanup-success-job-storage `
+  --env-file .env.worker.production `
+  --trigger scheduled
+```
+
+三层成功任务数据的保留期已统一确定为 30 天，并写入开发及生产配置示例。2026-09-30 对开发库执行的首轮 dry-run 显示三个层级候选数均为 0，没有删除文件。成功任务清理不会接入常驻重建循环；目标服务器仍需先完成备份确认和多轮计划 dry-run，再单独决定是否为计划任务增加两个删除确认参数。
 
 ## 路径安全
 

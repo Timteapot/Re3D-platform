@@ -11,7 +11,7 @@ from typing import Literal
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from backend.db.models import ReconstructionJob
+from backend.db.models import ReconstructionJob, SuccessRetentionRun
 from backend.db.state_machine import JobStatus, assert_transition
 from backend.re3d_adapter.errors import PathBoundaryError
 from backend.re3d_adapter.paths import TaskLayout
@@ -249,6 +249,96 @@ class SuccessJobStorageCleaner:
                     .limit(limit)
                 ).scalars()
             )
+
+
+class SuccessRetentionRunner:
+    """Run one retention cycle and persist a secret-free database audit."""
+
+    def __init__(
+        self,
+        sessions: sessionmaker[Session],
+        *,
+        data_root: Path,
+        settings: SuccessRetentionSettings | None = None,
+    ) -> None:
+        self.sessions = sessions
+        self.settings = settings or SuccessRetentionSettings.from_environment()
+        self.cleaner = SuccessJobStorageCleaner(
+            sessions,
+            data_root=data_root,
+            settings=self.settings,
+        )
+
+    def run(
+        self,
+        *,
+        execute: bool = False,
+        trigger: str = "manual",
+        now: datetime | None = None,
+        limit: int | None = None,
+    ) -> dict[str, object]:
+        if trigger not in {"manual", "scheduled"}:
+            raise ValueError("retention trigger must be manual or scheduled")
+        started_at = _normalize_time(now or datetime.now(timezone.utc))
+        batch_size = self.settings.cleanup_batch_size if limit is None else limit
+        if not 1 <= batch_size <= 1000:
+            raise ValueError("cleanup limit must be between 1 and 1000")
+        run_id = uuid.uuid4()
+        with self.sessions.begin() as session:
+            session.add(
+                SuccessRetentionRun(
+                    id=run_id,
+                    trigger=trigger,
+                    mode="execute" if execute else "dry_run",
+                    status="running",
+                    input_retention_days=self.settings.input_retention_days,
+                    runtime_retention_days=self.settings.runtime_retention_days,
+                    artifact_retention_days=self.settings.artifact_retention_days,
+                    batch_size=batch_size,
+                    started_at=started_at,
+                )
+            )
+
+        try:
+            report = self.cleaner.cleanup_due_jobs(
+                execute=execute,
+                now=started_at,
+                limit=batch_size,
+            )
+        except Exception:
+            self._finish_failed(run_id, now=now)
+            raise
+
+        finished_at = _normalize_time(now or datetime.now(timezone.utc))
+        with self.sessions.begin() as session:
+            record = session.get(SuccessRetentionRun, run_id)
+            if record is None:
+                raise RuntimeError("retention audit record disappeared")
+            record.status = "succeeded"
+            record.finished_at = finished_at
+            record.report = report
+        return {
+            "run_id": str(run_id),
+            "trigger": trigger,
+            "started_at": started_at.isoformat(),
+            "finished_at": finished_at.isoformat(),
+            **report,
+        }
+
+    def _finish_failed(
+        self,
+        run_id: uuid.UUID,
+        *,
+        now: datetime | None,
+    ) -> None:
+        finished_at = _normalize_time(now or datetime.now(timezone.utc))
+        with self.sessions.begin() as session:
+            record = session.get(SuccessRetentionRun, run_id)
+            if record is None:
+                return
+            record.status = "failed"
+            record.finished_at = finished_at
+            record.error_code = "SUCCESS_RETENTION_RUN_FAILED"
 
 
 def _remove_retention_tier(

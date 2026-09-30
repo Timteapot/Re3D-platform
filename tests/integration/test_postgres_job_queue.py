@@ -12,7 +12,12 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from backend.db.errors import LeaseLostError
-from backend.db.models import ReconstructionJob, User, WorkerLease
+from backend.db.models import (
+    ReconstructionJob,
+    SuccessRetentionRun,
+    User,
+    WorkerLease,
+)
 from backend.db.queue import JobClaim, JobQueue
 from backend.db.state_machine import JobStatus
 from backend.jobs.cleanup import FailedJobCleanupSettings, FailedJobStorageCleaner
@@ -22,6 +27,7 @@ from backend.jobs.policy import (
     TaskSubmissionPolicy,
     TaskSubmissionSettings,
 )
+from backend.jobs.retention import SuccessRetentionRunner, SuccessRetentionSettings
 from tests.integration.postgres_support import validated_test_database_url
 
 
@@ -97,6 +103,11 @@ class PostgreSQLJobQueueIntegrationTests(unittest.TestCase):
                 session.delete(lease)
             session.query(ReconstructionJob).filter(
                 ReconstructionJob.id.in_(getattr(self, "job_ids", []))
+            ).delete(synchronize_session=False)
+            session.query(SuccessRetentionRun).filter(
+                SuccessRetentionRun.id.in_(
+                    getattr(self, "retention_run_ids", [])
+                )
             ).delete(synchronize_session=False)
             session.query(User).filter(User.id == self.user_id).delete(
                 synchronize_session=False
@@ -272,6 +283,56 @@ class PostgreSQLJobQueueIntegrationTests(unittest.TestCase):
         self.assertIsNotNone(snapshot["storage_cleaned_at"])
         self.assertEqual(snapshot["storage_cleanup_attempts"], 1)
         self.assertIsNone(snapshot["storage_cleanup_last_error"])
+
+    def test_success_retention_dry_run_is_audited_as_json(self) -> None:
+        job_id = self.enqueue(priority=1)
+        claim = self.queue.claim_next(
+            worker_id="pg-retention-worker",
+            resource_key=self.resource_key,
+        )
+        self.assertIsNotNone(claim)
+        assert claim is not None
+        for status, progress in (
+            (JobStatus.SFM, 10),
+            (JobStatus.DENSE_RECONSTRUCTION, 30),
+            (JobStatus.MESHING, 60),
+            (JobStatus.TEXTURING, 80),
+            (JobStatus.VALIDATING_OUTPUT, 90),
+            (JobStatus.EVALUATING, 95),
+            (JobStatus.SUCCEEDED, 100),
+        ):
+            self.queue.advance(claim, status, progress=progress)
+        now = datetime.now(timezone.utc)
+        with self.sessions.begin() as session:
+            job = session.get(ReconstructionJob, job_id)
+            assert job is not None
+            job.finished_at = now - timedelta(days=31)
+        images = self.data_root / "jobs" / str(job_id) / "input" / "images"
+        images.mkdir(parents=True)
+        (images / "camera.jpg").write_bytes(b"image")
+
+        report = SuccessRetentionRunner(
+            self.sessions,
+            data_root=self.data_root,
+            settings=SuccessRetentionSettings(
+                input_retention_days=30,
+                runtime_retention_days=30,
+                artifact_retention_days=30,
+                cleanup_batch_size=10,
+            ),
+        ).run(trigger="scheduled", now=now)
+        run_id = uuid.UUID(report["run_id"])
+        self.retention_run_ids = [run_id]
+
+        self.assertEqual(report["mode"], "dry_run")
+        self.assertEqual(report["tiers"]["input"]["candidates"], 1)
+        self.assertTrue(images.is_dir())
+        with self.sessions() as session:
+            audit = session.get(SuccessRetentionRun, run_id)
+            assert audit is not None
+            self.assertEqual(audit.status, "succeeded")
+            self.assertEqual(audit.trigger, "scheduled")
+            self.assertEqual(audit.report["tiers"]["input"]["candidates"], 1)
 
 
 if __name__ == "__main__":

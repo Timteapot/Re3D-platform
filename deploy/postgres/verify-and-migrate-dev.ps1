@@ -83,6 +83,7 @@ DROP TABLE public.__re3d_permission_probe;
 SELECT version_num FROM alembic_version;
 SELECT resource_key, job_id, worker_id, expires_at FROM worker_leases;
 SELECT count(*) AS development_job_count FROM reconstruction_jobs;
+SELECT count(*) AS success_retention_run_count FROM success_retention_runs;
 SELECT count(*) AS development_user_count FROM users;
 SELECT count(*) AS open_upload_count
 FROM job_uploads

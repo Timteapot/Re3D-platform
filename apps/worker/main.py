@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import time
+from pathlib import Path
 from typing import Protocol
 
 from backend.db.errors import SchedulerError
@@ -18,7 +19,7 @@ from backend.db.runtime import (
 from backend.jobs import (
     FailedJobCleanupSettings,
     FailedJobStorageCleaner,
-    SuccessJobStorageCleaner,
+    SuccessRetentionRunner,
     SuccessRetentionSettings,
 )
 from backend.re3d_adapter import (
@@ -122,9 +123,24 @@ def build_parser() -> argparse.ArgumentParser:
     cleanup_success.add_argument("--data-root")
     cleanup_success.add_argument("--database-url")
     cleanup_success.add_argument(
+        "--env-file",
+        help="Load process environment from a local file without echoing secrets",
+    )
+    cleanup_success.add_argument(
+        "--trigger",
+        choices=["manual", "scheduled"],
+        default="manual",
+        help="Audit source for this run (default: manual)",
+    )
+    cleanup_success.add_argument(
         "--execute",
         action="store_true",
         help="Delete configured tiers; omission is a read-only dry-run",
+    )
+    cleanup_success.add_argument(
+        "--confirm-delete",
+        action="store_true",
+        help="Required with --execute after backup and dry-run review",
     )
     cleanup_success.add_argument("--limit", type=int)
     return parser
@@ -133,6 +149,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        env_file = getattr(args, "env_file", None)
+        if env_file is not None:
+            _load_environment_file(env_file)
         settings = WorkerSettings.from_environment(
             data_root=args.data_root,
             worker_id=getattr(args, "worker_id", None),
@@ -207,18 +226,23 @@ def main(argv: list[str] | None = None) -> int:
             finally:
                 engine.dispose()
         elif args.command == "cleanup-success-job-storage":
+            if args.execute != args.confirm_delete:
+                raise ValueError(
+                    "--execute and --confirm-delete must be supplied together"
+                )
             database = DatabaseSettings.from_environment(args.database_url)
             engine = create_database_engine(database)
             try:
-                cleaner = SuccessJobStorageCleaner(
+                runner = SuccessRetentionRunner(
                     create_session_factory(engine),
                     data_root=settings.data_root,
                     settings=SuccessRetentionSettings.from_environment(),
                 )
                 response = {
                     "operation": "cleanup-success-job-storage",
-                    **cleaner.cleanup_due_jobs(
+                    **runner.run(
                         execute=args.execute,
+                        trigger=args.trigger,
                         limit=args.limit,
                     ),
                 }
@@ -368,6 +392,31 @@ def _worker_poll_seconds(configured: float | None) -> float:
     if not 0.5 <= configured <= 60:
         raise ValueError("RE3D_WORKER_POLL_SECONDS must be between 0.5 and 60")
     return configured
+
+
+def _load_environment_file(path: str) -> None:
+    env_path = Path(path).expanduser().resolve()
+    if not env_path.is_file():
+        raise ValueError(f"environment file does not exist: {env_path}")
+    for line_number, raw_line in enumerate(
+        env_path.read_text(encoding="utf-8-sig").splitlines(),
+        start=1,
+    ):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        key, separator, value = line.partition("=")
+        key = key.strip()
+        if not separator or not key.isidentifier():
+            raise ValueError(
+                f"invalid environment assignment at {env_path.name}:{line_number}"
+            )
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'\"', "'"}:
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
 
 
 if __name__ == "__main__":
