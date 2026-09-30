@@ -33,6 +33,12 @@ DATABASE_URL=postgresql+psycopg://re3d_app:<URL编码后的密码>@127.0.0.1:543
 & deploy/postgres/verify-and-migrate-dev.ps1
 ```
 
+如果本机执行策略默认禁止 `.ps1`，使用只对新进程生效的绕过方式，不修改用户或系统策略：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\deploy\postgres\verify-and-migrate-dev.ps1
+```
+
 验证脚本只在进程内存和子进程环境中临时保存密码，结束前会清除变量。它会创建并立即删除权限探针表，然后执行 Alembic，并显示当前用户数、上传会话数、图片数、活动 refresh session 数、认证事件数和活动阻断桶数；不会运行测试、清表或回滚迁移。
 
 `0002_user_auth` 会为任务所有者增加用户外键。如果旧开发库中存在没有对应用户的历史模拟任务，迁移会安全失败，不会伪造用户或删除任务；应先人工确认这些开发记录的处理方式。

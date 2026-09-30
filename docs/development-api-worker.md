@@ -71,6 +71,12 @@ REFRESH_COOKIE_SECURE=false
 & deploy/postgres/verify-and-migrate-dev.ps1
 ```
 
+若默认执行策略禁止 `.ps1`，改用以下仅对新进程生效的调用，不修改用户或系统策略：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\deploy\postgres\verify-and-migrate-dev.ps1
+```
+
 ## 5. 启动 API
 
 第一个 PowerShell 窗口：

@@ -16,12 +16,12 @@
 
 ## 配置不等于自动删除
 
-三个保留期默认均未设置，因此当前不会选择任何成功任务：
+三个层级统一保留 30 天：
 
 ```dotenv
-SUCCESS_INPUT_RETENTION_DAYS=
-SUCCESS_RUNTIME_RETENTION_DAYS=
-SUCCESS_ARTIFACT_RETENTION_DAYS=
+SUCCESS_INPUT_RETENTION_DAYS=30
+SUCCESS_RUNTIME_RETENTION_DAYS=30
+SUCCESS_ARTIFACT_RETENTION_DAYS=30
 SUCCESS_RETENTION_CLEANUP_BATCH_SIZE=50
 ```
 
@@ -44,7 +44,7 @@ python -m apps.worker.main cleanup-success-job-storage `
   --execute
 ```
 
-本轮没有把成功任务清理自动接入常驻 Worker，也没有为本机开发数据配置保留天数。后续需要先确定政策，再将 dry-run、备份确认和执行安排到受控计划任务。
+三层成功任务数据的保留期已统一确定为 30 天，并写入开发及生产配置示例。2026-09-30 对开发库执行的 dry-run 显示三个层级候选数均为 0，没有删除文件或写入清理审计状态。成功任务清理尚未自动接入常驻 Worker；下一步需要完成备份确认，再把显式执行安排到受控计划任务。
 
 ## 路径安全
 

@@ -93,6 +93,8 @@ python -m venv .venv
 & deploy/postgres/verify-and-migrate-dev.ps1
 ```
 
+若默认执行策略禁止 `.ps1`，可以使用 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File <脚本路径>` 启动单独进程；不要修改系统级执行策略。
+
 第一条命令以管理员身份创建 `re3d_platform_dev` 和受限角色 `re3d_app`；第二条命令以应用角色验证权限并执行迁移。数据库密码只放在未提交的 `.env` 或系统秘密存储中，不写入仓库、日志或任务 manifest。
 
 PostgreSQL 集成测试必须使用临时 Docker 数据库：
