@@ -22,7 +22,11 @@ from backend.db.runtime import (
     SchedulerSettings,
     create_database_engine,
 )
-from backend.jobs import FailedJobCleanupSettings, TaskSubmissionSettings
+from backend.jobs import (
+    FailedJobCleanupSettings,
+    SuccessRetentionSettings,
+    TaskSubmissionSettings,
+)
 from backend.monitoring import ResourceMonitorSettings
 from backend.re3d_adapter.real import verify_re3d_installation
 from backend.re3d_adapter.settings import Re3DSettings, WorkerSettings
@@ -192,6 +196,7 @@ def check_production_readiness(
     if component in {"worker", "all"}:
         scheduler = SchedulerSettings.from_environment()
         failed_job_cleanup = FailedJobCleanupSettings.from_environment()
+        success_retention = SuccessRetentionSettings.from_environment()
         resource_monitor = ResourceMonitorSettings.from_environment()
         response["scheduler"] = {
             "resource_key": scheduler.resource_key,
@@ -202,6 +207,13 @@ def check_production_readiness(
             "grace_minutes": failed_job_cleanup.grace_minutes,
             "interval_seconds": failed_job_cleanup.interval_seconds,
             "batch_size": failed_job_cleanup.batch_size,
+        }
+        response["success_retention"] = {
+            "input_days": success_retention.input_retention_days,
+            "runtime_days": success_retention.runtime_retention_days,
+            "artifact_days": success_retention.artifact_retention_days,
+            "batch_size": success_retention.cleanup_batch_size,
+            "execution_requires_explicit_flag": True,
         }
         response["resource_monitor"] = {
             "enabled": resource_monitor.enabled,

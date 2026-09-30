@@ -234,6 +234,14 @@ export function JobDetailPage() {
           该失败或取消任务的文件已按策略自动清理（{formatDate(job.storage_cleaned_at)}）；任务状态和错误码仍保留。
         </div>
       ) : null}
+      {job.input_cleaned_at || job.runtime_cleaned_at || job.artifacts_cleaned_at ? (
+        <div className="simulation-banner" role="note">
+          成功任务已执行分层保留策略：
+          {job.input_cleaned_at ? ` 原图已于 ${formatDate(job.input_cleaned_at)} 清理；` : ""}
+          {job.runtime_cleaned_at ? ` 中间文件与日志已于 ${formatDate(job.runtime_cleaned_at)} 清理；` : ""}
+          {job.artifacts_cleaned_at ? ` 可下载模型已于 ${formatDate(job.artifacts_cleaned_at)} 到期。` : ""}
+        </div>
+      ) : null}
       {value.warning_code ? (
         <div className="form-notice error" role="alert">
           {warningLabels[value.warning_code] ?? "任务详情存在一致性问题。"}

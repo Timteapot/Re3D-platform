@@ -9,6 +9,7 @@ import uuid
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from PIL import Image
@@ -25,6 +26,7 @@ from backend.jobs import (
     TaskSubmissionSettings,
 )
 from backend.uploads import (
+    UploadCapacityError,
     UploadConflictError,
     UploadNotFoundError,
     UploadService,
@@ -106,6 +108,67 @@ class UploadServiceTests(unittest.TestCase):
                 source=io.BytesIO(b"x" * 4097),
                 original_name="oversized.jpg",
             )
+        staging = (
+            self.data_root
+            / "jobs"
+            / str(upload["upload_id"])
+            / "input"
+            / "staging"
+        )
+        self.assertEqual(list(staging.iterdir()), [])
+
+    def test_storage_floor_rejects_new_data_and_removes_staging_file(self) -> None:
+        minimum = 1024**3
+        service = UploadService(
+            self.sessions,
+            self.queue,
+            data_root=self.data_root,
+            settings=UploadSettings(
+                max_file_bytes=4096,
+                max_total_bytes=20_000,
+                max_pixels=1_000_000,
+                min_free_disk_bytes=minimum,
+            ),
+        )
+        with patch(
+            "backend.uploads.service.shutil.disk_usage",
+            return_value=SimpleNamespace(free=minimum + 4095),
+        ):
+            with self.assertRaises(UploadCapacityError):
+                service.create(
+                    user_id=self.user_id,
+                    idempotency_token="capacity-create-001",
+                )
+
+        with patch(
+            "backend.uploads.service.shutil.disk_usage",
+            return_value=SimpleNamespace(free=minimum + 4096),
+        ):
+            upload, _ = service.create(
+                user_id=self.user_id,
+                idempotency_token="capacity-upload-001",
+            )
+
+        with patch(
+            "backend.uploads.service.shutil.disk_usage",
+            side_effect=(
+                SimpleNamespace(free=minimum + 4096),
+                SimpleNamespace(free=minimum - 1),
+            ),
+        ):
+            with self.assertRaises(UploadCapacityError):
+                service.add_image(
+                    upload_id=upload["upload_id"],
+                    user_id=self.user_id,
+                    source=io.BytesIO(self.png_bytes((50, 60, 70))),
+                    original_name="capacity.png",
+                )
+
+        current = service.get(
+            upload_id=upload["upload_id"],
+            user_id=self.user_id,
+        )
+        self.assertEqual(current["image_count"], 0)
         staging = (
             self.data_root
             / "jobs"

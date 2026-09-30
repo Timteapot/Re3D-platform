@@ -15,7 +15,12 @@ from backend.db.runtime import (
     create_database_engine,
     create_session_factory,
 )
-from backend.jobs import FailedJobCleanupSettings, FailedJobStorageCleaner
+from backend.jobs import (
+    FailedJobCleanupSettings,
+    FailedJobStorageCleaner,
+    SuccessJobStorageCleaner,
+    SuccessRetentionSettings,
+)
 from backend.re3d_adapter import (
     AdapterError,
     RealDryRunRunner,
@@ -108,6 +113,20 @@ def build_parser() -> argparse.ArgumentParser:
     cleanup_jobs.add_argument("--database-url")
     cleanup_jobs.add_argument("--grace-minutes", type=int)
     cleanup_jobs.add_argument("--limit", type=int)
+    cleanup_success = subparsers.add_parser(
+        "cleanup-success-job-storage",
+        description=(
+            "Dry-run or execute tiered retention for successful task storage"
+        ),
+    )
+    cleanup_success.add_argument("--data-root")
+    cleanup_success.add_argument("--database-url")
+    cleanup_success.add_argument(
+        "--execute",
+        action="store_true",
+        help="Delete configured tiers; omission is a read-only dry-run",
+    )
+    cleanup_success.add_argument("--limit", type=int)
     return parser
 
 
@@ -182,6 +201,24 @@ def main(argv: list[str] | None = None) -> int:
                     "operation": "cleanup-failed-job-storage",
                     **cleaner.cleanup_terminal_jobs(
                         grace_minutes=args.grace_minutes,
+                        limit=args.limit,
+                    ),
+                }
+            finally:
+                engine.dispose()
+        elif args.command == "cleanup-success-job-storage":
+            database = DatabaseSettings.from_environment(args.database_url)
+            engine = create_database_engine(database)
+            try:
+                cleaner = SuccessJobStorageCleaner(
+                    create_session_factory(engine),
+                    data_root=settings.data_root,
+                    settings=SuccessRetentionSettings.from_environment(),
+                )
+                response = {
+                    "operation": "cleanup-success-job-storage",
+                    **cleaner.cleanup_due_jobs(
+                        execute=args.execute,
                         limit=args.limit,
                     ),
                 }

@@ -459,6 +459,12 @@ def _job_snapshot(job: ReconstructionJob) -> dict[str, Any]:
         "storage_cleanup_attempted_at": job.storage_cleanup_attempted_at,
         "storage_cleanup_attempts": job.storage_cleanup_attempts,
         "storage_cleanup_last_error": job.storage_cleanup_last_error,
+        "input_cleaned_at": job.input_cleaned_at,
+        "runtime_cleaned_at": job.runtime_cleaned_at,
+        "artifacts_cleaned_at": job.artifacts_cleaned_at,
+        "retention_cleanup_attempted_at": job.retention_cleanup_attempted_at,
+        "retention_cleanup_attempts": job.retention_cleanup_attempts,
+        "retention_cleanup_last_error": job.retention_cleanup_last_error,
         "version": job.version,
     }
 

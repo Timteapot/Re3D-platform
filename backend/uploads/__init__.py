@@ -1,5 +1,6 @@
 from .errors import (
     UploadConflictError,
+    UploadCapacityError,
     UploadError,
     UploadNotFoundError,
     UploadTooLargeError,
@@ -10,6 +11,7 @@ from .settings import UploadSettings
 
 __all__ = [
     "UploadConflictError",
+    "UploadCapacityError",
     "UploadError",
     "UploadNotFoundError",
     "UploadService",

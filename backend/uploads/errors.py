@@ -16,3 +16,7 @@ class UploadValidationError(UploadError):
 
 class UploadTooLargeError(UploadValidationError):
     """An individual image or the complete upload exceeds its byte limit."""
+
+
+class UploadCapacityError(UploadError):
+    """The data volume is below its configured free-space safety floor."""

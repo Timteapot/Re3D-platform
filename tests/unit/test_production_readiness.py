@@ -51,7 +51,7 @@ class ProductionReadinessTests(unittest.TestCase):
                 return_value={
                     "name": "re3d_platform",
                     "role": "re3d_runtime",
-                    "migration": "0009_task_submission_policy",
+                    "migration": "0010_success_storage_retention",
                 },
             ),
             patch(
@@ -103,7 +103,7 @@ class ProductionReadinessTests(unittest.TestCase):
                 return_value={
                     "name": "re3d_platform",
                     "role": "re3d_runtime",
-                    "migration": "0009_task_submission_policy",
+                    "migration": "0010_success_storage_retention",
                 },
             ),
             patch(
@@ -142,6 +142,16 @@ class ProductionReadinessTests(unittest.TestCase):
                 "enabled": True,
                 "interval_seconds": 15,
                 "nvidia_smi_configured": False,
+            },
+        )
+        self.assertEqual(
+            report["success_retention"],
+            {
+                "input_days": None,
+                "runtime_days": None,
+                "artifact_days": None,
+                "batch_size": 50,
+                "execution_requires_explicit_flag": True,
             },
         )
         self.assertNotIn("authentication", report)

@@ -26,6 +26,7 @@ from backend.re3d_adapter.io import atomic_write_json, sha256_file
 from backend.re3d_adapter.paths import TaskLayout
 
 from .errors import (
+    UploadCapacityError,
     UploadConflictError,
     UploadNotFoundError,
     UploadTooLargeError,
@@ -87,6 +88,8 @@ class UploadService:
             ).scalar_one_or_none()
             if existing is not None:
                 return _upload_snapshot(session, existing), True
+
+        self._ensure_storage_capacity(reserve_bytes=self.settings.max_file_bytes)
 
         upload_id = uuid.uuid4()
         layout = TaskLayout.from_data_root(
@@ -154,6 +157,7 @@ class UploadService:
             raise UploadConflictError(
                 "images cannot be added after upload submission or cancellation"
             )
+        self._ensure_storage_capacity(reserve_bytes=self.settings.max_file_bytes)
         layout = TaskLayout.from_data_root(self.data_root, str(upload_id))
         staging_path = layout.resolve(f"input/staging/{uuid.uuid4().hex}.part")
         destination: Path | None = None
@@ -163,6 +167,7 @@ class UploadService:
                 staging_path,
                 max_bytes=self.settings.max_file_bytes,
             )
+            self._ensure_storage_capacity()
             image_format, width, height = _inspect_image(
                 staging_path,
                 max_pixels=self.settings.max_pixels,
@@ -436,6 +441,7 @@ class UploadService:
                     return _job_snapshot(existing)
                 if upload.status != "uploading":
                     raise UploadConflictError("upload cannot be submitted")
+                self._ensure_storage_capacity()
                 images = list(
                     session.execute(
                         select(JobUploadImage)
@@ -500,6 +506,24 @@ class UploadService:
         except DatabaseIntegrityError as exc:
             raise UploadConflictError("upload submission identity conflict") from exc
         return self.queue.get_job(upload_id, user_id=user_id)
+
+    def _ensure_storage_capacity(self, *, reserve_bytes: int = 0) -> None:
+        minimum = self.settings.min_free_disk_bytes
+        if minimum == 0:
+            return
+        probe = self.data_root
+        while not probe.exists() and probe != probe.parent:
+            probe = probe.parent
+        try:
+            free_bytes = shutil.disk_usage(probe).free
+        except OSError as exc:
+            raise UploadCapacityError(
+                "upload storage capacity cannot be verified"
+            ) from exc
+        if free_bytes - reserve_bytes < minimum:
+            raise UploadCapacityError(
+                "upload storage free-space safety floor reached"
+            )
 
     def _build_request(
         self,
@@ -767,6 +791,12 @@ def _job_snapshot(job: ReconstructionJob) -> dict[str, Any]:
         "storage_cleanup_attempted_at": job.storage_cleanup_attempted_at,
         "storage_cleanup_attempts": job.storage_cleanup_attempts,
         "storage_cleanup_last_error": job.storage_cleanup_last_error,
+        "input_cleaned_at": job.input_cleaned_at,
+        "runtime_cleaned_at": job.runtime_cleaned_at,
+        "artifacts_cleaned_at": job.artifacts_cleaned_at,
+        "retention_cleanup_attempted_at": job.retention_cleanup_attempted_at,
+        "retention_cleanup_attempts": job.retention_cleanup_attempts,
+        "retention_cleanup_last_error": job.retention_cleanup_last_error,
         "version": job.version,
     }
 

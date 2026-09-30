@@ -13,6 +13,7 @@ class UploadSettings:
     max_pixels: int = 50_000_000
     stale_after_hours: int = 24
     cleanup_batch_size: int = 100
+    min_free_disk_bytes: int = 0
 
     def __post_init__(self) -> None:
         if not 3 <= self.min_images <= self.max_images <= 150:
@@ -25,6 +26,10 @@ class UploadSettings:
             raise ValueError("UPLOAD_STALE_AFTER_HOURS must be between 1 and 720")
         if not 1 <= self.cleanup_batch_size <= 1000:
             raise ValueError("UPLOAD_CLEANUP_BATCH_SIZE must be between 1 and 1000")
+        if self.min_free_disk_bytes != 0 and self.min_free_disk_bytes < 1024**3:
+            raise ValueError(
+                "RE3D_MIN_FREE_DISK_BYTES must be zero or at least 1 GiB"
+            )
 
     @classmethod
     def from_environment(cls) -> "UploadSettings":
@@ -40,6 +45,7 @@ class UploadSettings:
             max_pixels=_read_int("UPLOAD_MAX_PIXELS", 50_000_000),
             stale_after_hours=_read_int("UPLOAD_STALE_AFTER_HOURS", 24),
             cleanup_batch_size=_read_int("UPLOAD_CLEANUP_BATCH_SIZE", 100),
+            min_free_disk_bytes=_read_int("RE3D_MIN_FREE_DISK_BYTES", 0),
         )
 
 

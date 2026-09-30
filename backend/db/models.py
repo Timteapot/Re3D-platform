@@ -442,6 +442,11 @@ class ReconstructionJob(Base):
             "finished_at",
             "storage_cleaned_at",
         ),
+        Index(
+            "ix_jobs_success_retention",
+            "status",
+            "finished_at",
+        ),
         CheckConstraint(
             "storage_cleanup_attempts >= 0",
             name="ck_jobs_storage_cleanup_attempts",
@@ -456,6 +461,24 @@ class ReconstructionJob(Base):
         CheckConstraint(
             "storage_cleaned_at IS NULL OR storage_cleanup_last_error IS NULL",
             name="ck_jobs_storage_cleanup_result",
+        ),
+        CheckConstraint(
+            "retention_cleanup_attempts >= 0",
+            name="ck_jobs_retention_cleanup_attempts",
+        ),
+        CheckConstraint(
+            "input_cleaned_at IS NULL OR "
+            "status IN ('succeeded', 'expired')",
+            name="ck_jobs_input_retention_status",
+        ),
+        CheckConstraint(
+            "runtime_cleaned_at IS NULL OR "
+            "status IN ('succeeded', 'expired')",
+            name="ck_jobs_runtime_retention_status",
+        ),
+        CheckConstraint(
+            "artifacts_cleaned_at IS NULL OR status = 'expired'",
+            name="ck_jobs_artifact_retention_status",
         ),
     )
 
@@ -501,6 +524,25 @@ class ReconstructionJob(Base):
         server_default=text("0"),
     )
     storage_cleanup_last_error: Mapped[str | None] = mapped_column(String(64))
+    input_cleaned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    runtime_cleaned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    artifacts_cleaned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    retention_cleanup_attempted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    retention_cleanup_attempts: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+    retention_cleanup_last_error: Mapped[str | None] = mapped_column(String(64))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )

@@ -7,6 +7,8 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -20,7 +22,7 @@ from backend.db.models import AuthEvent, Base, ReconstructionJob, User
 from backend.db.queue import JobQueue
 from backend.jobs import TaskSubmissionPolicy, TaskSubmissionSettings
 from backend.jobs.development import DevelopmentJobService
-from backend.uploads import UploadService
+from backend.uploads import UploadService, UploadSettings
 
 
 TEST_SECRET = "api-flow-test-secret-" + "x" * 64
@@ -749,6 +751,30 @@ class ApiWorkerFlowTests(unittest.TestCase):
             ).json(),
             [],
         )
+
+    def test_storage_capacity_floor_returns_stable_507_contract(self) -> None:
+        minimum = 1024**3
+        self.services.uploads.settings = UploadSettings(
+            min_free_disk_bytes=minimum
+        )
+        with patch(
+            "backend.uploads.service.shutil.disk_usage",
+            return_value=SimpleNamespace(
+                free=minimum + self.services.uploads.settings.max_file_bytes - 1
+            ),
+        ):
+            response = self.client.post(
+                "/api/v1/uploads",
+                json={"idempotency_key": "capacity-api-upload-001"},
+                headers=self.auth_headers(self.access_token),
+            )
+
+        self.assertEqual(response.status_code, 507)
+        self.assertEqual(
+            response.headers["x-re3d-error-code"],
+            "STORAGE_CAPACITY_FLOOR_REACHED",
+        )
+        self.assertEqual(response.headers["retry-after"], "300")
 
     def test_upload_submission_limits_return_stable_429_contract(self) -> None:
         self.services.uploads.submission_policy = TaskSubmissionPolicy(

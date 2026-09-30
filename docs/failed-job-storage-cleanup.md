@@ -9,7 +9,7 @@
 - `failed_evaluation`；
 - `cancelled`。
 
-它不会删除 `succeeded` 或 `expired` 任务。成功任务的原图、中间文件、日志和产物保留期仍需单独决策，不能复用失败任务策略。
+它不会删除 `succeeded` 或 `expired` 任务。成功任务由独立的分层保留清理器处理，不能复用失败任务整目录策略；具体见 [`success-storage-retention.md`](success-storage-retention.md)。
 
 数据库中的任务行、终态、脱敏 `error_code`、开始/完成时间和清理审计字段会保留。文件清理后，任务详情返回 `not_available`，不会把已经按策略删除的目录误报为存储损坏。
 

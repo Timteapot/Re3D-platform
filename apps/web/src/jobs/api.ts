@@ -43,6 +43,9 @@ export interface Job {
   started_at: string | null;
   finished_at: string | null;
   storage_cleaned_at: string | null;
+  input_cleaned_at: string | null;
+  runtime_cleaned_at: string | null;
+  artifacts_cleaned_at: string | null;
   version: number;
   reused: boolean;
 }

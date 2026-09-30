@@ -11,6 +11,7 @@ from apps.api.auth import CurrentUserDependency, VerifiedUserDependency
 from backend.auth import UserIdentity
 from backend.jobs import TaskSubmissionLimitError
 from backend.uploads import (
+    UploadCapacityError,
     UploadConflictError,
     UploadNotFoundError,
     UploadService,
@@ -99,6 +100,8 @@ def create_upload_router(
             )
         except UploadValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except UploadCapacityError as exc:
+            raise _storage_capacity_http_exception(exc) from exc
         if reused:
             response.status_code = status.HTTP_200_OK
         return UploadResponse(**snapshot, reused=reused)
@@ -141,6 +144,8 @@ def create_upload_router(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except UploadValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except UploadCapacityError as exc:
+            raise _storage_capacity_http_exception(exc) from exc
         finally:
             file.file.close()
 
@@ -225,6 +230,8 @@ def create_upload_router(
                 detail=str(exc),
                 headers=headers,
             ) from exc
+        except UploadCapacityError as exc:
+            raise _storage_capacity_http_exception(exc) from exc
         return SubmittedJobResponse(
             job_id=job["id"],
             status=job["status"],
@@ -235,3 +242,14 @@ def create_upload_router(
         )
 
     return router
+
+
+def _storage_capacity_http_exception(exc: UploadCapacityError) -> HTTPException:
+    return HTTPException(
+        status_code=507,
+        detail=str(exc),
+        headers={
+            "X-Re3D-Error-Code": "STORAGE_CAPACITY_FLOOR_REACHED",
+            "Retry-After": "300",
+        },
+    )

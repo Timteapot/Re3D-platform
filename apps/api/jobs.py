@@ -52,6 +52,9 @@ class JobResponse(BaseModel):
     started_at: datetime | None
     finished_at: datetime | None
     storage_cleaned_at: datetime | None
+    input_cleaned_at: datetime | None
+    runtime_cleaned_at: datetime | None
+    artifacts_cleaned_at: datetime | None
     version: int
     reused: bool = False
 
@@ -76,6 +79,9 @@ class JobResponse(BaseModel):
             started_at=snapshot["started_at"],
             finished_at=snapshot["finished_at"],
             storage_cleaned_at=snapshot["storage_cleaned_at"],
+            input_cleaned_at=snapshot["input_cleaned_at"],
+            runtime_cleaned_at=snapshot["runtime_cleaned_at"],
+            artifacts_cleaned_at=snapshot["artifacts_cleaned_at"],
             version=snapshot["version"],
             reused=reused,
         )
@@ -155,7 +161,17 @@ class JobDetailResponse(BaseModel):
                 if request is not None
                 else None
             ),
-            result=_summarize_result(result) if result is not None else None,
+            result=(
+                _summarize_result(
+                    result,
+                    artifacts_available=(
+                        detail.job["status"] == JobStatus.SUCCEEDED
+                        and detail.job["artifacts_cleaned_at"] is None
+                    ),
+                )
+                if result is not None
+                else None
+            ),
             evaluation=(
                 _summarize_evaluation(evaluation)
                 if evaluation is not None
@@ -164,7 +180,11 @@ class JobDetailResponse(BaseModel):
         )
 
 
-def _summarize_result(result: dict[str, Any]) -> ResultSummary:
+def _summarize_result(
+    result: dict[str, Any],
+    *,
+    artifacts_available: bool = True,
+) -> ResultSummary:
     return ResultSummary(
         status=result["status"],
         execution_mode=result["execution_mode"],
@@ -182,7 +202,8 @@ def _summarize_result(result: dict[str, Any]) -> ResultSummary:
                         download_url=(
                             f"{STABLE_JOB_PREFIX}/{result['job_id']}"
                             f"/artifacts/{name}/{artifact['kind']}"
-                            if artifact["kind"] in {"glb", "obj", "mtl", "texture"}
+                            if artifacts_available
+                            and artifact["kind"] in {"glb", "obj", "mtl", "texture"}
                             else None
                         ),
                     )
