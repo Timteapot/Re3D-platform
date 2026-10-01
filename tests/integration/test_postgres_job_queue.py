@@ -8,11 +8,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 
 from backend.db.errors import LeaseLostError
+from backend.admin import AdminRoleService
 from backend.db.models import (
+    AdminRoleChangeEvent,
     ReconstructionJob,
     SuccessRetentionRun,
     User,
@@ -109,6 +111,14 @@ class PostgreSQLJobQueueIntegrationTests(unittest.TestCase):
                     getattr(self, "retention_run_ids", [])
                 )
             ).delete(synchronize_session=False)
+            role_user_ids = getattr(self, "role_user_ids", [])
+            if role_user_ids:
+                session.query(AdminRoleChangeEvent).filter(
+                    AdminRoleChangeEvent.target_user_id.in_(role_user_ids)
+                ).delete(synchronize_session=False)
+                session.query(User).filter(User.id.in_(role_user_ids)).delete(
+                    synchronize_session=False
+                )
             session.query(User).filter(User.id == self.user_id).delete(
                 synchronize_session=False
             )
@@ -242,6 +252,72 @@ class PostgreSQLJobQueueIntegrationTests(unittest.TestCase):
         self.assertFalse(any(worker.is_alive() for worker in workers))
         self.assertEqual(failures, [])
         self.assertCountEqual(results, ["accepted", PENDING_LIMIT_CODE])
+
+    def test_concurrent_admin_demotions_preserve_one_active_admin(self) -> None:
+        self.role_user_ids = [uuid.uuid4(), uuid.uuid4()]
+        with self.sessions.begin() as session:
+            session.add_all(
+                User(
+                    id=user_id,
+                    username=f"admin-{user_id.hex[:12]}",
+                    email=f"admin-{user_id.hex[:12]}@example.com",
+                    password_hash="test-only-not-a-login-hash",
+                    role="admin",
+                    is_active=True,
+                    email_verified=True,
+                )
+                for user_id in self.role_user_ids
+            )
+
+        barrier = threading.Barrier(2)
+        results: list[str] = []
+        failures: list[BaseException] = []
+
+        def demote(user_id: uuid.UUID) -> None:
+            try:
+                barrier.wait(timeout=5)
+                AdminRoleService(self.sessions).set_role(
+                    user_id=user_id,
+                    role="user",
+                    confirmed=True,
+                )
+                results.append("changed")
+            except ValueError as exc:
+                results.append(str(exc))
+            except BaseException as exc:  # pragma: no cover - diagnostic path
+                failures.append(exc)
+
+        workers = [
+            threading.Thread(target=demote, args=(user_id,))
+            for user_id in self.role_user_ids
+        ]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=10)
+
+        self.assertFalse(any(worker.is_alive() for worker in workers))
+        self.assertEqual(failures, [])
+        self.assertEqual(results.count("changed"), 1)
+        self.assertEqual(
+            results.count("the last active administrator cannot be demoted"),
+            1,
+        )
+        with self.sessions() as session:
+            active_admin_count = session.execute(
+                select(func.count(User.id)).where(
+                    User.id.in_(self.role_user_ids),
+                    User.role == "admin",
+                    User.is_active.is_(True),
+                )
+            ).scalar_one()
+            role_event_count = session.execute(
+                select(func.count(AdminRoleChangeEvent.id)).where(
+                    AdminRoleChangeEvent.target_user_id.in_(self.role_user_ids)
+                )
+            ).scalar_one()
+        self.assertEqual(active_admin_count, 1)
+        self.assertEqual(role_event_count, 1)
 
     def test_failed_job_storage_cleanup_is_audited(self) -> None:
         job_id = self.enqueue(priority=1)

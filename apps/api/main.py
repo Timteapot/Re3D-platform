@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import FastAPI
 from sqlalchemy import Engine
 
+from apps.api.admin import create_admin_audit_router
 from apps.api.auth import create_auth_router
 from apps.api.jobs import (
     LEGACY_DEVELOPMENT_JOB_PREFIX,
@@ -21,6 +22,7 @@ from backend.auth import (
     AuthSettings,
     build_auth_email_sender,
 )
+from backend.admin import AdminAuditService
 from backend.db.queue import JobQueue
 from backend.db.runtime import (
     DatabaseSettings,
@@ -97,6 +99,12 @@ def create_app(
         resolved_services.auth
     )
     app.include_router(auth_router)
+    app.include_router(
+        create_admin_audit_router(
+            AdminAuditService(resolved_services.auth.session_factory),
+            current_user,
+        )
+    )
 
     poll_seconds = 0.05 if environment == "test" else 1.0
     app.include_router(

@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import uuid
 
+from backend.admin import AdminRoleService
 from backend.auth import AuthMaintenanceService, AuthMaintenanceSettings
 from backend.db.runtime import (
     DatabaseSettings,
@@ -40,6 +42,22 @@ def build_parser() -> argparse.ArgumentParser:
         default="all",
         help="Process role to validate (default: all)",
     )
+    role_change = subparsers.add_parser(
+        "set-user-role",
+        description="Set one user role with explicit confirmation and database audit",
+    )
+    role_change.add_argument("--database-url")
+    role_change.add_argument("--user-id", required=True, type=uuid.UUID)
+    role_change.add_argument(
+        "--role",
+        required=True,
+        choices=["user", "admin"],
+    )
+    role_change.add_argument(
+        "--confirm-role-change",
+        action="store_true",
+        help="Required acknowledgement for a persisted role change",
+    )
     return parser
 
 
@@ -65,6 +83,31 @@ def main(argv: list[str] | None = None) -> int:
                         action_token_retention_days=args.action_token_retention_days,
                         throttle_retention_days=args.throttle_retention_days,
                         limit=args.limit,
+                    ),
+                }
+            finally:
+                engine.dispose()
+        elif args.command == "set-user-role":
+            database = DatabaseSettings.from_environment(args.database_url)
+            engine = create_database_engine(database)
+            try:
+                result = AdminRoleService(
+                    create_session_factory(engine)
+                ).set_role(
+                    user_id=args.user_id,
+                    role=args.role,
+                    confirmed=args.confirm_role_change,
+                )
+                response = {
+                    "operation": "set-user-role",
+                    "user_id": str(result.user_id),
+                    "previous_role": result.previous_role,
+                    "new_role": result.new_role,
+                    "changed": result.changed,
+                    "event_id": (
+                        str(result.event_id)
+                        if result.event_id is not None
+                        else None
                     ),
                 }
             finally:

@@ -92,7 +92,7 @@ Vite 开发服务器只绑定 `127.0.0.1:5173`，并将 `/api` 代理到本机 F
 
 1. 在目标 Windows 服务器运行安装前只读预检，解决工具链、GPU、数据盘、端口、PostgreSQL、域名 DNS 和重启状态阻断项；
 2. 生成并安装绑定发布提交的 API、Worker、Caddy 服务包，完成服务重启、进程故障恢复、GPU 权限和真实域名 TLS 验收；
-3. 配置生产 SMTP、验证码、普通接口/IP 限流、单用户存储配额和管理员审计查询；
+3. 配置生产 SMTP、验证码、普通接口/IP 限流和单用户存储配额，并为已完成的管理员审计 API 增加运维前端与二次验证；
 4. 接入集中监控与告警，并在真实服务器执行备份恢复、并发压力和低磁盘演练；
 5. 观察多轮每日保留策略 dry-run，确认备份后再验收一次人工双确认删除。
 
@@ -101,3 +101,4 @@ Vite 开发服务器只绑定 `127.0.0.1:5173`，并将 `/api` 代理到本机 F
 数据库队列的设计、初始化和当前边界见 [`docs/database-queue.md`](docs/database-queue.md)。
 失败/取消任务的自动文件清理、审计字段和人工重试命令见 [`docs/failed-job-storage-cleanup.md`](docs/failed-job-storage-cleanup.md)。
 真实任务 CPU、内存、数据盘和 GPU 私有采样契约见 [`docs/resource-monitoring.md`](docs/resource-monitoring.md)。
+管理员审计查询、脱敏边界和首名管理员引导见 [`docs/admin-audit.md`](docs/admin-audit.md)。

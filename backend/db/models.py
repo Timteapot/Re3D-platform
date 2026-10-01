@@ -619,6 +619,55 @@ class SuccessRetentionRun(Base):
     error_code: Mapped[str | None] = mapped_column(String(64))
 
 
+class AdminRoleChangeEvent(Base):
+    __tablename__ = "admin_role_change_events"
+    __table_args__ = (
+        CheckConstraint(
+            "actor_kind IN ('maintenance_cli', 'admin_api')",
+            name="ck_admin_role_change_events_actor_kind",
+        ),
+        CheckConstraint(
+            "previous_role IN ('user', 'admin')",
+            name="ck_admin_role_change_events_previous_role",
+        ),
+        CheckConstraint(
+            "new_role IN ('user', 'admin')",
+            name="ck_admin_role_change_events_new_role",
+        ),
+        CheckConstraint(
+            "previous_role <> new_role",
+            name="ck_admin_role_change_events_role_changed",
+        ),
+        Index(
+            "ix_admin_role_change_events_target_occurred",
+            "target_user_id",
+            "occurred_at",
+        ),
+        Index(
+            "ix_admin_role_change_events_occurred",
+            "occurred_at",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    actor_kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("users.id", ondelete="SET NULL"),
+    )
+    target_user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    previous_role: Mapped[str] = mapped_column(String(16), nullable=False)
+    new_role: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
 class WorkerLease(Base):
     __tablename__ = "worker_leases"
     __table_args__ = (

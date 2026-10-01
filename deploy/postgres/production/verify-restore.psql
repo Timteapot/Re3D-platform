@@ -14,6 +14,7 @@ SELECT NOT EXISTS (
     FROM (
         VALUES
             ('alembic_version'),
+            ('admin_role_change_events'),
             ('auth_action_request_buckets'),
             ('auth_action_tokens'),
             ('auth_events'),
@@ -24,6 +25,7 @@ SELECT NOT EXISTS (
             ('reconstruction_jobs'),
             ('refresh_sessions'),
             ('success_retention_runs'),
+            ('task_action_events'),
             ('users'),
             ('worker_leases')
     ) AS required(name)
@@ -49,5 +51,5 @@ SELECT EXISTS (
 SELECT
     current_database() AS restored_database,
     :'expected_revision' AS migration_revision,
-    13 AS required_table_count,
+    15 AS required_table_count,
     'verified' AS restore_status;

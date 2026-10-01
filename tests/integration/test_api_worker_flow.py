@@ -90,6 +90,40 @@ class ApiWorkerFlowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 201)
         return response.json()
 
+    def test_admin_audit_routes_require_role_and_return_no_store_pages(self) -> None:
+        anonymous = self.client.get("/api/v1/admin/audit/auth-events")
+        self.assertEqual(anonymous.status_code, 401)
+
+        denied = self.client.get(
+            "/api/v1/admin/audit/auth-events",
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(denied.status_code, 403)
+
+        with self.sessions.begin() as session:
+            user = session.get(User, self.user_id)
+            assert user is not None
+            user.role = "admin"
+
+        allowed = self.client.get(
+            "/api/v1/admin/audit/auth-events?limit=1&action=login",
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(allowed.status_code, 200)
+        self.assertEqual(allowed.headers["cache-control"], "no-store")
+        page = allowed.json()
+        self.assertEqual(page["limit"], 1)
+        self.assertEqual(page["offset"], 0)
+        self.assertEqual(len(page["items"]), 1)
+        serialized = json.dumps(page)
+        self.assertNotIn("api-owner@example.com", serialized)
+
+        invalid_filter = self.client.get(
+            "/api/v1/admin/audit/auth-events?action=not-an-action",
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(invalid_filter.status_code, 422)
+
     def register_and_login(
         self,
         *,

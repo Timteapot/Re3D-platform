@@ -109,7 +109,7 @@ JWT 验证允许最多 5 秒的主机时钟偏差，用于容纳 API 与 Postgre
 .\.venv\Scripts\python.exe -m apps.maintenance.main cleanup-auth-security
 ```
 
-可通过 `--event-retention-days`、`--action-token-retention-days`、`--throttle-retention-days` 和 `--limit` 临时覆盖配置。该命令只清理认证安全表，不删除用户、refresh session、重建任务或任务文件。正式部署时应由计划任务定期运行并监控返回的 JSON 结果。当前尚未实现受管理员权限保护的审计查询后台。
+可通过 `--event-retention-days`、`--action-token-retention-days`、`--throttle-retention-days` 和 `--limit` 临时覆盖配置。该命令只清理认证安全表，不删除用户、refresh session、重建任务或任务文件。正式部署时应由计划任务定期运行并监控返回的 JSON 结果。受管理员权限保护的只读审计 API 已实现，脱敏字段和首名管理员引导见 [`admin-audit.md`](admin-audit.md)；管理员前端、二次验证和细分权限仍未实现。
 
 ## 6. Cookie 与环境约束
 

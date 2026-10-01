@@ -51,7 +51,7 @@ class ProductionReadinessTests(unittest.TestCase):
                 return_value={
                     "name": "re3d_platform",
                     "role": "re3d_runtime",
-                    "migration": "0011_success_retention_runs",
+                    "migration": "0012_admin_audit",
                 },
             ),
             patch(
@@ -107,7 +107,7 @@ class ProductionReadinessTests(unittest.TestCase):
                 return_value={
                     "name": "re3d_platform",
                     "role": "re3d_runtime",
-                    "migration": "0011_success_retention_runs",
+                    "migration": "0012_admin_audit",
                 },
             ),
             patch(
@@ -179,7 +179,7 @@ class ProductionReadinessTests(unittest.TestCase):
                 return_value={
                     "name": "re3d_platform",
                     "role": "re3d_runtime",
-                    "migration": "0011_success_retention_runs",
+                    "migration": "0012_admin_audit",
                 },
             ),
             patch(

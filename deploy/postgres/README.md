@@ -47,7 +47,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\deploy\postgres\verify
 
 `0004_upload_lifecycle` 增加取消时间、取消原因、目录清理完成时间和维护查询索引。迁移本身只修改数据库结构，不删除任何任务目录。
 
-`0005_auth_audit_throttle` 增加脱敏认证事件和共享登录限流桶；`0006_registration_throttle` 增加共享注册尝试限流桶；`0007_auth_action_tokens` 增加邮箱验证、密码重置一次性令牌及请求限流桶；`0008_failed_job_storage_cleanup` 增加失败/取消任务文件清理审计字段；`0009_task_submission_policy` 增加任务创建/取消审计表；`0010_success_storage_retention` 增加成功任务分层保留审计字段；`0011_success_retention_runs` 保存每次 dry-run 和执行的策略快照及无敏感信息摘要。迁移本身不删除文件，也不修改已有用户密码、refresh token 或任务终态。
+`0005_auth_audit_throttle` 增加脱敏认证事件和共享登录限流桶；`0006_registration_throttle` 增加共享注册尝试限流桶；`0007_auth_action_tokens` 增加邮箱验证、密码重置一次性令牌及请求限流桶；`0008_failed_job_storage_cleanup` 增加失败/取消任务文件清理审计字段；`0009_task_submission_policy` 增加任务创建/取消审计表；`0010_success_storage_retention` 增加成功任务分层保留审计字段；`0011_success_retention_runs` 保存每次 dry-run 和执行的策略快照及无敏感信息摘要；`0012_admin_audit` 增加管理员角色变更审计。迁移本身不删除文件，也不修改已有用户密码、refresh token 或任务终态。
 
 ## 生产数据库权限模型
 
@@ -95,7 +95,7 @@ DATABASE_URL=postgresql+psycopg://re3d_runtime:<URL编码后的密码>@127.0.0.1
 
 脚本生成 PostgreSQL custom-format 文件和同名 `.sha256` 文件。数据库备份包含用户邮箱、认证状态、令牌摘要、审计记录和任务元数据，必须加密存储、限制读取并保存到另一故障域；当前脚本没有替代异地备份策略。
 
-恢复演练只允许恢复到脚本生成的 `re3d_restore_test_<随机值>` 临时库，验证校验和、Alembic revision 和 13 张必需表，完成后强制断开连接并删除临时库：
+恢复演练只允许恢复到脚本生成的 `re3d_restore_test_<随机值>` 临时库，验证校验和、Alembic revision 和 15 张必需表，完成后强制断开连接并删除临时库：
 
 ```powershell
 & .\deploy\postgres\test-production-restore.ps1 `
