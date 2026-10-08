@@ -15,6 +15,7 @@ SELECT NOT EXISTS (
         VALUES
             ('alembic_version'),
             ('admin_role_change_events'),
+            ('api_rate_limit_buckets'),
             ('auth_action_request_buckets'),
             ('auth_action_tokens'),
             ('auth_events'),
@@ -51,5 +52,5 @@ SELECT EXISTS (
 SELECT
     current_database() AS restored_database,
     :'expected_revision' AS migration_revision,
-    15 AS required_table_count,
+    16 AS required_table_count,
     'verified' AS restore_status;

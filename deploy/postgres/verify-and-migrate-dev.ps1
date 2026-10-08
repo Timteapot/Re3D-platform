@@ -85,6 +85,7 @@ SELECT resource_key, job_id, worker_id, expires_at FROM worker_leases;
 SELECT count(*) AS development_job_count FROM reconstruction_jobs;
 SELECT count(*) AS success_retention_run_count FROM success_retention_runs;
 SELECT count(*) AS admin_role_change_event_count FROM admin_role_change_events;
+SELECT count(*) AS api_rate_limit_bucket_count FROM api_rate_limit_buckets;
 SELECT count(*) AS task_action_event_count FROM task_action_events;
 SELECT count(*) AS development_user_count FROM users;
 SELECT count(*) AS open_upload_count

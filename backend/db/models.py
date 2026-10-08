@@ -321,6 +321,26 @@ class AuthActionRequestBucket(Base):
     )
 
 
+class ApiRateLimitBucket(Base):
+    __tablename__ = "api_rate_limit_buckets"
+    __table_args__ = (
+        CheckConstraint(
+            "request_count >= 0",
+            name="ck_api_rate_limit_request_count",
+        ),
+        Index("ix_api_rate_limit_updated_at", "updated_at"),
+    )
+
+    key_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    request_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    window_started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
 class JobUpload(Base):
     __tablename__ = "job_uploads"
     __table_args__ = (

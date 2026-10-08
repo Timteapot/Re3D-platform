@@ -9,6 +9,7 @@ from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.db.models import (
+    ApiRateLimitBucket,
     AuthActionRequestBucket,
     AuthActionToken,
     AuthEvent,
@@ -231,12 +232,32 @@ class AuthMaintenanceService:
                 ),
             )
 
+            api_rate_limit_keys = list(
+                session.execute(
+                    select(ApiRateLimitBucket.key_hash)
+                    .where(ApiRateLimitBucket.updated_at < throttle_cutoff)
+                    .order_by(
+                        ApiRateLimitBucket.updated_at,
+                        ApiRateLimitBucket.key_hash,
+                    )
+                    .limit(configured_limit)
+                ).scalars()
+            )
+            api_rate_limit_buckets_deleted = _delete_ids(
+                session,
+                ApiRateLimitBucket,
+                ApiRateLimitBucket.key_hash,
+                api_rate_limit_keys,
+                ApiRateLimitBucket.updated_at < throttle_cutoff,
+            )
+
         return {
             "events_deleted": events_deleted,
             "action_tokens_deleted": action_tokens_deleted,
             "login_buckets_deleted": login_buckets_deleted,
             "registration_buckets_deleted": registration_buckets_deleted,
             "action_request_buckets_deleted": action_request_buckets_deleted,
+            "api_rate_limit_buckets_deleted": api_rate_limit_buckets_deleted,
             "event_cutoff": event_cutoff.isoformat(),
             "action_token_cutoff": action_token_cutoff.isoformat(),
             "throttle_cutoff": throttle_cutoff.isoformat(),

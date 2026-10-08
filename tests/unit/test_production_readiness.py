@@ -29,6 +29,8 @@ class ProductionReadinessTests(unittest.TestCase):
             "APP_ENV": "production",
             "APP_PUBLIC_BASE_URL": "https://re3d.user-domain.cn",
             "AUTH_TRUSTED_PROXY_CIDRS": "127.0.0.1/32,::1/128",
+            "API_IP_RATE_LIMIT_WINDOW_SECONDS": "60",
+            "API_IP_RATE_LIMIT_MAX_REQUESTS": "300",
             "DATABASE_URL": (
                 "postgresql+psycopg://re3d_runtime:database-secret@"
                 "127.0.0.1:5432/re3d_platform"
@@ -51,7 +53,7 @@ class ProductionReadinessTests(unittest.TestCase):
                 return_value={
                     "name": "re3d_platform",
                     "role": "re3d_runtime",
-                    "migration": "0012_admin_audit",
+                    "migration": "0013_api_ip_rate_limit",
                 },
             ),
             patch(
@@ -87,6 +89,14 @@ class ProductionReadinessTests(unittest.TestCase):
                 "max_submissions_per_24h": 10,
             },
         )
+        self.assertEqual(
+            report["api_ip_rate_limit"],
+            {
+                "window_seconds": 60,
+                "max_requests": 300,
+                "backend": "database",
+            },
+        )
 
     def test_worker_check_does_not_require_web_or_email_secrets(self) -> None:
         environment = {
@@ -107,7 +117,7 @@ class ProductionReadinessTests(unittest.TestCase):
                 return_value={
                     "name": "re3d_platform",
                     "role": "re3d_runtime",
-                    "migration": "0012_admin_audit",
+                    "migration": "0013_api_ip_rate_limit",
                 },
             ),
             patch(
@@ -179,7 +189,7 @@ class ProductionReadinessTests(unittest.TestCase):
                 return_value={
                     "name": "re3d_platform",
                     "role": "re3d_runtime",
-                    "migration": "0012_admin_audit",
+                    "migration": "0013_api_ip_rate_limit",
                 },
             ),
             patch(
@@ -210,6 +220,8 @@ class ProductionReadinessTests(unittest.TestCase):
             "APP_ENV": "production",
             "APP_PUBLIC_BASE_URL": "https://re3d.example.com",
             "AUTH_TRUSTED_PROXY_CIDRS": "127.0.0.1/32",
+            "API_IP_RATE_LIMIT_WINDOW_SECONDS": "60",
+            "API_IP_RATE_LIMIT_MAX_REQUESTS": "300",
             "JWT_SECRET": "a" * 64,
             "REFRESH_COOKIE_SECURE": "true",
             "SMTP_FROM": "no-reply@example.com",

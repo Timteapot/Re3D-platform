@@ -16,6 +16,7 @@ from sqlalchemy.orm import sessionmaker
 from apps.maintenance.main import main as maintenance_main
 from backend.auth import AuthMaintenanceService, AuthMaintenanceSettings
 from backend.db.models import (
+    ApiRateLimitBucket,
     AuthActionRequestBucket,
     AuthActionToken,
     AuthEvent,
@@ -100,6 +101,8 @@ class AuthMaintenanceTests(unittest.TestCase):
                         old,
                         blocked_until=now + timedelta(hours=1),
                     ),
+                    _api_rate_limit_bucket("old-api-rate", old),
+                    _api_rate_limit_bucket("recent-api-rate", recent),
                 ]
             )
 
@@ -117,6 +120,7 @@ class AuthMaintenanceTests(unittest.TestCase):
         self.assertEqual(report["login_buckets_deleted"], 1)
         self.assertEqual(report["registration_buckets_deleted"], 1)
         self.assertEqual(report["action_request_buckets_deleted"], 1)
+        self.assertEqual(report["api_rate_limit_buckets_deleted"], 1)
         with self.sessions() as session:
             event_reasons = set(session.execute(select(AuthEvent.reason_code)).scalars())
             login_keys = set(
@@ -131,6 +135,9 @@ class AuthMaintenanceTests(unittest.TestCase):
             action_request_keys = set(
                 session.execute(select(AuthActionRequestBucket.key_hash)).scalars()
             )
+            api_rate_limit_keys = set(
+                session.execute(select(ApiRateLimitBucket.key_hash)).scalars()
+            )
         self.assertEqual(event_reasons, {"recent"})
         self.assertEqual(login_keys, {"active-login", "recent-login"})
         self.assertEqual(
@@ -140,6 +147,7 @@ class AuthMaintenanceTests(unittest.TestCase):
         self.assertEqual(len(action_tokens), 1)
         self.assertEqual(action_tokens[0].token_sha256, "b" * 64)
         self.assertEqual(action_request_keys, {"active-action-request"})
+        self.assertEqual(api_rate_limit_keys, {"recent-api-rate"})
 
     def test_cleanup_batch_limit_and_command_output(self) -> None:
         old = datetime.now(timezone.utc) - timedelta(days=365)
@@ -196,6 +204,18 @@ def _event(occurred_at: datetime, reason_code: str) -> AuthEvent:
         outcome="failure",
         reason_code=reason_code,
         occurred_at=occurred_at,
+    )
+
+
+def _api_rate_limit_bucket(
+    key_hash: str,
+    updated_at: datetime,
+) -> ApiRateLimitBucket:
+    return ApiRateLimitBucket(
+        key_hash=key_hash,
+        request_count=1,
+        window_started_at=updated_at,
+        updated_at=updated_at,
     )
 
 

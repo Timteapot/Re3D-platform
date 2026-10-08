@@ -9,6 +9,7 @@ import uuid
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -130,9 +131,19 @@ class PostgreSQLApiWorkerFlowTests(unittest.TestCase):
         self.assertEqual(replaced[0].replaced_by_id, active[0].id)
 
     def test_production_upload_submission_defaults_to_real(self) -> None:
-        production = TestClient(
-            create_app(services=self.services, app_env="production")
-        )
+        with patch.dict(
+            "os.environ",
+            {
+                "API_IP_RATE_LIMIT_WINDOW_SECONDS": "60",
+                "API_IP_RATE_LIMIT_MAX_REQUESTS": "300",
+            },
+            clear=False,
+        ):
+            production_app = create_app(
+                services=self.services,
+                app_env="production",
+            )
+        production = TestClient(production_app)
         headers = {"Authorization": f"Bearer {self.access_token}"}
         try:
             created = production.post(

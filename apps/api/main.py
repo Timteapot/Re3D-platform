@@ -15,6 +15,7 @@ from apps.api.jobs import (
     create_development_job_router,
     create_job_router,
 )
+from apps.api.rate_limit import ApiIpRateLimitMiddleware
 from apps.api.uploads import create_upload_router
 from backend.auth import (
     AuthEmailSettings,
@@ -31,6 +32,7 @@ from backend.db.runtime import (
 )
 from backend.jobs import TaskSubmissionSettings
 from backend.jobs.development import DevelopmentJobService
+from backend.rate_limit import ApiRateLimitService, ApiRateLimitSettings
 from backend.uploads import UploadService, UploadSettings
 
 
@@ -95,6 +97,20 @@ def create_app(
 
     resolved_services = services or build_services(environment=environment)
     app.state.services = resolved_services
+    rate_limit_settings = ApiRateLimitSettings.from_environment(
+        environment=environment,
+        fingerprint_secret=resolved_services.auth.settings.jwt_secret,
+    )
+    rate_limiter = ApiRateLimitService(
+        resolved_services.auth.session_factory,
+        rate_limit_settings,
+    )
+    app.state.api_rate_limiter = rate_limiter
+    app.add_middleware(
+        ApiIpRateLimitMiddleware,
+        limiter=rate_limiter,
+        trusted_proxy_cidrs=resolved_services.auth.settings.trusted_proxy_cidrs,
+    )
     auth_router, current_user, verified_user = create_auth_router(
         resolved_services.auth
     )

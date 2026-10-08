@@ -28,6 +28,7 @@ from backend.jobs import (
     TaskSubmissionSettings,
 )
 from backend.monitoring import ResourceMonitorSettings
+from backend.rate_limit import ApiRateLimitSettings
 from backend.re3d_adapter.real import verify_re3d_installation
 from backend.re3d_adapter.settings import Re3DSettings, WorkerSettings
 from backend.uploads import UploadSettings
@@ -43,7 +44,11 @@ def check_local_readiness() -> dict[str, Any]:
     if environment != "development":
         raise ValueError("APP_ENV must be development for local readiness checks")
 
-    AuthSettings.from_environment(environment=environment)
+    auth = AuthSettings.from_environment(environment=environment)
+    api_rate_limit = ApiRateLimitSettings.from_environment(
+        environment=environment,
+        fingerprint_secret=auth.jwt_secret,
+    )
     task_submission = TaskSubmissionSettings.from_environment(
         environment=environment
     )
@@ -134,6 +139,11 @@ def check_local_readiness() -> dict[str, Any]:
                 task_submission.max_submissions_per_24h
             ),
         },
+        "api_ip_rate_limit": {
+            "window_seconds": api_rate_limit.window_seconds,
+            "max_requests": api_rate_limit.ip_max_requests,
+            "backend": "database",
+        },
         "smtp": smtp_summary,
     }
 
@@ -165,6 +175,10 @@ def check_production_readiness(
     if component in {"api", "all"}:
         auth = AuthSettings.from_environment(environment=environment)
         _validate_production_proxy_networks(auth.trusted_proxy_cidrs)
+        api_rate_limit = ApiRateLimitSettings.from_environment(
+            environment=environment,
+            fingerprint_secret=auth.jwt_secret,
+        )
         email = AuthEmailSettings.from_environment(environment=environment)
         _validate_production_email_identity(email)
         uploads = UploadSettings.from_environment()
@@ -174,6 +188,11 @@ def check_production_readiness(
         response["authentication"] = {
             "cookie_secure": auth.cookie_secure,
             "trusted_proxy_network_count": len(auth.trusted_proxy_cidrs),
+        }
+        response["api_ip_rate_limit"] = {
+            "window_seconds": api_rate_limit.window_seconds,
+            "max_requests": api_rate_limit.ip_max_requests,
+            "backend": "database",
         }
         response["public_base_url"] = email.public_base_url
         response["smtp"] = _check_smtp(email)

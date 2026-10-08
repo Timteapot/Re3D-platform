@@ -124,6 +124,52 @@ class ApiWorkerFlowTests(unittest.TestCase):
         )
         self.assertEqual(invalid_filter.status_code, 422)
 
+    def test_ordinary_api_ip_limit_is_shared_and_health_is_exempt(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "API_IP_RATE_LIMIT_WINDOW_SECONDS": "60",
+                "API_IP_RATE_LIMIT_MAX_REQUESTS": "2",
+            },
+            clear=False,
+        ):
+            limited_app = create_app(services=self.services, app_env="test")
+
+        with TestClient(
+            limited_app,
+            client=("127.0.0.1", 51000),
+        ) as limited_client:
+            for _ in range(3):
+                self.assertEqual(
+                    limited_client.get("/health/live").status_code,
+                    200,
+                )
+
+            first = limited_client.get(
+                "/api/v1/jobs",
+                headers=self.auth_headers(self.access_token),
+            )
+            second = limited_client.get(
+                "/api/v1/jobs",
+                headers=self.auth_headers(self.access_token),
+            )
+            blocked = limited_client.get(
+                "/api/v1/jobs",
+                headers=self.auth_headers(self.access_token),
+            )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.headers["x-ratelimit-remaining"], "1")
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(second.headers["x-ratelimit-remaining"], "0")
+        self.assertEqual(blocked.status_code, 429)
+        self.assertEqual(
+            blocked.headers["x-re3d-error-code"],
+            "API_IP_RATE_LIMITED",
+        )
+        self.assertEqual(blocked.headers["cache-control"], "no-store")
+        self.assertGreaterEqual(int(blocked.headers["retry-after"]), 1)
+
     def register_and_login(
         self,
         *,
@@ -349,9 +395,19 @@ class ApiWorkerFlowTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(json.loads(stdout.getvalue())["status"], "idle")
 
-        production = TestClient(
-            create_app(services=self.services, app_env="production")
-        )
+        with patch.dict(
+            "os.environ",
+            {
+                "API_IP_RATE_LIMIT_WINDOW_SECONDS": "60",
+                "API_IP_RATE_LIMIT_MAX_REQUESTS": "300",
+            },
+            clear=False,
+        ):
+            production_app = create_app(
+                services=self.services,
+                app_env="production",
+            )
+        production = TestClient(production_app)
         try:
             response = production.post(
                 "/api/v1/development/simulated-jobs",
@@ -393,9 +449,19 @@ class ApiWorkerFlowTests(unittest.TestCase):
             production.close()
 
     def test_production_upload_submission_is_real_only(self) -> None:
-        production = TestClient(
-            create_app(services=self.services, app_env="production")
-        )
+        with patch.dict(
+            "os.environ",
+            {
+                "API_IP_RATE_LIMIT_WINDOW_SECONDS": "60",
+                "API_IP_RATE_LIMIT_MAX_REQUESTS": "300",
+            },
+            clear=False,
+        ):
+            production_app = create_app(
+                services=self.services,
+                app_env="production",
+            )
+        production = TestClient(production_app)
         headers = self.auth_headers(self.access_token)
         try:
             created = production.post(

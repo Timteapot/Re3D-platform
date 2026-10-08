@@ -15,6 +15,7 @@ from backend.db.errors import LeaseLostError
 from backend.admin import AdminRoleService
 from backend.db.models import (
     AdminRoleChangeEvent,
+    ApiRateLimitBucket,
     ReconstructionJob,
     SuccessRetentionRun,
     User,
@@ -30,6 +31,7 @@ from backend.jobs.policy import (
     TaskSubmissionSettings,
 )
 from backend.jobs.retention import SuccessRetentionRunner, SuccessRetentionSettings
+from backend.rate_limit import ApiRateLimitService, ApiRateLimitSettings
 from tests.integration.postgres_support import validated_test_database_url
 
 
@@ -119,6 +121,11 @@ class PostgreSQLJobQueueIntegrationTests(unittest.TestCase):
                 session.query(User).filter(User.id.in_(role_user_ids)).delete(
                     synchronize_session=False
                 )
+            rate_limit_started_at = getattr(self, "rate_limit_started_at", None)
+            if rate_limit_started_at is not None:
+                session.query(ApiRateLimitBucket).filter(
+                    ApiRateLimitBucket.window_started_at == rate_limit_started_at
+                ).delete(synchronize_session=False)
             session.query(User).filter(User.id == self.user_id).delete(
                 synchronize_session=False
             )
@@ -318,6 +325,55 @@ class PostgreSQLJobQueueIntegrationTests(unittest.TestCase):
             ).scalar_one()
         self.assertEqual(active_admin_count, 1)
         self.assertEqual(role_event_count, 1)
+
+    def test_concurrent_api_rate_limit_consumption_is_shared(self) -> None:
+        self.rate_limit_started_at = datetime(
+            2099,
+            1,
+            1,
+            tzinfo=timezone.utc,
+        )
+        service = ApiRateLimitService(
+            self.sessions,
+            ApiRateLimitSettings(
+                fingerprint_secret="postgres-rate-limit-test-" + "x" * 64,
+                window_seconds=60,
+                ip_max_requests=1,
+            ),
+        )
+        source = f"integration-test-{uuid.uuid4()}"
+        barrier = threading.Barrier(2)
+        decisions: list[bool] = []
+        failures: list[BaseException] = []
+
+        def consume() -> None:
+            try:
+                barrier.wait(timeout=5)
+                decision = service.consume(
+                    client_ip=source,
+                    now=self.rate_limit_started_at,
+                )
+                decisions.append(decision.allowed)
+            except BaseException as exc:  # pragma: no cover - diagnostic path
+                failures.append(exc)
+
+        workers = [threading.Thread(target=consume) for _ in range(2)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=10)
+
+        self.assertFalse(any(worker.is_alive() for worker in workers))
+        self.assertEqual(failures, [])
+        self.assertCountEqual(decisions, [True, False])
+        with self.sessions() as session:
+            bucket = session.execute(
+                select(ApiRateLimitBucket).where(
+                    ApiRateLimitBucket.window_started_at
+                    == self.rate_limit_started_at
+                )
+            ).scalar_one()
+        self.assertEqual(bucket.request_count, 1)
 
     def test_failed_job_storage_cleanup_is_audited(self) -> None:
         job_id = self.enqueue(priority=1)
