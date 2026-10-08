@@ -61,3 +61,5 @@ RE3D_NVIDIA_SMI_PATH=C:/Windows/System32/nvidia-smi.exe
 采样文件跟随任务目录保留策略：失败/取消任务会在宽限期后连同目录删除；成功任务的资源样本属于 `runtime` 层，只会在显式配置保留天数并执行成功任务清理后删除。成功任务的精简空间摘要位于 `reports`，当前三层清理不会删除它。后续的集中指标和告警仍不应依赖永久保留任务目录。
 
 2026-09-30 已在当前 Windows 开发机上验证 CPU、内存、数据盘和 NVIDIA GeForce RTX 4060 Laptop GPU 采样。2026-10-08 增加任务目录分层采样和空间峰值摘要；其自动化测试使用受控小文件，不替代目标服务器的真实数据规模与服务账户 GPU 权限验收。
+
+多个任务摘要的筛选、聚合和预留建议由只读 `report-storage-capacity` 维护命令完成，详见 [`storage-capacity-calibration.md`](storage-capacity-calibration.md)。

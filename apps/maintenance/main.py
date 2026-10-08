@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import uuid
+from pathlib import Path
 
 from backend.admin import AdminRoleService
 from backend.auth import AuthMaintenanceService, AuthMaintenanceSettings
@@ -12,6 +14,7 @@ from backend.db.runtime import (
     create_database_engine,
     create_session_factory,
 )
+from backend.monitoring import StorageCalibrationSettings, StorageCapacityReporter
 from backend.re3d_adapter import AdapterError
 from .readiness import check_local_readiness, check_production_readiness
 
@@ -58,6 +61,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Required acknowledgement for a persisted role change",
     )
+    storage_report = subparsers.add_parser(
+        "report-storage-capacity",
+        description=(
+            "Aggregate complete task storage summaries into a private capacity report"
+        ),
+    )
+    storage_report.add_argument("--data-root")
+    storage_report.add_argument("--minimum-samples", type=int)
+    storage_report.add_argument("--safety-factor")
+    storage_report.add_argument("--rounding-mib", type=int)
     return parser
 
 
@@ -112,6 +125,18 @@ def main(argv: list[str] | None = None) -> int:
                 }
             finally:
                 engine.dispose()
+        elif args.command == "report-storage-capacity":
+            configured_root = args.data_root or os.environ.get("RE3D_DATA_ROOT")
+            if not configured_root:
+                raise ValueError("RE3D_DATA_ROOT is required")
+            response = StorageCapacityReporter(
+                Path(configured_root),
+                settings=StorageCalibrationSettings.from_values(
+                    minimum_samples=args.minimum_samples,
+                    safety_factor=args.safety_factor,
+                    rounding_mib=args.rounding_mib,
+                ),
+            ).build()
         else:
             raise ValueError(f"unsupported maintenance command: {args.command}")
     except (AdapterError, ValueError) as exc:

@@ -44,7 +44,7 @@ def assert_invalid(
 class ContractSchemaTests(unittest.TestCase):
     def test_all_schemas_are_valid_draft_2020_12(self) -> None:
         schema_paths = sorted(SCHEMA_ROOT.glob("*.schema.json"))
-        self.assertEqual(len(schema_paths), 6)
+        self.assertEqual(len(schema_paths), 7)
         for schema_path in schema_paths:
             with self.subTest(schema=schema_path.name):
                 Draft202012Validator.check_schema(load_json(schema_path))
@@ -121,6 +121,11 @@ class ContractSchemaTests(unittest.TestCase):
     def test_valid_storage_usage_summary(self) -> None:
         validator("storage-usage").validate(
             load_json(EXAMPLE_ROOT / "storage-usage.json")
+        )
+
+    def test_valid_storage_capacity_report(self) -> None:
+        validator("storage-capacity-report").validate(
+            load_json(EXAMPLE_ROOT / "storage-capacity-report.json")
         )
 
     def test_evaluation_rejects_invalid_score_and_path_traversal(self) -> None:

@@ -1,0 +1,99 @@
+{
+  "branches": [
+    {
+      "aggregate_output_share_percent": 37.5,
+      "maximum_bytes": 420000000,
+      "name": "A-v4",
+      "p50_bytes": 400000000,
+      "p95_bytes": 420000000
+    },
+    {
+      "aggregate_output_share_percent": 32.81,
+      "maximum_bytes": 370000000,
+      "name": "B-v2",
+      "p50_bytes": 350000000,
+      "p95_bytes": 370000000
+    },
+    {
+      "aggregate_output_share_percent": 29.69,
+      "maximum_bytes": 330000000,
+      "name": "C",
+      "p50_bytes": 323741824,
+      "p95_bytes": 330000000
+    }
+  ],
+  "contract_version": "1.0",
+  "final_tiers": [
+    {
+      "aggregate_share_percent": 10.88,
+      "maximum_bytes": 524288000,
+      "name": "input",
+      "p50_bytes": 524288000,
+      "p95_bytes": 524288000
+    },
+    {
+      "aggregate_share_percent": 66.84,
+      "maximum_bytes": 3221225472,
+      "name": "runtime",
+      "p50_bytes": 3221225472,
+      "p95_bytes": 3221225472
+    },
+    {
+      "aggregate_share_percent": 22.28,
+      "maximum_bytes": 1073741824,
+      "name": "output",
+      "p50_bytes": 1073741824,
+      "p95_bytes": 1073741824
+    },
+    {
+      "aggregate_share_percent": 0.0,
+      "maximum_bytes": 65536,
+      "name": "reports",
+      "p50_bytes": 65536,
+      "p95_bytes": 65536
+    },
+    {
+      "aggregate_share_percent": 0.0,
+      "maximum_bytes": 32768,
+      "name": "manifests",
+      "p50_bytes": 32768,
+      "p95_bytes": 32768
+    },
+    {
+      "aggregate_share_percent": 0.0,
+      "maximum_bytes": 0,
+      "name": "other",
+      "p50_bytes": 0,
+      "p95_bytes": 0
+    }
+  ],
+  "generated_at": "2026-10-08T02:00:00Z",
+  "limitations": [
+    "ONLY_COMPLETE_STORAGE_USAGE_SUMMARIES_INCLUDED",
+    "PERIODIC_SAMPLING_MAY_UNDERESTIMATE_SHORT_LIVED_FILES",
+    "WORKLOAD_REPRESENTATIVENESS_REQUIRES_OPERATOR_REVIEW"
+  ],
+  "operation": "report-storage-capacity",
+  "percentile_method": "NEAREST_RANK",
+  "recommendation": {
+    "basis": "OBSERVED_MAXIMUM_PEAK",
+    "observed_maximum_bytes": 5300000000,
+    "recommended_reservation_bytes": 6710886400,
+    "scaled_bytes": 6625000000
+  },
+  "rounding_bytes": 268435456,
+  "safety_factor": 1.25,
+  "selection": {
+    "complete_samples": 5,
+    "discovered_summaries": 6,
+    "excluded_non_complete_samples": 1,
+    "invalid_samples": 0,
+    "minimum_samples": 5
+  },
+  "status": "ready",
+  "task_peak_bytes": {
+    "maximum_bytes": 5300000000,
+    "p50_bytes": 5000000000,
+    "p95_bytes": 5300000000
+  }
+}
