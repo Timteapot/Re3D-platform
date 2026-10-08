@@ -171,6 +171,7 @@ class FailedJobStorageCleaner:
                 return "failed"
 
             job.storage_cleaned_at = current
+            job.storage_released_at = current
             job.storage_cleanup_last_error = None
             return "cleaned" if existed else "absent"
 

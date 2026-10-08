@@ -67,6 +67,7 @@ class JobQueue:
         idempotency_key: str,
         priority: int = 0,
         attempt: int = 1,
+        storage_reserved_bytes: int = 0,
     ) -> None:
         try:
             with self.session_factory.begin() as session:
@@ -82,6 +83,7 @@ class JobQueue:
                     idempotency_key=idempotency_key,
                     priority=priority,
                     attempt=attempt,
+                    storage_reserved_bytes=storage_reserved_bytes,
                 )
         except DatabaseIntegrityError as exc:
             raise QueueConflictError(
@@ -102,6 +104,7 @@ class JobQueue:
         idempotency_key: str,
         priority: int = 0,
         attempt: int = 1,
+        storage_reserved_bytes: int = 0,
     ) -> None:
         """Add a queued job to an existing transaction.
 
@@ -112,6 +115,8 @@ class JobQueue:
             raise ValueError("execution_mode must be simulated or real")
         if attempt < 1:
             raise ValueError("attempt must be at least 1")
+        if storage_reserved_bytes < 0:
+            raise ValueError("storage_reserved_bytes must not be negative")
         for name, digest in (
             ("config_sha256", config_sha256),
             ("input_manifest_sha256", input_manifest_sha256),
@@ -136,6 +141,7 @@ class JobQueue:
                 config_sha256=config_sha256,
                 input_manifest_sha256=input_manifest_sha256,
                 idempotency_key=idempotency_key,
+                storage_reserved_bytes=storage_reserved_bytes,
                 queued_at=now,
                 updated_at=now,
             )
@@ -455,6 +461,8 @@ def _job_snapshot(job: ReconstructionJob) -> dict[str, Any]:
         "queued_at": job.queued_at,
         "started_at": job.started_at,
         "finished_at": job.finished_at,
+        "storage_reserved_bytes": job.storage_reserved_bytes,
+        "storage_released_at": job.storage_released_at,
         "storage_cleaned_at": job.storage_cleaned_at,
         "storage_cleanup_attempted_at": job.storage_cleanup_attempted_at,
         "storage_cleanup_attempts": job.storage_cleanup_attempts,

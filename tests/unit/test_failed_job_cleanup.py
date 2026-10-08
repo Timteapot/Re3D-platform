@@ -66,6 +66,7 @@ class FailedJobStorageCleanerTests(unittest.TestCase):
             config_sha256="a" * 64,
             input_manifest_sha256="b" * 64,
             idempotency_key=uuid.uuid4().hex * 2,
+            storage_reserved_bytes=2048,
         )
         task_root = self.jobs_root / str(job_id)
         task_root.mkdir()
@@ -133,6 +134,7 @@ class FailedJobStorageCleanerTests(unittest.TestCase):
             success = session.get(ReconstructionJob, succeeded)
             assert cleaned is not None and success is not None
             self.assertIsNotNone(cleaned.storage_cleaned_at)
+            self.assertIsNotNone(cleaned.storage_released_at)
             self.assertEqual(cleaned.storage_cleanup_attempts, 1)
             self.assertIsNone(cleaned.storage_cleanup_last_error)
             self.assertIsNone(success.storage_cleaned_at)
@@ -165,6 +167,7 @@ class FailedJobStorageCleanerTests(unittest.TestCase):
                 "TASK_DIRECTORY_REMOVE_FAILED",
             )
             self.assertIsNone(failed.storage_cleaned_at)
+            self.assertIsNone(failed.storage_released_at)
 
         self.assertEqual(self.cleaner.cleanup_job(job_id), "cleaned")
         with self.sessions() as session:
@@ -173,6 +176,7 @@ class FailedJobStorageCleanerTests(unittest.TestCase):
             self.assertEqual(cleaned.storage_cleanup_attempts, 2)
             self.assertIsNone(cleaned.storage_cleanup_last_error)
             self.assertIsNotNone(cleaned.storage_cleaned_at)
+            self.assertIsNotNone(cleaned.storage_released_at)
 
     def test_non_directory_target_is_rejected_without_deleting_it(self) -> None:
         job_id = self.enqueue()
@@ -198,6 +202,7 @@ class FailedJobStorageCleanerTests(unittest.TestCase):
         self.assertEqual(self.cleaner.cleanup_job(job_id), "absent")
         snapshot = self.queue.get_job(job_id)
         self.assertIsNotNone(snapshot["storage_cleaned_at"])
+        self.assertIsNotNone(snapshot["storage_released_at"])
 
     def test_cleanup_command_outputs_safe_report(self) -> None:
         job_id = self.enqueue()

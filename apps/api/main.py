@@ -33,7 +33,7 @@ from backend.db.runtime import (
 from backend.jobs import TaskSubmissionSettings
 from backend.jobs.development import DevelopmentJobService
 from backend.rate_limit import ApiRateLimitService, ApiRateLimitSettings
-from backend.uploads import UploadService, UploadSettings
+from backend.uploads import StorageQuotaSettings, UploadService, UploadSettings
 
 
 DEVELOPMENT_ENVIRONMENTS = {"development", "test"}
@@ -73,6 +73,9 @@ def build_services(*, environment: str) -> AppServices:
         data_root=Path(configured_data_root),
         settings=UploadSettings.from_environment(),
         submission_settings=TaskSubmissionSettings.from_environment(
+            environment=environment
+        ),
+        quota_settings=StorageQuotaSettings.from_environment(
             environment=environment
         ),
     )

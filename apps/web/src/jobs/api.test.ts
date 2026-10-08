@@ -7,6 +7,7 @@ import {
   deleteUploadedImage,
   fetchJobArtifact,
   getJobDetail,
+  getStorageQuota,
   listJobs,
   submitUpload,
   uploadImage,
@@ -37,6 +38,12 @@ describe("job upload API", () => {
       method: "POST",
       body: JSON.stringify({ idempotency_key: "browser-request-001" }),
     });
+  });
+
+  it("loads the authenticated user's storage quota", async () => {
+    const request = vi.fn().mockResolvedValue({ used_bytes: 0 });
+    await getStorageQuota(request);
+    expect(request).toHaveBeenCalledWith("/api/v1/uploads/quota");
   });
 
   it("sends an image as multipart form data", async () => {

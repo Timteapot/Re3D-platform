@@ -31,7 +31,7 @@ from backend.monitoring import ResourceMonitorSettings
 from backend.rate_limit import ApiRateLimitSettings
 from backend.re3d_adapter.real import verify_re3d_installation
 from backend.re3d_adapter.settings import Re3DSettings, WorkerSettings
-from backend.uploads import UploadSettings
+from backend.uploads import StorageQuotaSettings, UploadSettings
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -50,6 +50,9 @@ def check_local_readiness() -> dict[str, Any]:
         fingerprint_secret=auth.jwt_secret,
     )
     task_submission = TaskSubmissionSettings.from_environment(
+        environment=environment
+    )
+    storage_quota = StorageQuotaSettings.from_environment(
         environment=environment
     )
     email = AuthEmailSettings.from_environment(environment=environment)
@@ -139,6 +142,11 @@ def check_local_readiness() -> dict[str, Any]:
                 task_submission.max_submissions_per_24h
             ),
         },
+        "user_storage_quota": {
+            "quota_bytes": storage_quota.quota_bytes,
+            "job_reservation_bytes": storage_quota.job_reservation_bytes,
+            "accounting_backend": "database",
+        },
         "api_ip_rate_limit": {
             "window_seconds": api_rate_limit.window_seconds,
             "max_requests": api_rate_limit.ip_max_requests,
@@ -185,6 +193,17 @@ def check_production_readiness(
         task_submission = TaskSubmissionSettings.from_environment(
             environment=environment
         )
+        storage_quota = StorageQuotaSettings.from_environment(
+            environment=environment
+        )
+        if storage_quota.job_reservation_bytes < max(
+            1024**3,
+            uploads.max_total_bytes,
+        ):
+            raise ValueError(
+                "RE3D_JOB_STORAGE_RESERVATION_BYTES must be at least 1 GiB "
+                "and UPLOAD_MAX_TOTAL_BYTES"
+            )
         response["authentication"] = {
             "cookie_secure": auth.cookie_secure,
             "trusted_proxy_network_count": len(auth.trusted_proxy_cidrs),
@@ -206,6 +225,11 @@ def check_production_readiness(
             "max_submissions_per_24h": (
                 task_submission.max_submissions_per_24h
             ),
+        }
+        response["user_storage_quota"] = {
+            "quota_bytes": storage_quota.quota_bytes,
+            "job_reservation_bytes": storage_quota.job_reservation_bytes,
+            "accounting_backend": "database",
         }
 
     database = DatabaseSettings.from_environment()

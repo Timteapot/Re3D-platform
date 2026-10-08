@@ -26,6 +26,8 @@ from backend.jobs import (
     TaskSubmissionSettings,
 )
 from backend.uploads import (
+    StorageQuotaExceededError,
+    StorageQuotaSettings,
     UploadCapacityError,
     UploadConflictError,
     UploadNotFoundError,
@@ -355,6 +357,112 @@ class UploadServiceTests(unittest.TestCase):
             Counter({"job_submitted": 2, "cancel_requested": 2}),
         )
 
+    def test_user_storage_quota_aggregates_uploads_and_reserves_jobs(self) -> None:
+        service = UploadService(
+            self.sessions,
+            self.queue,
+            data_root=self.data_root,
+            settings=UploadSettings(
+                max_file_bytes=1024,
+                max_total_bytes=1024,
+                max_pixels=1_000_000,
+            ),
+            quota_settings=StorageQuotaSettings(
+                quota_bytes=1536 * 1024**2,
+                job_reservation_bytes=1024**3,
+            ),
+        )
+
+        first = self._prepare_upload(service, "quota-first-upload")
+        first = service.get(
+            upload_id=first["upload_id"],
+            user_id=self.user_id,
+        )
+        first_usage = service.storage_quota(user_id=self.user_id)
+        self.assertEqual(first_usage["upload_bytes"], first["total_bytes"])
+        self.assertEqual(first_usage["reserved_job_bytes"], 0)
+
+        submitted = service.submit(
+            upload_id=first["upload_id"],
+            user_id=self.user_id,
+        )
+        self.assertEqual(submitted["storage_reserved_bytes"], 1024**3)
+        submitted_usage = service.storage_quota(user_id=self.user_id)
+        self.assertEqual(submitted_usage["upload_bytes"], 0)
+        self.assertEqual(submitted_usage["reserved_job_bytes"], 1024**3)
+
+        second = self._prepare_upload(service, "quota-second-upload")
+        with self.assertRaises(StorageQuotaExceededError):
+            service.submit(
+                upload_id=second["upload_id"],
+                user_id=self.user_id,
+            )
+        current = service.get(
+            upload_id=second["upload_id"],
+            user_id=self.user_id,
+        )
+        self.assertEqual(current["status"], "uploading")
+        self.assertFalse(
+            (
+                self.data_root
+                / "jobs"
+                / str(second["upload_id"])
+                / "manifests"
+                / "pipeline-request.json"
+            ).exists()
+        )
+
+        cancelled = service.cancel(
+            upload_id=second["upload_id"],
+            user_id=self.user_id,
+        )
+        self.assertTrue(cancelled["storage_removed"])
+        released = service.storage_quota(user_id=self.user_id)
+        self.assertEqual(released["used_bytes"], 1024**3)
+
+    def test_quota_settings_are_explicit_in_production(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaisesRegex(
+                ValueError,
+                "RE3D_USER_STORAGE_QUOTA_BYTES",
+            ):
+                StorageQuotaSettings.from_environment(environment="production")
+
+        with patch.dict(
+            "os.environ",
+            {
+                "RE3D_USER_STORAGE_QUOTA_BYTES": "4096",
+                "RE3D_JOB_STORAGE_RESERVATION_BYTES": "2048",
+            },
+            clear=True,
+        ):
+            settings = StorageQuotaSettings.from_environment(
+                environment="production"
+            )
+        self.assertEqual(settings.quota_bytes, 4096)
+        self.assertEqual(settings.job_reservation_bytes, 2048)
+
+        with self.assertRaisesRegex(ValueError, "must not exceed"):
+            StorageQuotaSettings(
+                quota_bytes=1024,
+                job_reservation_bytes=2048,
+            )
+        with self.assertRaisesRegex(ValueError, "at least 1 GiB"):
+            UploadService(
+                self.sessions,
+                self.queue,
+                data_root=self.data_root,
+                settings=UploadSettings(
+                    max_file_bytes=1024,
+                    max_total_bytes=1024,
+                    max_pixels=1_000_000,
+                ),
+                quota_settings=StorageQuotaSettings(
+                    quota_bytes=4096,
+                    job_reservation_bytes=2048,
+                ),
+            )
+
     def _prepare_upload(
         self,
         service: UploadService,
@@ -435,6 +543,12 @@ class UploadServiceTests(unittest.TestCase):
             user_id=self.user_id,
             idempotency_token="upload-unit-retry",
         )
+        retry = self.service.add_image(
+            upload_id=retry["upload_id"],
+            user_id=self.user_id,
+            source=io.BytesIO(self.png_bytes((30, 40, 50))),
+            original_name="retry.png",
+        )
         now = datetime.now(timezone.utc)
         with self.sessions.begin() as session:
             stale_record = session.get(JobUpload, stale["upload_id"])
@@ -452,6 +566,10 @@ class UploadServiceTests(unittest.TestCase):
                 )
         self.assertFalse(cancelled["storage_removed"])
         self.assertIsNone(cancelled["storage_cleaned_at"])
+        self.assertEqual(
+            self.service.storage_quota(user_id=self.user_id)["upload_bytes"],
+            retry["total_bytes"],
+        )
 
         report = self.service.cleanup_stale(
             now=now,
@@ -462,6 +580,10 @@ class UploadServiceTests(unittest.TestCase):
         self.assertEqual(report["expired"], 1)
         self.assertEqual(report["storage_cleaned"], 2)
         self.assertEqual(report["storage_cleanup_failures"], [])
+        self.assertEqual(
+            self.service.storage_quota(user_id=self.user_id)["upload_bytes"],
+            0,
+        )
         self.assertEqual(
             self.service.get(
                 upload_id=stale["upload_id"],

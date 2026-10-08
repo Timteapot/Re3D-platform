@@ -8,6 +8,7 @@ import {
   cancelUpload,
   createUpload,
   deleteUploadedImage,
+  getStorageQuota,
   listJobs,
   submitUpload,
   uploadImage,
@@ -54,6 +55,10 @@ function readableError(error: unknown): string {
       return "请先完成邮箱验证，再创建或提交重建任务。";
     }
     if (error.status === 413) return "图片或任务总大小超过后端限制。";
+    if (error.status === 507 && error.message === "user storage quota exceeded") {
+      return "账号存储配额不足。请删除未提交图片，或等待已有任务按保留策略清理。";
+    }
+    if (error.status === 507) return "服务器存储安全余量不足，请稍后再试。";
     if (error.status === 409) return `上传冲突：${error.message}`;
     if (error.status === 422) return `图片未通过校验：${error.message}`;
     return error.message;
@@ -63,6 +68,9 @@ function readableError(error: unknown): string {
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes >= 1024 * 1024 * 1024) {
+    return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GiB`;
+  }
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
@@ -97,6 +105,17 @@ export function WorkspacePage() {
       return data?.some((job) => ACTIVE_STATUSES.has(job.status)) ? 3000 : false;
     },
   });
+  const storageQuota = useQuery({
+    queryKey: ["storage-quota", auth.user?.id],
+    queryFn: () => getStorageQuota(auth.request),
+    enabled: auth.status === "authenticated",
+  });
+
+  function refreshStorageQuota() {
+    void queryClient.invalidateQueries({
+      queryKey: ["storage-quota", auth.user?.id],
+    });
+  }
 
   const uploadFiles = useMutation({
     mutationFn: async (selected: File[]) => {
@@ -139,6 +158,7 @@ export function WorkspacePage() {
       uploadAbort.current = null;
       setBatchTotal(0);
       setUploadedCount(0);
+      refreshStorageQuota();
     },
   });
 
@@ -154,6 +174,7 @@ export function WorkspacePage() {
     onSuccess: (session) => {
       setUploadSession(session);
       setOperationNotice("图片已从未提交上传中删除。");
+      refreshStorageQuota();
     },
   });
 
@@ -166,6 +187,7 @@ export function WorkspacePage() {
       draftKey.current = crypto.randomUUID();
       setOperationNotice("输入已冻结，任务已进入模拟队列。");
       void queryClient.invalidateQueries({ queryKey: ["jobs", auth.user?.id] });
+      refreshStorageQuota();
     },
   });
 
@@ -188,6 +210,7 @@ export function WorkspacePage() {
           ? "上传已取消，未提交图片目录已经删除。"
           : "上传已取消，目录将由维护任务再次清理。",
       );
+      refreshStorageQuota();
     },
   });
 
@@ -215,6 +238,15 @@ export function WorkspacePage() {
       return;
     }
     const selectedBytes = selected.reduce((total, file) => total + file.size, 0);
+    if (
+      storageQuota.data !== undefined &&
+      selectedBytes > storageQuota.data.remaining_bytes
+    ) {
+      setFiles([]);
+      setSelectionError("所选图片超过账号当前剩余存储配额。");
+      event.target.value = "";
+      return;
+    }
     const existingBytes = uploadSession?.total_bytes ?? 0;
     if (existingBytes + selectedBytes > MAX_TOTAL_BYTES) {
       setFiles([]);
@@ -242,8 +274,14 @@ export function WorkspacePage() {
     submitDraft.isPending ||
     cancelDraft.isPending;
   const canUpload = emailVerified && files.length > 0 && !busy;
+  const hasSubmissionQuota =
+    storageQuota.data === undefined ||
+    uploadSession === null ||
+    storageQuota.data.used_bytes - uploadSession.total_bytes +
+      storageQuota.data.job_reservation_bytes <= storageQuota.data.quota_bytes;
   const canSubmit =
-    emailVerified && uploadSession !== null && uploadSession.image_count >= 3 && !busy;
+    emailVerified && uploadSession !== null && uploadSession.image_count >= 3 &&
+    hasSubmissionQuota && !busy;
   const progress =
     batchTotal > 0 ? Math.round((uploadedCount / batchTotal) * 100) : 0;
   const displayedLatestJob = latestJob
@@ -298,6 +336,21 @@ export function WorkspacePage() {
           <div className="card-label">INPUT</div>
           <h2>管理多视图输入</h2>
           <p>支持 JPEG、PNG，3–150 张，单张最大 25 MB、合计最大 1 GiB。图片先验证并保留在可修改上传中，确认后再冻结并入队。</p>
+          {storageQuota.data ? (
+            <div className="storage-quota" aria-live="polite">
+              <div>
+                <strong>账号存储 {formatBytes(storageQuota.data.used_bytes)} / {formatBytes(storageQuota.data.quota_bytes)}</strong>
+                <span>剩余 {formatBytes(storageQuota.data.remaining_bytes)}</span>
+              </div>
+              <progress
+                max={storageQuota.data.quota_bytes}
+                value={Math.min(storageQuota.data.used_bytes, storageQuota.data.quota_bytes)}
+              >
+                {storageQuota.data.used_bytes} / {storageQuota.data.quota_bytes}
+              </progress>
+              <small>提交任务将预留 {formatBytes(storageQuota.data.job_reservation_bytes)}，清理完成后释放。</small>
+            </div>
+          ) : null}
           <label className={`file-picker${emailVerified ? "" : " disabled"}`} htmlFor="reconstruction-images">
             <span>{emailVerified ? "选择一批图片" : "邮箱验证后开放图片上传"}</span>
             <small>{emailVerified ? "可分批添加；磁盘名称由平台生成" : "现有任务仍可正常查看"}</small>
@@ -423,6 +476,9 @@ export function WorkspacePage() {
           </div>
           {uploadSession && uploadSession.image_count < 3 ? (
             <p className="upload-hint">还需至少 {3 - uploadSession.image_count} 张有效图片才能提交。</p>
+          ) : null}
+          {!hasSubmissionQuota ? (
+            <p className="upload-hint">当前剩余配额不足以预留一个重建任务。</p>
           ) : null}
           <p className="privacy-note">图片可能包含 EXIF 位置信息；当前版本不会主动清除元数据，仅用于本机开发验证。</p>
         </article>

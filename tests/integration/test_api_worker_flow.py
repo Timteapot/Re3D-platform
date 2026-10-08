@@ -22,7 +22,11 @@ from backend.db.models import AuthEvent, Base, ReconstructionJob, User
 from backend.db.queue import JobQueue
 from backend.jobs import TaskSubmissionPolicy, TaskSubmissionSettings
 from backend.jobs.development import DevelopmentJobService
-from backend.uploads import UploadService, UploadSettings
+from backend.uploads import (
+    StorageQuotaExceededError,
+    UploadService,
+    UploadSettings,
+)
 
 
 TEST_SECRET = "api-flow-test-secret-" + "x" * 64
@@ -875,6 +879,47 @@ class ApiWorkerFlowTests(unittest.TestCase):
             "STORAGE_CAPACITY_FLOOR_REACHED",
         )
         self.assertEqual(response.headers["retry-after"], "300")
+
+    def test_storage_quota_endpoint_and_stable_507_contract(self) -> None:
+        quota = self.client.get(
+            "/api/v1/uploads/quota",
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(quota.status_code, 200)
+        self.assertEqual(quota.headers["cache-control"], "no-store")
+        self.assertEqual(quota.json()["used_bytes"], 0)
+        self.assertGreater(quota.json()["job_reservation_bytes"], 0)
+
+        created = self.client.post(
+            "/api/v1/uploads",
+            json={"idempotency_key": "quota-api-upload-001"},
+            headers=self.auth_headers(self.access_token),
+        )
+        upload_id = created.json()["upload_id"]
+        with patch.object(
+            self.services.uploads.quota,
+            "enforce_in_session",
+            side_effect=StorageQuotaExceededError("user storage quota exceeded"),
+        ):
+            response = self.client.post(
+                f"/api/v1/uploads/{upload_id}/images",
+                files={
+                    "file": (
+                        "quota.png",
+                        self.png_bytes((10, 20, 30)),
+                        "image/png",
+                    )
+                },
+                headers=self.auth_headers(self.access_token),
+            )
+
+        self.assertEqual(response.status_code, 507)
+        self.assertEqual(
+            response.headers["x-re3d-error-code"],
+            "USER_STORAGE_QUOTA_EXCEEDED",
+        )
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertNotIn("retry-after", response.headers)
 
     def test_upload_submission_limits_return_stable_429_contract(self) -> None:
         self.services.uploads.submission_policy = TaskSubmissionPolicy(

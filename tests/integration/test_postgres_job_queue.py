@@ -16,6 +16,7 @@ from backend.admin import AdminRoleService
 from backend.db.models import (
     AdminRoleChangeEvent,
     ApiRateLimitBucket,
+    JobUpload,
     ReconstructionJob,
     SuccessRetentionRun,
     User,
@@ -32,6 +33,11 @@ from backend.jobs.policy import (
 )
 from backend.jobs.retention import SuccessRetentionRunner, SuccessRetentionSettings
 from backend.rate_limit import ApiRateLimitService, ApiRateLimitSettings
+from backend.uploads import (
+    StorageQuotaExceededError,
+    StorageQuotaSettings,
+    UserStorageQuotaService,
+)
 from tests.integration.postgres_support import validated_test_database_url
 
 
@@ -259,6 +265,68 @@ class PostgreSQLJobQueueIntegrationTests(unittest.TestCase):
         self.assertFalse(any(worker.is_alive() for worker in workers))
         self.assertEqual(failures, [])
         self.assertCountEqual(results, ["accepted", PENDING_LIMIT_CODE])
+
+    def test_concurrent_storage_reservations_cannot_oversell_user_quota(
+        self,
+    ) -> None:
+        quota = UserStorageQuotaService(
+            StorageQuotaSettings(
+                quota_bytes=1024,
+                job_reservation_bytes=1,
+            )
+        )
+        first_ready = threading.Event()
+        second_started = threading.Event()
+        release_first = threading.Event()
+        results: list[str] = []
+        failures: list[BaseException] = []
+
+        def reserve(index: int) -> None:
+            upload_id = uuid.uuid4()
+            try:
+                if index == 1:
+                    first_ready.wait(timeout=5)
+                    second_started.set()
+                with self.sessions.begin() as session:
+                    quota.enforce_in_session(
+                        session,
+                        user_id=self.user_id,
+                        additional_bytes=700,
+                    )
+                    session.add(
+                        JobUpload(
+                            id=upload_id,
+                            user_id=self.user_id,
+                            status="uploading",
+                            idempotency_key=uuid.uuid4().hex * 2,
+                            image_count=1,
+                            total_bytes=700,
+                        )
+                    )
+                    if index == 0:
+                        first_ready.set()
+                        release_first.wait(timeout=5)
+                results.append("accepted")
+            except StorageQuotaExceededError:
+                results.append("quota_exceeded")
+            except BaseException as exc:  # pragma: no cover - diagnostic path
+                failures.append(exc)
+
+        workers = [
+            threading.Thread(target=reserve, args=(index,))
+            for index in range(2)
+        ]
+        for worker in workers:
+            worker.start()
+        self.assertTrue(first_ready.wait(timeout=5))
+        self.assertTrue(second_started.wait(timeout=5))
+        release_first.set()
+        for worker in workers:
+            worker.join(timeout=10)
+
+        self.assertFalse(any(worker.is_alive() for worker in workers))
+        self.assertEqual(failures, [])
+        self.assertCountEqual(results, ["accepted", "quota_exceeded"])
 
     def test_concurrent_admin_demotions_preserve_one_active_admin(self) -> None:
         self.role_user_ids = [uuid.uuid4(), uuid.uuid4()]

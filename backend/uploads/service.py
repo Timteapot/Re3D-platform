@@ -33,6 +33,10 @@ from .errors import (
     UploadValidationError,
 )
 from .settings import UploadSettings
+from .quota import (
+    StorageQuotaSettings,
+    UserStorageQuotaService,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -56,12 +60,20 @@ class UploadService:
         data_root: Path,
         settings: UploadSettings | None = None,
         submission_settings: TaskSubmissionSettings | None = None,
+        quota_settings: StorageQuotaSettings | None = None,
         baseline_path: Path = DEFAULT_BASELINE_PATH,
     ) -> None:
         self.sessions = session_factory
         self.queue = queue
         self.data_root = data_root.expanduser().resolve()
         self.settings = settings or UploadSettings()
+        self.quota = UserStorageQuotaService(quota_settings)
+        minimum_job_reservation = max(1024**3, self.settings.max_total_bytes)
+        if self.quota.settings.job_reservation_bytes < minimum_job_reservation:
+            raise ValueError(
+                "RE3D_JOB_STORAGE_RESERVATION_BYTES must be at least 1 GiB "
+                "and UPLOAD_MAX_TOTAL_BYTES"
+            )
         self.submission_policy = TaskSubmissionPolicy(submission_settings)
         self.baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
 
@@ -188,6 +200,11 @@ class UploadService:
                         )
                     if upload.total_bytes + size_bytes > self.settings.max_total_bytes:
                         raise UploadTooLargeError("upload total byte limit exceeded")
+                    self.quota.enforce_in_session(
+                        session,
+                        user_id=user_id,
+                        additional_bytes=size_bytes,
+                    )
                     duplicate = session.execute(
                         select(JobUploadImage.id).where(
                             JobUploadImage.upload_id == upload_id,
@@ -463,6 +480,12 @@ class UploadService:
                     session,
                     user_id=user_id,
                 )
+                self.quota.enforce_in_session(
+                    session,
+                    user_id=user_id,
+                    additional_bytes=self.quota.settings.job_reservation_bytes,
+                    replaced_upload_bytes=upload.total_bytes,
+                )
 
                 layout = TaskLayout.from_data_root(self.data_root, str(upload.id))
                 manifest = _build_manifest(layout, images, upload.total_bytes)
@@ -490,6 +513,9 @@ class UploadService:
                     config_sha256=request["pipeline"]["config_sha256"],
                     input_manifest_sha256=manifest_sha256,
                     idempotency_key=queue_key,
+                    storage_reserved_bytes=(
+                        self.quota.settings.job_reservation_bytes
+                    ),
                 )
                 self.submission_policy.record_in_session(
                     session,
@@ -506,6 +532,10 @@ class UploadService:
         except DatabaseIntegrityError as exc:
             raise UploadConflictError("upload submission identity conflict") from exc
         return self.queue.get_job(upload_id, user_id=user_id)
+
+    def storage_quota(self, *, user_id: uuid.UUID) -> dict[str, int]:
+        with self.sessions() as session:
+            return self.quota.snapshot(session, user_id=user_id).as_dict()
 
     def _ensure_storage_capacity(self, *, reserve_bytes: int = 0) -> None:
         minimum = self.settings.min_free_disk_bytes
@@ -564,10 +594,7 @@ class UploadService:
             },
             "limits": {
                 "timeout_seconds": 3600,
-                "max_disk_bytes": max(
-                    1024 * 1024 * 1024,
-                    self.settings.max_total_bytes,
-                ),
+                "max_disk_bytes": self.quota.settings.job_reservation_bytes,
                 "gpu_concurrency": 1,
             },
             "idempotency_key": queue_key,
@@ -718,7 +745,6 @@ def _mark_upload_cancelled(
     now = _database_now(session)
     upload.status = "cancelled"
     upload.image_count = 0
-    upload.total_bytes = 0
     upload.cancelled_at = now
     upload.cancellation_reason = reason
     upload.storage_cleaned_at = None
@@ -787,6 +813,8 @@ def _job_snapshot(job: ReconstructionJob) -> dict[str, Any]:
         "queued_at": job.queued_at,
         "started_at": job.started_at,
         "finished_at": job.finished_at,
+        "storage_reserved_bytes": job.storage_reserved_bytes,
+        "storage_released_at": job.storage_released_at,
         "storage_cleaned_at": job.storage_cleaned_at,
         "storage_cleanup_attempted_at": job.storage_cleanup_attempted_at,
         "storage_cleanup_attempts": job.storage_cleanup_attempts,

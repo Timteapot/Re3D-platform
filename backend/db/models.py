@@ -468,6 +468,21 @@ class ReconstructionJob(Base):
             "status",
             "finished_at",
         ),
+        Index(
+            "ix_jobs_user_storage_reservation",
+            "user_id",
+            "storage_released_at",
+        ),
+        CheckConstraint(
+            "storage_reserved_bytes >= 0",
+            name="ck_jobs_storage_reserved_bytes",
+        ),
+        CheckConstraint(
+            "storage_released_at IS NULL OR storage_cleaned_at IS NOT NULL OR "
+            "(input_cleaned_at IS NOT NULL AND runtime_cleaned_at IS NOT NULL "
+            "AND artifacts_cleaned_at IS NOT NULL)",
+            name="ck_jobs_storage_release_cleanup",
+        ),
         CheckConstraint(
             "storage_cleanup_attempts >= 0",
             name="ck_jobs_storage_cleanup_attempts",
@@ -532,6 +547,15 @@ class ReconstructionJob(Base):
     queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    storage_reserved_bytes: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+    storage_released_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     storage_cleaned_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True)
     )

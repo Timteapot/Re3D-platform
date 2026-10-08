@@ -39,6 +39,8 @@ class ProductionReadinessTests(unittest.TestCase):
             "REFRESH_COOKIE_SECURE": "true",
             "RE3D_USER_MAX_PENDING_JOBS": "2",
             "RE3D_USER_MAX_SUBMISSIONS_PER_24H": "10",
+            "RE3D_USER_STORAGE_QUOTA_BYTES": str(20 * 1024**3),
+            "RE3D_JOB_STORAGE_RESERVATION_BYTES": str(2 * 1024**3),
             "SMTP_FROM": "no-reply@user-domain.cn",
             "SMTP_HOST": "smtp.mail-provider.cn",
             "SMTP_PASSWORD": "smtp-secret",
@@ -53,7 +55,7 @@ class ProductionReadinessTests(unittest.TestCase):
                 return_value={
                     "name": "re3d_platform",
                     "role": "re3d_runtime",
-                    "migration": "0013_api_ip_rate_limit",
+                    "migration": "0014_user_storage_quota",
                 },
             ),
             patch(
@@ -97,6 +99,14 @@ class ProductionReadinessTests(unittest.TestCase):
                 "backend": "database",
             },
         )
+        self.assertEqual(
+            report["user_storage_quota"],
+            {
+                "quota_bytes": 20 * 1024**3,
+                "job_reservation_bytes": 2 * 1024**3,
+                "accounting_backend": "database",
+            },
+        )
 
     def test_worker_check_does_not_require_web_or_email_secrets(self) -> None:
         environment = {
@@ -117,7 +127,7 @@ class ProductionReadinessTests(unittest.TestCase):
                 return_value={
                     "name": "re3d_platform",
                     "role": "re3d_runtime",
-                    "migration": "0013_api_ip_rate_limit",
+                    "migration": "0014_user_storage_quota",
                 },
             ),
             patch(
@@ -189,7 +199,7 @@ class ProductionReadinessTests(unittest.TestCase):
                 return_value={
                     "name": "re3d_platform",
                     "role": "re3d_runtime",
-                    "migration": "0013_api_ip_rate_limit",
+                    "migration": "0014_user_storage_quota",
                 },
             ),
             patch(

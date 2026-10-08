@@ -11,6 +11,7 @@ from apps.api.auth import CurrentUserDependency, VerifiedUserDependency
 from backend.auth import UserIdentity
 from backend.jobs import TaskSubmissionLimitError
 from backend.uploads import (
+    StorageQuotaExceededError,
     UploadCapacityError,
     UploadConflictError,
     UploadNotFoundError,
@@ -62,6 +63,16 @@ class SubmittedJobResponse(BaseModel):
     queued_at: datetime
 
 
+class StorageQuotaResponse(BaseModel):
+    quota_bytes: int
+    used_bytes: int
+    remaining_bytes: int
+    over_quota_bytes: int
+    upload_bytes: int
+    reserved_job_bytes: int
+    job_reservation_bytes: int
+
+
 ExecutionMode = Literal["simulated", "real"]
 
 
@@ -106,6 +117,14 @@ def create_upload_router(
             response.status_code = status.HTTP_200_OK
         return UploadResponse(**snapshot, reused=reused)
 
+    @router.get("/quota", response_model=StorageQuotaResponse)
+    def get_storage_quota(
+        response: Response,
+        user: UserIdentity = Depends(current_user),
+    ) -> StorageQuotaResponse:
+        response.headers["Cache-Control"] = "no-store"
+        return StorageQuotaResponse(**service.storage_quota(user_id=user.id))
+
     @router.get("/{upload_id}", response_model=UploadResponse)
     def get_upload(
         upload_id: uuid.UUID,
@@ -146,6 +165,8 @@ def create_upload_router(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except UploadCapacityError as exc:
             raise _storage_capacity_http_exception(exc) from exc
+        except StorageQuotaExceededError as exc:
+            raise _storage_quota_http_exception(exc) from exc
         finally:
             file.file.close()
 
@@ -232,6 +253,8 @@ def create_upload_router(
             ) from exc
         except UploadCapacityError as exc:
             raise _storage_capacity_http_exception(exc) from exc
+        except StorageQuotaExceededError as exc:
+            raise _storage_quota_http_exception(exc) from exc
         return SubmittedJobResponse(
             job_id=job["id"],
             status=job["status"],
@@ -251,5 +274,19 @@ def _storage_capacity_http_exception(exc: UploadCapacityError) -> HTTPException:
         headers={
             "X-Re3D-Error-Code": "STORAGE_CAPACITY_FLOOR_REACHED",
             "Retry-After": "300",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+def _storage_quota_http_exception(
+    exc: StorageQuotaExceededError,
+) -> HTTPException:
+    return HTTPException(
+        status_code=507,
+        detail=str(exc),
+        headers={
+            "X-Re3D-Error-Code": exc.reason_code,
+            "Cache-Control": "no-store",
         },
     )

@@ -69,6 +69,7 @@ class SuccessRetentionTests(unittest.TestCase):
             config_sha256="a" * 64,
             input_manifest_sha256="b" * 64,
             idempotency_key=uuid.uuid4().hex * 2,
+            storage_reserved_bytes=2048,
         )
         claim = self.queue.claim_next(worker_id=f"retention-{job_id.hex[:8]}")
         assert claim is not None
@@ -138,6 +139,7 @@ class SuccessRetentionTests(unittest.TestCase):
         self.assertIsNotNone(snapshot["input_cleaned_at"])
         self.assertIsNotNone(snapshot["runtime_cleaned_at"])
         self.assertIsNotNone(snapshot["artifacts_cleaned_at"])
+        self.assertIsNotNone(snapshot["storage_released_at"])
         self.assertEqual(snapshot["retention_cleanup_attempts"], 3)
         self.assertIsNone(snapshot["retention_cleanup_last_error"])
 
@@ -181,6 +183,34 @@ class SuccessRetentionTests(unittest.TestCase):
         self.assertEqual(retried["retention_cleanup_attempts"], 2)
         self.assertIsNone(retried["retention_cleanup_last_error"])
         self.assertIsNotNone(retried["input_cleaned_at"])
+        self.assertIsNone(retried["storage_released_at"])
+
+    def test_reservation_is_released_only_after_every_tier_is_cleaned(self) -> None:
+        now = datetime.now(timezone.utc)
+        job_id = self.create_success(finished_at=now - timedelta(days=2))
+
+        for tier in ("input", "runtime"):
+            self.assertEqual(
+                self.cleaner.cleanup_job_tier(
+                    job_id,
+                    tier=tier,
+                    retention_days=1,
+                    now=now,
+                ),
+                "cleaned",
+            )
+            self.assertIsNone(self.queue.get_job(job_id)["storage_released_at"])
+
+        self.assertEqual(
+            self.cleaner.cleanup_job_tier(
+                job_id,
+                tier="artifacts",
+                retention_days=1,
+                now=now,
+            ),
+            "cleaned",
+        )
+        self.assertIsNotNone(self.queue.get_job(job_id)["storage_released_at"])
 
     def test_non_directory_retention_target_is_preserved_and_audited(self) -> None:
         now = datetime.now(timezone.utc)

@@ -47,7 +47,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\deploy\postgres\verify
 
 `0004_upload_lifecycle` 增加取消时间、取消原因、目录清理完成时间和维护查询索引。迁移本身只修改数据库结构，不删除任何任务目录。
 
-`0005_auth_audit_throttle` 增加脱敏认证事件和共享登录限流桶；`0006_registration_throttle` 增加共享注册尝试限流桶；`0007_auth_action_tokens` 增加邮箱验证、密码重置一次性令牌及请求限流桶；`0008_failed_job_storage_cleanup` 增加失败/取消任务文件清理审计字段；`0009_task_submission_policy` 增加任务创建/取消审计表；`0010_success_storage_retention` 增加成功任务分层保留审计字段；`0011_success_retention_runs` 保存每次 dry-run 和执行的策略快照及无敏感信息摘要；`0012_admin_audit` 增加管理员角色变更审计；`0013_api_ip_rate_limit` 增加普通 API 来源 IP 的共享固定窗口计数。迁移本身不删除文件，也不修改已有用户密码、refresh token 或任务终态。
+`0005_auth_audit_throttle` 增加脱敏认证事件和共享登录限流桶；`0006_registration_throttle` 增加共享注册尝试限流桶；`0007_auth_action_tokens` 增加邮箱验证、密码重置一次性令牌及请求限流桶；`0008_failed_job_storage_cleanup` 增加失败/取消任务文件清理审计字段；`0009_task_submission_policy` 增加任务创建/取消审计表；`0010_success_storage_retention` 增加成功任务分层保留审计字段；`0011_success_retention_runs` 保存每次 dry-run 和执行的策略快照及无敏感信息摘要；`0012_admin_audit` 增加管理员角色变更审计；`0013_api_ip_rate_limit` 增加普通 API 来源 IP 的共享固定窗口计数；`0014_user_storage_quota` 增加任务存储预留量和释放时间。迁移只用已提交上传的实际输入字节回填历史任务，不删除文件，也不修改已有用户密码、refresh token 或任务终态。
 
 ## 生产数据库权限模型
 

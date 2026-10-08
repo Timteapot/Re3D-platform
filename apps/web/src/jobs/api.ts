@@ -29,6 +29,16 @@ export interface UploadCancellation extends UploadSession {
   storage_removed: boolean;
 }
 
+export interface StorageQuota {
+  quota_bytes: number;
+  used_bytes: number;
+  remaining_bytes: number;
+  over_quota_bytes: number;
+  upload_bytes: number;
+  reserved_job_bytes: number;
+  job_reservation_bytes: number;
+}
+
 export interface Job {
   job_id: string;
   user_id: string;
@@ -125,6 +135,12 @@ export function createUpload(
     body: JSON.stringify({ idempotency_key: idempotencyKey }),
     ...(signal ? { signal } : {}),
   });
+}
+
+export function getStorageQuota(
+  request: AuthorizedRequest,
+): Promise<StorageQuota> {
+  return request<StorageQuota>("/api/v1/uploads/quota");
 }
 
 export function uploadImage(

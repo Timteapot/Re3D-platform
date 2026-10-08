@@ -243,6 +243,12 @@ class SuccessJobStorageCleaner:
                 assert_transition(job.status, JobStatus.EXPIRED)
                 job.status = JobStatus.EXPIRED.value
             setattr(job, cleaned_field, current)
+            if (
+                job.input_cleaned_at is not None
+                and job.runtime_cleaned_at is not None
+                and job.artifacts_cleaned_at is not None
+            ):
+                job.storage_released_at = current
             if job.retention_cleanup_last_error == error_code:
                 job.retention_cleanup_last_error = None
             return "cleaned" if existed else "absent"

@@ -7,6 +7,7 @@
 | 方法 | 路径 | 作用 |
 |---|---|---|
 | POST | `/api/v1/uploads` | 创建或复用当前用户的上传会话 |
+| GET | `/api/v1/uploads/quota` | 查询当前用户的存储配额、占用和任务预留值 |
 | GET | `/api/v1/uploads/{upload_id}` | 查询上传数量、字节数和图片元数据 |
 | POST | `/api/v1/uploads/{upload_id}/images` | 使用 multipart 字段 `file` 上传一张图片 |
 | DELETE | `/api/v1/uploads/{upload_id}/images/{image_id}` | 删除未提交会话中的一张图片 |
@@ -30,15 +31,16 @@
 
 1. 锁定上传会话；
 2. 验证至少三张图片以及数据库计数；
-3. 锁定所属用户，并检查非终态任务数与滚动 24 小时提交数；
-4. 重新检查目录文件集合、大小和 SHA-256；
-5. 原子写入 `input-manifest.json` 和 `pipeline-request.json`；
-6. 插入 `queued` 任务和 `job_submitted` 审计；
-7. 把上传状态改为 `submitted`。
+3. 锁定所属用户，并检查非终态任务数、滚动 24 小时提交数和用户存储配额；
+4. 把当前上传实际字节替换为固定任务预留量，避免输入与任务重复计费；
+5. 重新检查目录文件集合、大小和 SHA-256；
+6. 原子写入 `input-manifest.json` 和 `pipeline-request.json`；
+7. 插入带存储预留的 `queued` 任务和 `job_submitted` 审计；
+8. 把上传状态改为 `submitted`。
 
 因此未完成的上传不会被 Worker 领取，数据库也不会出现已经提交但没有队列任务的正常状态。
 
-单张删除只允许发生在 `uploading` 状态。文件先原子移动到任务内 staging 墓碑，再删除数据库元数据；数据库事务失败时文件会移回原位。上传取消会先把数据库状态改为 `cancelled` 并删除图片元数据，然后只删除 `Re3D-data/jobs/<upload_uuid>` 对应目录。已经提交的上传不能使用上传取消接口，必须改走任务取消流程。
+单张删除只允许发生在 `uploading` 状态。文件先原子移动到任务内 staging 墓碑，再删除数据库元数据；数据库事务失败时文件会移回原位。上传取消会先把数据库状态改为 `cancelled` 并删除图片元数据，但保留总字节数用于目录删除失败时继续计费，然后只删除 `Re3D-data/jobs/<upload_uuid>` 对应目录。已经提交的上传不能使用上传取消接口，必须改走任务取消流程。
 
 ## 3. 输入安全规则
 
@@ -62,11 +64,15 @@ UPLOAD_STALE_AFTER_HOURS=24
 UPLOAD_CLEANUP_BATCH_SIZE=100
 RE3D_USER_MAX_PENDING_JOBS=3
 RE3D_USER_MAX_SUBMISSIONS_PER_24H=20
+RE3D_USER_STORAGE_QUOTA_BYTES=10737418240
+RE3D_JOB_STORAGE_RESERVATION_BYTES=2147483648
 ```
 
 服务会拒绝不合理的配置值。反向代理仍需设置请求体大小、请求速率和连接超时；应用层限制不能替代代理层的早期拒绝。
 
 生产 `RE3D_MIN_FREE_DISK_BYTES` 同时作为运行时上传安全线。创建会话、写入图片和提交任务前若可用空间不足，API 返回 507 和 `STORAGE_CAPACITY_FLOOR_REACHED`；写入 staging 后跌破安全线时会删除该临时文件，不写入图片元数据。
+
+用户配额是另一条独立边界。未提交上传按 `job_uploads.total_bytes` 实际计费；提交后改由 `reconstruction_jobs.storage_reserved_bytes` 固定预留输入、中间文件和产物空间。超额返回 507 和 `USER_STORAGE_QUOTA_EXCEEDED`，不带 `Retry-After`，因为必须删除未提交数据或等待任务清理。生产必须显式设置两个值，任务预留不得小于 1 GiB 和单次上传总量，也不得大于用户总配额。详细释放规则和估算限制见 [`user-storage-quota.md`](user-storage-quota.md)。
 
 ## 4. 超时回收
 
@@ -85,7 +91,7 @@ cd D:\3Dreconstruction\Re3D-platform
 - 分块/断点续传和大文件对象存储；
 - EXIF 隐私元数据清除策略；当前保留原始图片内容；
 - 浏览器刷新后恢复未提交上传会话；
-- 单用户存储容量配额、Worker 中间文件空间估算，以及上传/下载的带宽与并发控制；普通接口来源 IP 请求频率限制已经实现；
+- Worker 中间文件峰值估算，以及上传/下载的带宽与并发控制；单用户逻辑存储配额和普通接口来源 IP 请求频率限制已经实现；
 - 上传病毒扫描、隔离进程解码和代理层请求限制；
 - 真实图片质量预检；
 - 任务详情、取消、SSE 进度和结果页面。
