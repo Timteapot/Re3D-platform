@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:re3d-platform:schema:storage-usage:1.0",
+  "title": "Re3D Task Storage Usage Summary",
+  "description": "Observed task-directory storage at the end of one real worker attempt.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "job_id",
+    "attempt",
+    "measured_at",
+    "status",
+    "resource_sample_interval_seconds",
+    "task_storage_interval_seconds",
+    "resource_sample_count",
+    "storage_observation_count",
+    "final",
+    "peaks",
+    "errors",
+    "limitations"
+  ],
+  "properties": {
+    "contract_version": { "const": "1.0" },
+    "job_id": { "type": "string", "format": "uuid" },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "measured_at": { "type": "string", "format": "date-time" },
+    "status": { "enum": ["complete", "partial", "unavailable"] },
+    "resource_sample_interval_seconds": {
+      "type": "integer",
+      "minimum": 5,
+      "maximum": 300
+    },
+    "task_storage_interval_seconds": {
+      "type": "integer",
+      "minimum": 15,
+      "maximum": 3600
+    },
+    "resource_sample_count": { "type": "integer", "minimum": 0 },
+    "storage_observation_count": { "type": "integer", "minimum": 0 },
+    "final": {
+      "oneOf": [
+        { "$ref": "#/$defs/taskStorage" },
+        { "type": "null" }
+      ]
+    },
+    "peaks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total_bytes", "runtime_bytes", "output_bytes", "branches"],
+      "properties": {
+        "total_bytes": { "type": "integer", "minimum": 0 },
+        "runtime_bytes": { "type": "integer", "minimum": 0 },
+        "output_bytes": { "type": "integer", "minimum": 0 },
+        "branches": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/branchBytes" }
+        }
+      }
+    },
+    "errors": {
+      "type": "array",
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$" }
+    },
+    "limitations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$" }
+    }
+  },
+  "$defs": {
+    "taskStorage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total_bytes",
+        "input_bytes",
+        "runtime_bytes",
+        "output_bytes",
+        "reports_bytes",
+        "manifests_bytes",
+        "other_bytes",
+        "branches"
+      ],
+      "properties": {
+        "total_bytes": { "type": "integer", "minimum": 0 },
+        "input_bytes": { "type": "integer", "minimum": 0 },
+        "runtime_bytes": { "type": "integer", "minimum": 0 },
+        "output_bytes": { "type": "integer", "minimum": 0 },
+        "reports_bytes": { "type": "integer", "minimum": 0 },
+        "manifests_bytes": { "type": "integer", "minimum": 0 },
+        "other_bytes": { "type": "integer", "minimum": 0 },
+        "branches": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/branchBytes" }
+        }
+      }
+    },
+    "branchBytes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "used_bytes"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$"
+        },
+        "used_bytes": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

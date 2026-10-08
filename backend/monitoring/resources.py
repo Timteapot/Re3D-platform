@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -16,23 +17,34 @@ from pathlib import Path
 from typing import Any, Callable
 
 from backend.re3d_adapter.contracts import validate_contract
+from backend.re3d_adapter.io import atomic_write_json
+from backend.re3d_adapter.paths import TaskLayout
 
 
 LOGGER = logging.getLogger(__name__)
 GPU_RESOURCE_PATTERN = re.compile(r"^gpu:(\d+)$")
 MEBIBYTE = 1024 * 1024
+DEFAULT_BRANCHES = ("A-v4", "B-v2", "C")
+TASK_STORAGE_CATEGORIES = ("input", "runtime", "output", "reports", "manifests")
+STORAGE_SUMMARY_PARTS = ("reports", "storage-usage.json")
 
 
 @dataclass(frozen=True)
 class ResourceMonitorSettings:
     enabled: bool = True
     interval_seconds: int = 15
+    task_storage_interval_seconds: int = 60
     nvidia_smi_path: Path | None = None
 
     def __post_init__(self) -> None:
         if not 5 <= self.interval_seconds <= 300:
             raise ValueError(
                 "RE3D_RESOURCE_SAMPLE_INTERVAL_SECONDS must be between 5 and 300"
+            )
+        if not 15 <= self.task_storage_interval_seconds <= 3600:
+            raise ValueError(
+                "RE3D_TASK_STORAGE_SAMPLE_INTERVAL_SECONDS must be between "
+                "15 and 3600"
             )
         if self.nvidia_smi_path is not None and not self.nvidia_smi_path.is_file():
             raise ValueError("RE3D_NVIDIA_SMI_PATH must reference an existing file")
@@ -45,6 +57,10 @@ class ResourceMonitorSettings:
             interval_seconds=_read_int(
                 "RE3D_RESOURCE_SAMPLE_INTERVAL_SECONDS",
                 15,
+            ),
+            task_storage_interval_seconds=_read_int(
+                "RE3D_TASK_STORAGE_SAMPLE_INTERVAL_SECONDS",
+                60,
             ),
             nvidia_smi_path=(
                 Path(configured_path).expanduser().resolve()
@@ -203,6 +219,84 @@ class NvidiaSmiReader:
         return gpu, None
 
 
+class TaskStorageReader:
+    """Measure one canonical task directory without following links."""
+
+    def __init__(self, task_root: Path, *, branches: tuple[str, ...]) -> None:
+        self.task_root = task_root
+        self.branches = branches
+
+    def read(self) -> tuple[dict[str, Any], list[str]]:
+        category_bytes = {name: 0 for name in TASK_STORAGE_CATEGORIES}
+        branch_bytes = {name: 0 for name in self.branches}
+        other_bytes = 0
+        errors: set[str] = set()
+        stack: list[tuple[Path, tuple[str, ...]]] = [(self.task_root, ())]
+
+        while stack:
+            directory, relative_parts = stack.pop()
+            try:
+                with os.scandir(directory) as iterator:
+                    entries = list(iterator)
+            except OSError:
+                if directory == self.task_root:
+                    raise
+                errors.add("TASK_STORAGE_SAMPLE_FAILED")
+                continue
+            for entry in entries:
+                path = Path(entry.path)
+                try:
+                    if entry.is_symlink() or getattr(
+                        path,
+                        "is_junction",
+                        lambda: False,
+                    )():
+                        errors.add("TASK_STORAGE_LINK_SKIPPED")
+                        continue
+                    parts = (*relative_parts, entry.name)
+                    if entry.is_dir(follow_symlinks=False):
+                        stack.append((path, parts))
+                        continue
+                    if not entry.is_file(follow_symlinks=False):
+                        errors.add("TASK_STORAGE_SPECIAL_FILE_SKIPPED")
+                        continue
+                    if parts == STORAGE_SUMMARY_PARTS:
+                        continue
+                    size_bytes = entry.stat(follow_symlinks=False).st_size
+                except OSError:
+                    errors.add("TASK_STORAGE_SAMPLE_FAILED")
+                    continue
+
+                top_level = parts[0]
+                if top_level in category_bytes:
+                    category_bytes[top_level] += size_bytes
+                else:
+                    other_bytes += size_bytes
+                if (
+                    top_level == "output"
+                    and len(parts) >= 2
+                    and parts[1] in branch_bytes
+                ):
+                    branch_bytes[parts[1]] += size_bytes
+
+        total_bytes = sum(category_bytes.values()) + other_bytes
+        return (
+            {
+                "total_bytes": total_bytes,
+                **{
+                    f"{category}_bytes": category_bytes[category]
+                    for category in TASK_STORAGE_CATEGORIES
+                },
+                "other_bytes": other_bytes,
+                "branches": [
+                    {"name": branch, "used_bytes": branch_bytes[branch]}
+                    for branch in self.branches
+                ],
+            },
+            sorted(errors),
+        )
+
+
 class ResourceSampler:
     def __init__(
         self,
@@ -215,22 +309,42 @@ class ResourceSampler:
         nvidia_smi_path: Path | None = None,
         host_reader: HostResourceReader | None = None,
         gpu_reader: NvidiaSmiReader | None = None,
+        task_storage_reader: TaskStorageReader | None = None,
+        branches: tuple[str, ...] = DEFAULT_BRANCHES,
     ) -> None:
         self.data_root = data_root.expanduser().resolve()
         self.job_id = str(uuid.UUID(job_id))
         self.attempt = attempt
         self.worker_id = worker_id
+        if len(set(branches)) != len(branches) or not branches:
+            raise ValueError("resource sample branches must be unique and non-empty")
+        self.branches = branches
         self.host_reader = host_reader or HostResourceReader()
         self.gpu_reader = gpu_reader or NvidiaSmiReader(
             resource_key=resource_key,
             executable=nvidia_smi_path,
         )
+        layout = TaskLayout.from_data_root(self.data_root, self.job_id)
+        self.task_storage_reader = task_storage_reader or TaskStorageReader(
+            layout.root,
+            branches=branches,
+        )
+        self._peak_total_bytes = 0
+        self._peak_runtime_bytes = 0
+        self._peak_output_bytes = 0
+        self._peak_branch_bytes = {branch: 0 for branch in branches}
+        self._storage_observation_count = 0
+        self._storage_errors: set[str] = set()
 
-    def sample(self) -> dict[str, Any]:
+    def sample(self, *, include_task_storage: bool = True) -> dict[str, Any]:
         host, errors = self.host_reader.read(self.data_root)
         gpu, gpu_error = self.gpu_reader.read()
         if gpu_error is not None:
             errors.append(gpu_error)
+        task_storage: dict[str, Any] | None = None
+        if include_task_storage:
+            task_storage, storage_errors = self._read_task_storage()
+            errors.extend(storage_errors)
         unique_errors = sorted(set(errors))
         cpu_percent = host["cpu"]["utilization_percent"]
         status = (
@@ -252,8 +366,86 @@ class ResourceSampler:
             "gpu": gpu,
             "errors": unique_errors,
         }
+        if include_task_storage and task_storage is not None:
+            sample["task_storage"] = task_storage
         validate_contract("resource-sample", sample)
         return sample
+
+    def storage_summary(
+        self,
+        *,
+        resource_sample_count: int,
+        resource_sample_interval_seconds: int,
+        task_storage_interval_seconds: int,
+    ) -> dict[str, Any]:
+        final_storage, final_errors = self._read_task_storage()
+        self._storage_errors.update(final_errors)
+        status = (
+            "unavailable"
+            if final_storage is None
+            else "partial"
+            if self._storage_errors
+            else "complete"
+        )
+        summary = {
+            "contract_version": "1.0",
+            "job_id": self.job_id,
+            "attempt": self.attempt,
+            "measured_at": _utc_now(),
+            "status": status,
+            "resource_sample_interval_seconds": resource_sample_interval_seconds,
+            "task_storage_interval_seconds": task_storage_interval_seconds,
+            "resource_sample_count": resource_sample_count,
+            "storage_observation_count": self._storage_observation_count,
+            "final": final_storage,
+            "peaks": {
+                "total_bytes": self._peak_total_bytes,
+                "runtime_bytes": self._peak_runtime_bytes,
+                "output_bytes": self._peak_output_bytes,
+                "branches": [
+                    {
+                        "name": branch,
+                        "used_bytes": self._peak_branch_bytes[branch],
+                    }
+                    for branch in self.branches
+                ],
+            },
+            "errors": sorted(self._storage_errors),
+            "limitations": [
+                "PERIODIC_OBSERVATION_MAY_MISS_SHORT_LIVED_FILES",
+                "SUMMARY_FILE_BYTES_ARE_EXCLUDED",
+            ],
+        }
+        validate_contract("storage-usage", summary)
+        return summary
+
+    def _read_task_storage(self) -> tuple[dict[str, Any] | None, list[str]]:
+        try:
+            storage, errors = self.task_storage_reader.read()
+        except Exception:
+            self._storage_errors.add("TASK_STORAGE_SAMPLE_FAILED")
+            return None, ["TASK_STORAGE_SAMPLE_FAILED"]
+        self._storage_observation_count += 1
+        self._storage_errors.update(errors)
+        self._peak_total_bytes = max(
+            self._peak_total_bytes,
+            storage["total_bytes"],
+        )
+        self._peak_runtime_bytes = max(
+            self._peak_runtime_bytes,
+            storage["runtime_bytes"],
+        )
+        self._peak_output_bytes = max(
+            self._peak_output_bytes,
+            storage["output_bytes"],
+        )
+        for branch in storage["branches"]:
+            name = branch["name"]
+            self._peak_branch_bytes[name] = max(
+                self._peak_branch_bytes[name],
+                branch["used_bytes"],
+            )
+        return storage, errors
 
 
 class ResourceMonitor:
@@ -265,12 +457,16 @@ class ResourceMonitor:
         *,
         sampler: ResourceSampler,
         settings: ResourceMonitorSettings,
+        summary_path: Path | None = None,
     ) -> None:
         self.path = path
         self.sampler = sampler
         self.settings = settings
+        self.summary_path = summary_path
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._resource_sample_count = 0
+        self._last_task_storage_sample_at: float | None = None
 
     def __enter__(self) -> "ResourceMonitor":
         if not self.settings.enabled:
@@ -291,7 +487,8 @@ class ResourceMonitor:
         if self._thread.is_alive():
             LOGGER.error("Resource monitor did not stop for job %s", self.sampler.job_id)
             return
-        self._write_sample()
+        self._write_sample(force_task_storage=True)
+        self._write_storage_summary()
 
     def _run(self) -> None:
         while True:
@@ -299,9 +496,18 @@ class ResourceMonitor:
             if self._stop.wait(self.settings.interval_seconds):
                 return
 
-    def _write_sample(self) -> None:
+    def _write_sample(self, *, force_task_storage: bool = False) -> None:
         try:
-            sample = self.sampler.sample()
+            now = time.monotonic()
+            include_task_storage = (
+                force_task_storage
+                or self._last_task_storage_sample_at is None
+                or now - self._last_task_storage_sample_at
+                >= self.settings.task_storage_interval_seconds
+            )
+            sample = self.sampler.sample(
+                include_task_storage=include_task_storage,
+            )
             self.path.parent.mkdir(parents=True, exist_ok=True)
             line = (
                 json.dumps(sample, ensure_ascii=False, separators=(",", ":")) + "\n"
@@ -317,8 +523,29 @@ class ResourceMonitor:
                 os.fsync(descriptor)
             finally:
                 os.close(descriptor)
+            self._resource_sample_count += 1
+            if include_task_storage:
+                self._last_task_storage_sample_at = now
         except Exception:
             LOGGER.exception("Resource sampling failed for job %s", self.sampler.job_id)
+
+    def _write_storage_summary(self) -> None:
+        if self.summary_path is None:
+            return
+        try:
+            summary = self.sampler.storage_summary(
+                resource_sample_count=self._resource_sample_count,
+                resource_sample_interval_seconds=self.settings.interval_seconds,
+                task_storage_interval_seconds=(
+                    self.settings.task_storage_interval_seconds
+                ),
+            )
+            atomic_write_json(self.summary_path, summary)
+        except Exception:
+            LOGGER.exception(
+                "Task storage summary failed for job %s",
+                self.sampler.job_id,
+            )
 
 
 def _read_bool(name: str, default: bool) -> bool:

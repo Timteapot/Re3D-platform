@@ -101,7 +101,7 @@ Vite 开发服务器只绑定 `127.0.0.1:5173`，并将 `/api` 代理到本机 F
 
 数据库队列的设计、初始化和当前边界见 [`docs/database-queue.md`](docs/database-queue.md)。
 失败/取消任务的自动文件清理、审计字段和人工重试命令见 [`docs/failed-job-storage-cleanup.md`](docs/failed-job-storage-cleanup.md)。
-真实任务 CPU、内存、数据盘和 GPU 私有采样契约见 [`docs/resource-monitoring.md`](docs/resource-monitoring.md)。
+真实任务 CPU、内存、数据盘、GPU 和任务目录空间峰值的私有采样契约见 [`docs/resource-monitoring.md`](docs/resource-monitoring.md)。
 管理员审计查询、脱敏边界和首名管理员引导见 [`docs/admin-audit.md`](docs/admin-audit.md)。
 普通 API 来源 IP 限流、可信代理边界和 429 合同见 [`docs/api-rate-limiting.md`](docs/api-rate-limiting.md)。
 单用户存储计费、释放时机、507 合同和当前估算边界见 [`docs/user-storage-quota.md`](docs/user-storage-quota.md)。

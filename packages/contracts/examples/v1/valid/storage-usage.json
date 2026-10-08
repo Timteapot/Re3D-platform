@@ -1,0 +1,40 @@
+{
+  "attempt": 1,
+  "contract_version": "1.0",
+  "errors": [],
+  "final": {
+    "branches": [
+      { "name": "A-v4", "used_bytes": 400000000 },
+      { "name": "B-v2", "used_bytes": 350000000 },
+      { "name": "C", "used_bytes": 323741824 }
+    ],
+    "input_bytes": 524288000,
+    "manifests_bytes": 32768,
+    "other_bytes": 0,
+    "output_bytes": 1073741824,
+    "reports_bytes": 65536,
+    "runtime_bytes": 3221225472,
+    "total_bytes": 4819353600
+  },
+  "job_id": "11111111-1111-4111-8111-111111111111",
+  "limitations": [
+    "PERIODIC_OBSERVATION_MAY_MISS_SHORT_LIVED_FILES",
+    "SUMMARY_FILE_BYTES_ARE_EXCLUDED"
+  ],
+  "measured_at": "2026-09-30T12:05:00Z",
+  "peaks": {
+    "branches": [
+      { "name": "A-v4", "used_bytes": 420000000 },
+      { "name": "B-v2", "used_bytes": 370000000 },
+      { "name": "C", "used_bytes": 330000000 }
+    ],
+    "output_bytes": 1200000000,
+    "runtime_bytes": 4000000000,
+    "total_bytes": 5300000000
+  },
+  "resource_sample_count": 21,
+  "resource_sample_interval_seconds": 15,
+  "status": "complete",
+  "storage_observation_count": 7,
+  "task_storage_interval_seconds": 60
+}

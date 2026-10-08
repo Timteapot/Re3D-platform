@@ -51,6 +51,9 @@
         "utilization_percent": { "type": ["number", "null"], "minimum": 0, "maximum": 100 }
       }
     },
+    "task_storage": {
+      "$ref": "#/$defs/taskStorage"
+    },
     "gpu": {
       "type": "object",
       "additionalProperties": false,
@@ -94,6 +97,47 @@
         "used_bytes": { "type": ["integer", "null"], "minimum": 0 },
         "total_bytes": { "type": ["integer", "null"], "minimum": 0 },
         "utilization_percent": { "type": ["number", "null"], "minimum": 0, "maximum": 100 }
+      }
+    },
+    "taskStorage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total_bytes",
+        "input_bytes",
+        "runtime_bytes",
+        "output_bytes",
+        "reports_bytes",
+        "manifests_bytes",
+        "other_bytes",
+        "branches"
+      ],
+      "properties": {
+        "total_bytes": { "type": "integer", "minimum": 0 },
+        "input_bytes": { "type": "integer", "minimum": 0 },
+        "runtime_bytes": { "type": "integer", "minimum": 0 },
+        "output_bytes": { "type": "integer", "minimum": 0 },
+        "reports_bytes": { "type": "integer", "minimum": 0 },
+        "manifests_bytes": { "type": "integer", "minimum": 0 },
+        "other_bytes": { "type": "integer", "minimum": 0 },
+        "branches": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/branchBytes" }
+        }
+      }
+    },
+    "branchBytes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "used_bytes"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$"
+        },
+        "used_bytes": { "type": "integer", "minimum": 0 }
       }
     }
   }

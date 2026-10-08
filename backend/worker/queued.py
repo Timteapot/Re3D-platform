@@ -243,9 +243,11 @@ class QueuedRealWorker:
                     attempt=claim.attempt,
                     worker_id=self.worker_id,
                     resource_key=self.resource_key,
+                    branches=tuple(request["branches"]),
                     nvidia_smi_path=self.resource_monitor_settings.nvidia_smi_path,
                 ),
                 settings=self.resource_monitor_settings,
+                summary_path=layout.resolve("reports/storage-usage.json"),
             )
             _advance_to(self.queue, claim, JobStatus.SFM, progress=5)
             with LeaseHeartbeatLoop(

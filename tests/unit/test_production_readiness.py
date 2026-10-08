@@ -165,6 +165,7 @@ class ProductionReadinessTests(unittest.TestCase):
             {
                 "enabled": True,
                 "interval_seconds": 15,
+                "task_storage_interval_seconds": 60,
                 "nvidia_smi_configured": False,
             },
         )

@@ -237,6 +237,19 @@ class QueuedRealWorkerTests(unittest.TestCase):
                 self.assertTrue(
                     all(sample["status"] == "partial" for sample in resource_samples)
                 )
+                storage_usage = load_json_contract(
+                    layout.resolve("reports/storage-usage.json"),
+                    "storage-usage",
+                )
+                self.assertEqual(storage_usage["job_id"], request["job_id"])
+                self.assertGreaterEqual(
+                    storage_usage["storage_observation_count"],
+                    3,
+                )
+                self.assertEqual(
+                    [branch["name"] for branch in storage_usage["final"]["branches"]],
+                    request["branches"],
+                )
             finally:
                 engine.dispose()
 

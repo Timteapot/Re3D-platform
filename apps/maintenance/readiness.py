@@ -134,6 +134,9 @@ def check_local_readiness() -> dict[str, Any]:
         "resource_monitor": {
             "enabled": resource_monitor.enabled,
             "interval_seconds": resource_monitor.interval_seconds,
+            "task_storage_interval_seconds": (
+                resource_monitor.task_storage_interval_seconds
+            ),
             "nvidia_smi_configured": resource_monitor.nvidia_smi_path is not None,
         },
         "task_submission": {
@@ -280,6 +283,9 @@ def check_production_readiness(
         response["resource_monitor"] = {
             "enabled": resource_monitor.enabled,
             "interval_seconds": resource_monitor.interval_seconds,
+            "task_storage_interval_seconds": (
+                resource_monitor.task_storage_interval_seconds
+            ),
             "nvidia_smi_configured": resource_monitor.nvidia_smi_path is not None,
         }
         response["re3d"] = _check_re3d_installation()

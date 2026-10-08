@@ -54,7 +54,7 @@ Re3D v1.1.0 A-v4 / B-v2 / C
 | PostgreSQL 队列 Worker | 队列记录、资源租约 | 状态投影、三分支产物 | 验证 API 与独立执行进程的异步闭环 |
 | 模拟评估器 | simulated pipeline result | evaluation.json | 验证评估契约，不生成虚假的真实质量分数 |
 | 真实 Re3D 适配器 | real 请求、Re3D 安装、数据库租约 | 步骤事件、私有日志、三分支归一化产物 | 在取消、超时和租约丢失时终止进程树，并校验产物完整性 |
-| 资源采样器 | 真实任务生命周期、主机计数器、`nvidia-smi` | 任务私有 `resource-samples.jsonl` | 记录 CPU、内存、数据盘和 GPU 负载，不影响任务终态或用户评分 |
+| 资源采样器 | 真实任务生命周期、主机计数器、`nvidia-smi`、任务目录 | 私有 `resource-samples.jsonl` 和 `storage-usage.json` | 记录 CPU、内存、数据盘、GPU 与任务分层容量，不影响任务终态或用户评分 |
 | 真实结构评估器 | result、SfM 指标、A/B 一致性清单 | evaluation.json | 用版本化阈值生成 pass/warning/fail；没有真值时不伪造绝对精度分数 |
 | Three.js 查看器 | 受鉴权 GLB Blob、分支摘要 | 浏览器交互预览 | 在不暴露令牌和磁盘路径的前提下切换、检查三分支结果 |
 | Re3D v1.1.0 目录接口 | work/output/log 精确路径 | 任务内运行文件 | 阻止不同用户任务散落或互相覆盖 |
