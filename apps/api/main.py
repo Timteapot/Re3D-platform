@@ -33,6 +33,7 @@ from backend.db.runtime import (
 from backend.jobs import TaskSubmissionSettings
 from backend.jobs.development import DevelopmentJobService
 from backend.rate_limit import ApiRateLimitService, ApiRateLimitSettings
+from backend.transfers import TransferLimitService, TransferLimitSettings
 from backend.uploads import StorageQuotaSettings, UploadService, UploadSettings
 
 
@@ -46,6 +47,7 @@ class AppServices:
     development_jobs: DevelopmentJobService
     auth: AuthService
     uploads: UploadService
+    transfer_limits: TransferLimitService | None = None
 
 
 def build_services(*, environment: str) -> AppServices:
@@ -79,7 +81,18 @@ def build_services(*, environment: str) -> AppServices:
             environment=environment
         ),
     )
-    return AppServices(engine, queue, development_jobs, auth, uploads)
+    transfer_limits = TransferLimitService(
+        sessions,
+        TransferLimitSettings.from_environment(environment=environment),
+    )
+    return AppServices(
+        engine,
+        queue,
+        development_jobs,
+        auth,
+        uploads,
+        transfer_limits,
+    )
 
 
 def create_app(
@@ -114,6 +127,11 @@ def create_app(
         limiter=rate_limiter,
         trusted_proxy_cidrs=resolved_services.auth.settings.trusted_proxy_cidrs,
     )
+    transfer_limits = resolved_services.transfer_limits or TransferLimitService(
+        resolved_services.auth.session_factory,
+        TransferLimitSettings.from_environment(environment=environment),
+    )
+    app.state.transfer_limits = transfer_limits
     auth_router, current_user, verified_user = create_auth_router(
         resolved_services.auth
     )
@@ -131,6 +149,7 @@ def create_app(
             resolved_services.queue,
             data_root=resolved_services.development_jobs.data_root,
             current_user=current_user,
+            transfer_limits=transfer_limits,
             poll_seconds=poll_seconds,
         )
     )
@@ -141,6 +160,7 @@ def create_app(
             resolved_services.uploads,
             current_user,
             verified_user,
+            transfer_limits=transfer_limits,
             default_execution_mode="simulated" if is_development else "real",
             allowed_execution_modes=(
                 frozenset({"simulated", "real"})
@@ -164,6 +184,7 @@ def create_app(
             resolved_services.queue,
             data_root=resolved_services.development_jobs.data_root,
             current_user=current_user,
+            transfer_limits=transfer_limits,
             poll_seconds=poll_seconds,
             prefix=LEGACY_DEVELOPMENT_JOB_PREFIX,
             tags=["development"],

@@ -66,9 +66,15 @@ RE3D_USER_MAX_PENDING_JOBS=3
 RE3D_USER_MAX_SUBMISSIONS_PER_24H=20
 RE3D_USER_STORAGE_QUOTA_BYTES=10737418240
 RE3D_JOB_STORAGE_RESERVATION_BYTES=2147483648
+TRANSFER_WINDOW_SECONDS=3600
+TRANSFER_UPLOAD_MAX_CONCURRENT=2
+TRANSFER_UPLOAD_MAX_BYTES=2147483648
+TRANSFER_LEASE_SECONDS=14400
 ```
 
 服务会拒绝不合理的配置值。反向代理仍需设置请求体大小、请求速率和连接超时；应用层限制不能替代代理层的早期拒绝。
+
+图片接口在 multipart 解析后按用户申请 PostgreSQL 共享的上传并发租约，并按文件实际字节从连续补充的令牌桶预扣额度。超限返回 429 和稳定错误码；它保护后续图片校验与落盘阶段，但不能阻止请求体先到达反向代理和 multipart 解析器。完整配置、错误合同和目标服务器验收边界见 [`transfer-limits.md`](transfer-limits.md)。
 
 生产 `RE3D_MIN_FREE_DISK_BYTES` 同时作为运行时上传安全线。创建会话、写入图片和提交任务前若可用空间不足，API 返回 507 和 `STORAGE_CAPACITY_FLOOR_REACHED`；写入 staging 后跌破安全线时会删除该临时文件，不写入图片元数据。
 
@@ -91,7 +97,7 @@ cd D:\3Dreconstruction\Re3D-platform
 - 分块/断点续传和大文件对象存储；
 - EXIF 隐私元数据清除策略；当前保留原始图片内容；
 - 浏览器刷新后恢复未提交上传会话；
-- Worker 中间文件峰值估算，以及上传/下载的带宽与并发控制；单用户逻辑存储配额和普通接口来源 IP 请求频率限制已经实现；
+- Worker 任务空间预留值仍需在目标服务器校准；应用层上传/下载并发和累计字节控制已经实现，入口连接/速率限制及真实吞吐压力验收尚未完成；
 - 上传病毒扫描、隔离进程解码和代理层请求限制；
 - 真实图片质量预检；
 - 任务详情、取消、SSE 进度和结果页面。

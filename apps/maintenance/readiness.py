@@ -29,6 +29,7 @@ from backend.jobs import (
 )
 from backend.monitoring import ResourceMonitorSettings
 from backend.rate_limit import ApiRateLimitSettings
+from backend.transfers import TransferLimitSettings
 from backend.re3d_adapter.real import verify_re3d_installation
 from backend.re3d_adapter.settings import Re3DSettings, WorkerSettings
 from backend.uploads import StorageQuotaSettings, UploadSettings
@@ -48,6 +49,9 @@ def check_local_readiness() -> dict[str, Any]:
     api_rate_limit = ApiRateLimitSettings.from_environment(
         environment=environment,
         fingerprint_secret=auth.jwt_secret,
+    )
+    transfer_limits = TransferLimitSettings.from_environment(
+        environment=environment
     )
     task_submission = TaskSubmissionSettings.from_environment(
         environment=environment
@@ -155,6 +159,7 @@ def check_local_readiness() -> dict[str, Any]:
             "max_requests": api_rate_limit.ip_max_requests,
             "backend": "database",
         },
+        "transfer_limits": _transfer_limit_summary(transfer_limits),
         "smtp": smtp_summary,
     }
 
@@ -193,6 +198,19 @@ def check_production_readiness(
         email = AuthEmailSettings.from_environment(environment=environment)
         _validate_production_email_identity(email)
         uploads = UploadSettings.from_environment()
+        transfer_limits = TransferLimitSettings.from_environment(
+            environment=environment
+        )
+        if transfer_limits.upload_max_bytes < uploads.max_file_bytes:
+            raise ValueError(
+                "TRANSFER_UPLOAD_MAX_BYTES must be at least "
+                "UPLOAD_MAX_FILE_BYTES"
+            )
+        if transfer_limits.download_max_bytes < uploads.max_file_bytes:
+            raise ValueError(
+                "TRANSFER_DOWNLOAD_MAX_BYTES must be at least "
+                "UPLOAD_MAX_FILE_BYTES"
+            )
         task_submission = TaskSubmissionSettings.from_environment(
             environment=environment
         )
@@ -216,6 +234,9 @@ def check_production_readiness(
             "max_requests": api_rate_limit.ip_max_requests,
             "backend": "database",
         }
+        response["transfer_limits"] = _transfer_limit_summary(
+            transfer_limits
+        )
         response["public_base_url"] = email.public_base_url
         response["smtp"] = _check_smtp(email)
         response["uploads"] = {
@@ -291,6 +312,20 @@ def check_production_readiness(
         response["re3d"] = _check_re3d_installation()
 
     return response
+
+
+def _transfer_limit_summary(
+    settings: TransferLimitSettings,
+) -> dict[str, Any]:
+    return {
+        "window_seconds": settings.window_seconds,
+        "upload_max_concurrent": settings.upload_max_concurrent,
+        "upload_max_bytes": settings.upload_max_bytes,
+        "download_max_concurrent": settings.download_max_concurrent,
+        "download_max_bytes": settings.download_max_bytes,
+        "lease_seconds": settings.lease_seconds,
+        "backend": "database_token_bucket_and_leases",
+    }
 
 
 def _check_production_database(database: DatabaseSettings) -> dict[str, str]:

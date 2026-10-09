@@ -31,6 +31,12 @@ class ProductionReadinessTests(unittest.TestCase):
             "AUTH_TRUSTED_PROXY_CIDRS": "127.0.0.1/32,::1/128",
             "API_IP_RATE_LIMIT_WINDOW_SECONDS": "60",
             "API_IP_RATE_LIMIT_MAX_REQUESTS": "300",
+            "TRANSFER_WINDOW_SECONDS": "3600",
+            "TRANSFER_UPLOAD_MAX_CONCURRENT": "2",
+            "TRANSFER_UPLOAD_MAX_BYTES": str(2 * 1024**3),
+            "TRANSFER_DOWNLOAD_MAX_CONCURRENT": "3",
+            "TRANSFER_DOWNLOAD_MAX_BYTES": str(4 * 1024**3),
+            "TRANSFER_LEASE_SECONDS": "14400",
             "DATABASE_URL": (
                 "postgresql+psycopg://re3d_runtime:database-secret@"
                 "127.0.0.1:5432/re3d_platform"
@@ -55,7 +61,7 @@ class ProductionReadinessTests(unittest.TestCase):
                 return_value={
                     "name": "re3d_platform",
                     "role": "re3d_runtime",
-                    "migration": "0014_user_storage_quota",
+                    "migration": "0015_transfer_limits",
                 },
             ),
             patch(
@@ -107,6 +113,18 @@ class ProductionReadinessTests(unittest.TestCase):
                 "accounting_backend": "database",
             },
         )
+        self.assertEqual(
+            report["transfer_limits"],
+            {
+                "window_seconds": 3600,
+                "upload_max_concurrent": 2,
+                "upload_max_bytes": 2 * 1024**3,
+                "download_max_concurrent": 3,
+                "download_max_bytes": 4 * 1024**3,
+                "lease_seconds": 14400,
+                "backend": "database_token_bucket_and_leases",
+            },
+        )
 
     def test_worker_check_does_not_require_web_or_email_secrets(self) -> None:
         environment = {
@@ -127,7 +145,7 @@ class ProductionReadinessTests(unittest.TestCase):
                 return_value={
                     "name": "re3d_platform",
                     "role": "re3d_runtime",
-                    "migration": "0014_user_storage_quota",
+                    "migration": "0015_transfer_limits",
                 },
             ),
             patch(
@@ -200,7 +218,7 @@ class ProductionReadinessTests(unittest.TestCase):
                 return_value={
                     "name": "re3d_platform",
                     "role": "re3d_runtime",
-                    "migration": "0014_user_storage_quota",
+                    "migration": "0015_transfer_limits",
                 },
             ),
             patch(

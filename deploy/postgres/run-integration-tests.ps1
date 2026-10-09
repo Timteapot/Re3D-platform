@@ -79,6 +79,7 @@ try {
         & $python -m unittest `
             tests.integration.test_postgres_job_queue `
             tests.integration.test_postgres_api_worker_flow `
+            tests.integration.test_postgres_transfer_limits `
             -v
         if ($LASTEXITCODE -ne 0) {
             throw "PostgreSQL integration tests failed."

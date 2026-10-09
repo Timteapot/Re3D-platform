@@ -136,6 +136,12 @@ class PostgreSQLApiWorkerFlowTests(unittest.TestCase):
             {
                 "API_IP_RATE_LIMIT_WINDOW_SECONDS": "60",
                 "API_IP_RATE_LIMIT_MAX_REQUESTS": "300",
+                "TRANSFER_WINDOW_SECONDS": "3600",
+                "TRANSFER_UPLOAD_MAX_CONCURRENT": "2",
+                "TRANSFER_UPLOAD_MAX_BYTES": str(2 * 1024**3),
+                "TRANSFER_DOWNLOAD_MAX_CONCURRENT": "3",
+                "TRANSFER_DOWNLOAD_MAX_BYTES": str(4 * 1024**3),
+                "TRANSFER_LEASE_SECONDS": "14400",
             },
             clear=False,
         ):

@@ -32,7 +32,7 @@ Copy-Item .env.production.example .env.production
 & .\deploy\production\check-production-readiness.ps1 -Component worker
 ```
 
-- `api`：检查生产认证约束、HTTPS 公共地址、上传限制、显式任务提交限额、SMTP STARTTLS、受限 PostgreSQL、迁移版本和数据盘。
+- `api`：检查生产认证约束、HTTPS 公共地址、上传限制、显式传输/任务提交限额、SMTP STARTTLS、受限 PostgreSQL、迁移版本和数据盘。
 - `worker`：不要求 JWT/SMTP 密钥，检查受限 PostgreSQL、租约参数、数据盘、资源采样配置、固定 Re3D tag/commit/config 和驱动 Python。
 - `all`：执行两组检查，适用于首个单机 Windows 生产验收环境。
 
@@ -69,7 +69,7 @@ Copy-Item .env.production.example .env.production
     -MaxRequestBody 27MB
 ```
 
-`run-caddy.ps1` 拒绝非回环地址上的明文 HTTP。Caddy 为 `/api/*` 和 `/health/*` 提供同源代理、单请求体上限和禁止缓存策略，为带内容哈希的 `/assets/*` 提供不可变缓存，其余页面执行 SPA 回退和重新验证缓存；同时设置 CSP、点击劫持防护、MIME 嗅探防护、来源策略和权限策略。默认 `27MB` 为单张 25 MiB 图片和 multipart 开销预留空间，修改 `UPLOAD_MAX_FILE_BYTES` 时必须同步复核该值。API 自身不对公网监听，Worker 不开启网络端口，PostgreSQL 也不应直接暴露到互联网。
+`run-caddy.ps1` 拒绝非回环地址上的明文 HTTP。Caddy 为 `/api/*` 和 `/health/*` 提供同源代理、单请求体上限和禁止缓存策略，为带内容哈希的 `/assets/*` 提供不可变缓存，其余页面执行 SPA 回退和重新验证缓存；同时设置 CSP、点击劫持防护、MIME 嗅探防护、来源策略和权限策略。默认 `27MB` 为单张 25 MiB 图片和 multipart 开销预留空间，修改 `UPLOAD_MAX_FILE_BYTES` 时必须同步复核该值。API 已按用户提供数据库共享的传输并发和累计字节边界，但当前 Caddy 配置不提供逐来源连接/带宽整形；真实公网入口仍需云防火墙/CDN/WAF 或经验证的边缘限流。API 自身不对公网监听，Worker 不开启网络端口，PostgreSQL 也不应直接暴露到互联网。
 
 基于 WinSW 的三个独立 Windows 虚拟账户、自动启动、失败重启、日志轮转、最小 ACL、平台/前端发布身份绑定、安装后只读验收和卸载流程见 [`windows-services/README.md`](windows-services/README.md)。仓库已完成无系统改动的服务包生成验收；实际服务器安装、重启和故障恢复仍需单独验收。
 
@@ -92,7 +92,7 @@ Copy-Item .env.production.example .env.production
 - 在目标服务器安装已生成的 API、Worker 和 Caddy Windows 服务，并完成重启、故障恢复、GPU 与证书权限验收；
 - 使用真实域名验证公网 DNS、Caddy 自动 TLS、80/443 防火墙边界和外部访问；
 - 三层成功数据保留期已统一确定为 30 天，持续 Worker 默认每日执行受审计 dry-run；确认待处理任务数和每日次数，并在目标服务器观察周期结果；
-- 完成 Worker 运行空间实测并校准单用户任务预留，补齐下载带宽/并发控制及边缘层流量防护；应用层单用户存储配额和普通 API 来源 IP 限流已完成；
+- 完成 Worker 运行空间实测并校准单用户任务预留，在真实链路压力测试并校准已实现的上传/下载传输限额，补齐边缘层连接和大流量攻击防护；
 - 成功任务人工双确认删除的备份与执行验收（每日 dry-run 已接入 Worker；失败/取消任务已自动清理）；
 - 将已有任务级 GPU、CPU、内存和数据盘样本接入集中监控与告警；
 - 生产 SMTP、验证码/防滥用策略和隐私说明验收。

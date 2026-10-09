@@ -341,6 +341,81 @@ class ApiRateLimitBucket(Base):
     )
 
 
+class UserTransferBucket(Base):
+    __tablename__ = "user_transfer_buckets"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "direction",
+            name="uq_user_transfer_buckets_user_direction",
+        ),
+        CheckConstraint(
+            "direction IN ('upload', 'download')",
+            name="ck_user_transfer_buckets_direction",
+        ),
+        CheckConstraint(
+            "capacity_bytes > 0",
+            name="ck_user_transfer_buckets_capacity",
+        ),
+        CheckConstraint(
+            "available_bytes >= 0 AND available_bytes <= capacity_bytes",
+            name="ck_user_transfer_buckets_available",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    direction: Mapped[str] = mapped_column(String(16), nullable=False)
+    capacity_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    available_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class UserTransferLease(Base):
+    __tablename__ = "user_transfer_leases"
+    __table_args__ = (
+        CheckConstraint(
+            "direction IN ('upload', 'download')",
+            name="ck_user_transfer_leases_direction",
+        ),
+        CheckConstraint(
+            "reserved_bytes >= 0",
+            name="ck_user_transfer_leases_reserved_bytes",
+        ),
+        CheckConstraint(
+            "expires_at > acquired_at",
+            name="ck_user_transfer_leases_expiry",
+        ),
+        Index(
+            "ix_user_transfer_leases_active",
+            "user_id",
+            "direction",
+            "expires_at",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    direction: Mapped[str] = mapped_column(String(16), nullable=False)
+    reserved_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    acquired_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
 class JobUpload(Base):
     __tablename__ = "job_uploads"
     __table_args__ = (

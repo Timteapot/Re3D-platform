@@ -13,7 +13,7 @@ GET /api/v1/jobs/{job_id}/artifacts/{branch}/{kind}
 - `branch`：`A-v4`、`B-v2`、`C`；
 - `kind`：`glb`、`obj`、`mtl`、`texture`。
 
-该路由与任务列表、详情、取消和 SSE 一样，在 development、test 和 production 环境注册。旧 `/api/v1/development/jobs/...` 路径仅在 development/test 保留为迁移兼容入口，并从 OpenAPI 隐藏。邮箱验证状态、用户级任务提交限制、单用户存储配额、普通 API 来源 IP 请求频率限制和成功产物 30 天保留策略已经接入，但路由可在 production 注册仍只表示接口边界稳定，不代表下载带宽/并发控制、任务预留值实测校准、目标服务器保留策略观察和部署加固已经完成。
+该路由与任务列表、详情、取消和 SSE 一样，在 development、test 和 production 环境注册。旧 `/api/v1/development/jobs/...` 路径仅在 development/test 保留为迁移兼容入口，并从 OpenAPI 隐藏。邮箱验证状态、用户级任务提交限制、单用户存储配额、普通 API 来源 IP 请求频率限制、单用户下载并发/累计字节限制和成功产物 30 天保留策略已经接入。production 注册仍只表示接口边界稳定，不代表入口流量防护、任务预留值实测校准、目标服务器保留策略观察和部署加固已经完成。
 
 ## 服务端判定顺序
 
@@ -27,7 +27,8 @@ GET /api/v1/jobs/{job_id}/artifacts/{branch}/{kind}
 6. 要求清单路径和 MIME 与固定白名单完全一致；
 7. 使用 `TaskLayout` 再次执行任务目录边界和符号链接解析检查；
 8. 重新计算实际文件大小和 SHA-256，并与结果清单比较；
-9. 以 `Content-Disposition: attachment` 返回文件。
+9. 按完整产物大小申请当前用户的 PostgreSQL 下载租约并预扣字节令牌；
+10. 以 `Content-Disposition: attachment` 返回文件，并在响应结束时释放并发租约。
 
 响应同时设置：
 
@@ -54,9 +55,12 @@ ETag: "<artifact-sha256>"
 | 401 | 缺少、过期或无效的 access token |
 | 404 | 任务对当前用户不可见，或请求的分支/产物类型不在结果清单中 |
 | 409 | 任务尚未成功完成、结果不可用，或文件未通过路径/大小/SHA-256 完整性复核 |
+| 429 | 用户下载并发槽已满或下载字节令牌不足；响应带稳定错误码，通常带 `Retry-After` |
 | 422 | branch 或 kind 不属于固定枚举 |
 
 内部文件路径和具体完整性失败原因不会返回浏览器，避免泄露服务器布局。
+
+下载按清单中的完整文件大小预扣，不因客户端中断或 Range 请求退款。默认每用户 3 个并发下载、4 GiB/小时连续补充额度；完整合同和边缘层限制见 [`transfer-limits.md`](transfer-limits.md)。
 
 ## 与后续模块的接口
 

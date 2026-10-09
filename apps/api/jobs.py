@@ -9,9 +9,14 @@ from typing import Any, Callable, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
+from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import FileResponse, StreamingResponse
 
+from apps.api.transfers import (
+    release_transfer_lease,
+    transfer_limit_http_exception,
+)
 from backend.auth import UserIdentity
 from backend.db.errors import JobNotFoundError, QueueConflictError
 from backend.db.queue import JobQueue
@@ -25,6 +30,7 @@ from backend.jobs.artifacts import (
 )
 from backend.jobs.details import JobDetailReader, JobDetailSnapshot
 from backend.jobs.development import DevelopmentJobService
+from backend.transfers import TransferLimitExceededError, TransferLimitService
 
 
 CurrentUserDependency = Callable[..., UserIdentity]
@@ -287,6 +293,7 @@ def create_job_router(
     *,
     data_root: Path,
     current_user: CurrentUserDependency,
+    transfer_limits: TransferLimitService,
     poll_seconds: float = 1.0,
     prefix: str = STABLE_JOB_PREFIX,
     tags: list[str] | None = None,
@@ -346,12 +353,18 @@ def create_job_router(
         kind: ArtifactKind,
         user: UserIdentity = Depends(current_user),
     ) -> FileResponse:
+        lease = None
         try:
             artifact = artifacts.read(
                 job_id,
                 user_id=user.id,
                 branch=branch,
                 kind=kind,
+            )
+            lease = transfer_limits.acquire(
+                user_id=user.id,
+                direction="download",
+                byte_count=artifact.size_bytes,
             )
         except JobNotFoundError as exc:
             raise HTTPException(status_code=404, detail="job not found") from exc
@@ -362,17 +375,29 @@ def create_job_router(
                 status_code=409,
                 detail="artifact is unavailable or failed integrity checks",
             ) from exc
-        return FileResponse(
-            artifact.path,
-            media_type=artifact.content_type,
-            filename=artifact.filename,
-            content_disposition_type="attachment",
-            headers={
-                "Cache-Control": "private, no-store",
-                "ETag": f'"{artifact.sha256}"',
-                "X-Content-Type-Options": "nosniff",
-            },
-        )
+        except TransferLimitExceededError as exc:
+            raise transfer_limit_http_exception(exc) from exc
+        assert lease is not None
+        try:
+            return FileResponse(
+                artifact.path,
+                media_type=artifact.content_type,
+                filename=artifact.filename,
+                content_disposition_type="attachment",
+                headers={
+                    "Cache-Control": "private, no-store",
+                    "ETag": f'"{artifact.sha256}"',
+                    "X-Content-Type-Options": "nosniff",
+                },
+                background=BackgroundTask(
+                    release_transfer_lease,
+                    transfer_limits,
+                    lease.id,
+                ),
+            )
+        except Exception:
+            release_transfer_lease(transfer_limits, lease.id)
+            raise
 
     @router.post("/{job_id}/cancel", response_model=JobResponse)
     def cancel_job(

@@ -8,8 +8,13 @@ from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFil
 from pydantic import BaseModel, Field
 
 from apps.api.auth import CurrentUserDependency, VerifiedUserDependency
+from apps.api.transfers import (
+    release_transfer_lease,
+    transfer_limit_http_exception,
+)
 from backend.auth import UserIdentity
 from backend.jobs import TaskSubmissionLimitError
+from backend.transfers import TransferLimitExceededError, TransferLimitService
 from backend.uploads import (
     StorageQuotaExceededError,
     UploadCapacityError,
@@ -85,6 +90,7 @@ def create_upload_router(
     current_user: CurrentUserDependency,
     verified_user: VerifiedUserDependency,
     *,
+    transfer_limits: TransferLimitService,
     default_execution_mode: ExecutionMode = "simulated",
     allowed_execution_modes: frozenset[ExecutionMode] = frozenset(
         {"simulated", "real"}
@@ -147,7 +153,13 @@ def create_upload_router(
         file: UploadFile = File(...),
         user: UserIdentity = Depends(verified_user),
     ) -> UploadResponse:
+        lease = None
         try:
+            lease = transfer_limits.acquire(
+                user_id=user.id,
+                direction="upload",
+                byte_count=_upload_file_size(file),
+            )
             snapshot = service.add_image(
                 upload_id=upload_id,
                 user_id=user.id,
@@ -167,8 +179,14 @@ def create_upload_router(
             raise _storage_capacity_http_exception(exc) from exc
         except StorageQuotaExceededError as exc:
             raise _storage_quota_http_exception(exc) from exc
+        except TransferLimitExceededError as exc:
+            raise transfer_limit_http_exception(exc) from exc
         finally:
-            file.file.close()
+            try:
+                file.file.close()
+            finally:
+                if lease is not None:
+                    release_transfer_lease(transfer_limits, lease.id)
 
     @router.delete(
         "/{upload_id}/images/{image_id}",
@@ -265,6 +283,16 @@ def create_upload_router(
         )
 
     return router
+
+
+def _upload_file_size(file: UploadFile) -> int:
+    if file.size is not None:
+        return file.size
+    position = file.file.tell()
+    file.file.seek(0, 2)
+    size = file.file.tell()
+    file.file.seek(position)
+    return size
 
 
 def _storage_capacity_http_exception(exc: UploadCapacityError) -> HTTPException:

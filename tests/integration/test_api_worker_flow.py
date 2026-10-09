@@ -18,7 +18,13 @@ from sqlalchemy.orm import sessionmaker
 from apps.api.main import AppServices, create_app
 from apps.worker.main import main as worker_main
 from backend.auth import AuthService, AuthSettings
-from backend.db.models import AuthEvent, Base, ReconstructionJob, User
+from backend.db.models import (
+    AuthEvent,
+    Base,
+    ReconstructionJob,
+    User,
+    UserTransferLease,
+)
 from backend.db.queue import JobQueue
 from backend.jobs import TaskSubmissionPolicy, TaskSubmissionSettings
 from backend.jobs.development import DevelopmentJobService
@@ -30,6 +36,14 @@ from backend.uploads import (
 
 
 TEST_SECRET = "api-flow-test-secret-" + "x" * 64
+PRODUCTION_TRANSFER_ENV = {
+    "TRANSFER_WINDOW_SECONDS": "3600",
+    "TRANSFER_UPLOAD_MAX_CONCURRENT": "2",
+    "TRANSFER_UPLOAD_MAX_BYTES": str(2 * 1024**3),
+    "TRANSFER_DOWNLOAD_MAX_CONCURRENT": "3",
+    "TRANSFER_DOWNLOAD_MAX_BYTES": str(4 * 1024**3),
+    "TRANSFER_LEASE_SECONDS": "14400",
+}
 
 
 class RecordingEmailSender:
@@ -71,7 +85,8 @@ class ApiWorkerFlowTests(unittest.TestCase):
             ),
             UploadService(self.sessions, self.queue, data_root=self.data_root),
         )
-        self.client = TestClient(create_app(services=self.services, app_env="test"))
+        self.app = create_app(services=self.services, app_env="test")
+        self.client = TestClient(self.app)
         self.user_id, self.access_token = self.register_and_login(
             username="api-owner",
             email="api-owner@example.com",
@@ -174,6 +189,53 @@ class ApiWorkerFlowTests(unittest.TestCase):
         self.assertEqual(blocked.headers["cache-control"], "no-store")
         self.assertGreaterEqual(int(blocked.headers["retry-after"]), 1)
 
+    def test_upload_transfer_concurrency_limit_returns_stable_429(self) -> None:
+        created = self.client.post(
+            "/api/v1/uploads",
+            json={"idempotency_key": "transfer-concurrency-upload"},
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(created.status_code, 201)
+        upload_id = created.json()["upload_id"]
+        held_leases = [
+            self.app.state.transfer_limits.acquire(
+                user_id=self.user_id,
+                direction="upload",
+                byte_count=0,
+            )
+            for _ in range(2)
+        ]
+        try:
+            blocked = self.client.post(
+                f"/api/v1/uploads/{upload_id}/images",
+                files={
+                    "file": (
+                        "blocked.png",
+                        self.png_bytes((30, 60, 90)),
+                        "image/png",
+                    )
+                },
+                headers=self.auth_headers(self.access_token),
+            )
+        finally:
+            for held_lease in held_leases:
+                self.app.state.transfer_limits.release(held_lease.id)
+
+        self.assertEqual(blocked.status_code, 429)
+        self.assertEqual(
+            blocked.headers["x-re3d-error-code"],
+            "UPLOAD_CONCURRENCY_LIMIT_REACHED",
+        )
+        self.assertEqual(blocked.headers["cache-control"], "no-store")
+        self.assertGreaterEqual(int(blocked.headers["retry-after"]), 1)
+        self.assertEqual(
+            self.client.get(
+                f"/api/v1/uploads/{upload_id}",
+                headers=self.auth_headers(self.access_token),
+            ).json()["image_count"],
+            0,
+        )
+
     def register_and_login(
         self,
         *,
@@ -271,6 +333,30 @@ class ApiWorkerFlowTests(unittest.TestCase):
         self.assertEqual(artifact_summary["download_url"], artifact_url)
         unauthenticated = self.client.get(artifact_url)
         self.assertEqual(unauthenticated.status_code, 401)
+        held_leases = [
+            self.app.state.transfer_limits.acquire(
+                user_id=self.user_id,
+                direction="download",
+                byte_count=0,
+            )
+            for _ in range(3)
+        ]
+        blocked_download = self.client.get(
+            artifact_url,
+            headers=self.auth_headers(self.access_token),
+        )
+        self.assertEqual(blocked_download.status_code, 429)
+        self.assertEqual(
+            blocked_download.headers["x-re3d-error-code"],
+            "DOWNLOAD_CONCURRENCY_LIMIT_REACHED",
+        )
+        self.assertEqual(blocked_download.headers["cache-control"], "no-store")
+        self.assertGreaterEqual(
+            int(blocked_download.headers["retry-after"]),
+            1,
+        )
+        for held_lease in held_leases:
+            self.app.state.transfer_limits.release(held_lease.id)
         downloaded = self.client.get(
             artifact_url,
             headers=self.auth_headers(self.access_token),
@@ -282,6 +368,16 @@ class ApiWorkerFlowTests(unittest.TestCase):
         self.assertEqual(downloaded.headers["x-content-type-options"], "nosniff")
         self.assertIn("attachment", downloaded.headers["content-disposition"])
         self.assertIn("A-v4-mesh.glb", downloaded.headers["content-disposition"])
+        with self.sessions() as session:
+            active_downloads = session.execute(
+                select(func.count())
+                .select_from(UserTransferLease)
+                .where(
+                    UserTransferLease.user_id == self.user_id,
+                    UserTransferLease.direction == "download",
+                )
+            ).scalar_one()
+        self.assertEqual(active_downloads, 0)
 
         stream = self.client.get(
             f"/api/v1/jobs/{job_id}/events",
@@ -404,6 +500,7 @@ class ApiWorkerFlowTests(unittest.TestCase):
             {
                 "API_IP_RATE_LIMIT_WINDOW_SECONDS": "60",
                 "API_IP_RATE_LIMIT_MAX_REQUESTS": "300",
+                **PRODUCTION_TRANSFER_ENV,
             },
             clear=False,
         ):
@@ -458,6 +555,7 @@ class ApiWorkerFlowTests(unittest.TestCase):
             {
                 "API_IP_RATE_LIMIT_WINDOW_SECONDS": "60",
                 "API_IP_RATE_LIMIT_MAX_REQUESTS": "300",
+                **PRODUCTION_TRANSFER_ENV,
             },
             clear=False,
         ):
