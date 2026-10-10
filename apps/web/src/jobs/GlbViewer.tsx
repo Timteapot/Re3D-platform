@@ -345,6 +345,7 @@ export default function GlbViewer({
         });
       } catch (error) {
         if (cancelled || (error instanceof DOMException && error.name === "AbortError")) return;
+        console.error("Failed to load GLB preview", error);
         setViewerState({
           phase: "error",
           message: readableViewerError(error),

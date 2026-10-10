@@ -316,6 +316,7 @@ if (
 $contentSecurityPolicy = Get-Re3DHeaderValue -Response $home -Name "Content-Security-Policy"
 if (
     $contentSecurityPolicy -notmatch "frame-ancestors 'none'" -or
+    $contentSecurityPolicy -notmatch "connect-src 'self' blob:" -or
     (Get-Re3DHeaderValue -Response $home -Name "X-Content-Type-Options") -cne "nosniff" -or
     (Get-Re3DHeaderValue -Response $home -Name "X-Frame-Options") -cne "DENY" -or
     (Get-Re3DHeaderValue -Response $home -Name "Server")

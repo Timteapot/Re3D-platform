@@ -409,6 +409,7 @@ try {
         -Name "X-Frame-Options"
     if (
         $contentSecurityPolicy -notmatch "frame-ancestors 'none'" -or
+        $contentSecurityPolicy -notmatch "connect-src 'self' blob:" -or
         $contentTypeOptions -cne "nosniff" -or
         $frameOptions -cne "DENY"
     ) {
