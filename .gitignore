@@ -4,6 +4,8 @@
 !.env.example
 !.env.production.example
 !.env.worker.production.example
+!.env.restricted.example
+!.env.worker.restricted.example
 
 # Python
 __pycache__/

@@ -3,8 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
-
-DEVELOPMENT_ENVIRONMENTS = {"development", "test"}
+from backend.environment import requires_explicit_operational_settings
 
 
 @dataclass(frozen=True)
@@ -32,18 +31,18 @@ class ApiRateLimitSettings:
         environment: str,
         fingerprint_secret: str,
     ) -> "ApiRateLimitSettings":
-        production = environment not in DEVELOPMENT_ENVIRONMENTS
+        explicit = requires_explicit_operational_settings(environment)
         return cls(
             fingerprint_secret=fingerprint_secret,
             window_seconds=_environment_integer(
                 "API_IP_RATE_LIMIT_WINDOW_SECONDS",
                 60,
-                required=production,
+                required=explicit,
             ),
             ip_max_requests=_environment_integer(
                 "API_IP_RATE_LIMIT_MAX_REQUESTS",
                 300,
-                required=production,
+                required=explicit,
             ),
         )
 

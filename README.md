@@ -4,7 +4,7 @@ Re3D Platform 是基于 Re3D 三维重建管线的非商业学习与工程实践
 
 ## 当前状态
 
-核心功能闭环、首轮本机真实 GPU 验收和 Windows 单机生产拓扑的非公网验收已经完成。项目当前处于部署工程阶段：应用层已增加单用户上传/下载并发与累计字节控制，可进入目标 Windows 服务器安装和内部验收；但在边缘防护、真实主机传输压力测试、集中监控、生产邮件、故障恢复及任务空间预留值实测校准完成前，不具备公开发布条件。
+核心功能闭环、首轮本机真实 GPU 验收和 Windows 单机生产拓扑的非公网验收已经完成。鉴于短期不进行公网发布，当前主线调整为 Windows 本机回环受限部署：新增独立 `restricted` 环境，稳定上传只创建真实任务，并强制 API、浏览器入口、可信代理、SMTP 和 PostgreSQL 保持在回环边界。目标云服务器保留为后续复测环境，现阶段不依赖其持续运行；公开发布仍受备案/域名、边缘防护、生产邮件、监控、压力测试和容量实测校准等条件约束。
 
 - Re3D 活动基线标签：`re3d-pipeline-v1.1.2`
 - Re3D 活动基线提交：`5acd79496fb3614133019b4ab590823696d8e958`
@@ -65,6 +65,8 @@ tests                    集成、端到端与测试夹具
 
 生产配置模板、按 `api` / `worker` / `all` 区分的无秘密就绪检查、前端生产构建、API/Worker 启动入口、Caddy 同源代理和本机闭环验收见 [`deploy/production/README.md`](deploy/production/README.md)。生产 PostgreSQL 的管理员/迁移/运行权限拆分以及备份恢复流程见 [`deploy/postgres/README.md`](deploy/postgres/README.md)。目标 Windows 主机安装前还应运行 [`test-target-host-prerequisites.ps1`](deploy/production/windows-services/test-target-host-prerequisites.ps1)，生成不含秘密的主机阻断项报告。这些检查用于提前拒绝开发库、管理员数据库账户、不安全 Cookie、非 HTTPS 公共地址、未加密 SMTP、漂移的 Re3D 基线、不兼容工具链和不足的数据盘；检查通过本身不代表允许开放公网。
 
+短期本机受限部署使用 [`.env.restricted.example`](.env.restricted.example) 和 [`.env.worker.restricted.example`](.env.worker.restricted.example)。其安全边界、当前尚未创建的独立数据库/数据目录前置条件及就绪命令见 [`deploy/restricted/README.md`](deploy/restricted/README.md)。`restricted` 不等于 development：它不注册开发任务路由，也不允许模拟重建；同时它也不等于 production，允许回环 HTTP Cookie 和本机无 STARTTLS Mailpit，但拒绝局域网或公网地址。
+
 `.env`、用户数据、模型权重和运行产物不得提交到 Git。
 
 前端首次安装和启动：
@@ -92,13 +94,13 @@ Vite 开发服务器只绑定 `127.0.0.1:5173`，并将 `/api` 代理到本机 F
 
 ## 下一步
 
-当前按以下顺序推进，不把“代码已实现”与“公网可用”混为一谈：
+当前按以下顺序推进，不把“代码已实现”“本机可用”和“公网可用”混为一谈：
 
-1. 在目标 Windows 服务器运行安装前只读预检，解决工具链、GPU、数据盘、端口、PostgreSQL、域名 DNS 和重启状态阻断项；
-2. 生成并安装绑定发布提交的 API、Worker、Caddy 服务包，完成服务重启、进程故障恢复、GPU 权限和真实域名 TLS 验收；
-3. 配置生产 SMTP 和验证码，按真实任务峰值校准单用户存储预留，基于压力测试调整普通 API 来源 IP 限流与单用户传输限额，并为管理员审计 API 增加运维前端与二次验证；
-4. 接入集中监控与告警，并在真实服务器执行备份恢复、并发压力和低磁盘演练；
-5. 观察多轮每日保留策略 dry-run，确认备份后再验收一次人工双确认删除。
+1. 初始化本机受限部署专用 PostgreSQL 数据库、最小权限运行角色和仓库外数据目录，迁移到 Alembic head；
+2. 增加可重复、仅绑定回环地址的前端/API/Worker/Mailpit 启停与状态脚本，并先通过 `check-restricted-readiness`；
+3. 使用代表性图片完成一次受限环境真实 GPU 全链路和重启恢复验收，确认 development、restricted、production 数据完全隔离；
+4. 在不启动云服务器的情况下继续完善验证码、管理员二次验证、备份恢复和本机压力/低磁盘演练；
+5. 未来重新进入公网阶段时，再启动目标服务器复测容量和 GPU，补齐备案或合规域名、TLS、生产 SMTP、边缘防护与集中监控。
 
 因此当前版本可用于目标服务器部署工程和内部验收，不应直接向公开互联网开放注册与重建。
 

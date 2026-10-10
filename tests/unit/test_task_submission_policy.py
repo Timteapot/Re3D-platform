@@ -31,6 +31,13 @@ class TaskSubmissionSettingsTests(unittest.TestCase):
                     environment="production"
                 )
 
+    def test_restricted_requires_both_operator_selected_limits(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(ValueError, "MAX_PENDING_JOBS is required"):
+                TaskSubmissionSettings.from_environment(
+                    environment="restricted"
+                )
+
     def test_daily_limit_cannot_be_lower_than_pending_limit(self) -> None:
         with self.assertRaisesRegex(ValueError, "must be at least"):
             TaskSubmissionSettings(

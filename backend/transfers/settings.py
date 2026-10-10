@@ -4,8 +4,8 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
+from backend.environment import requires_explicit_operational_settings
 
-DEVELOPMENT_ENVIRONMENTS = {"development", "test"}
 TransferDirection = Literal["upload", "download"]
 
 
@@ -46,37 +46,37 @@ class TransferLimitSettings:
         *,
         environment: str,
     ) -> "TransferLimitSettings":
-        production = environment not in DEVELOPMENT_ENVIRONMENTS
+        explicit = requires_explicit_operational_settings(environment)
         return cls(
             window_seconds=_environment_integer(
                 "TRANSFER_WINDOW_SECONDS",
                 3600,
-                required=production,
+                required=explicit,
             ),
             upload_max_concurrent=_environment_integer(
                 "TRANSFER_UPLOAD_MAX_CONCURRENT",
                 2,
-                required=production,
+                required=explicit,
             ),
             upload_max_bytes=_environment_integer(
                 "TRANSFER_UPLOAD_MAX_BYTES",
                 2 * 1024**3,
-                required=production,
+                required=explicit,
             ),
             download_max_concurrent=_environment_integer(
                 "TRANSFER_DOWNLOAD_MAX_CONCURRENT",
                 3,
-                required=production,
+                required=explicit,
             ),
             download_max_bytes=_environment_integer(
                 "TRANSFER_DOWNLOAD_MAX_BYTES",
                 4 * 1024**3,
-                required=production,
+                required=explicit,
             ),
             lease_seconds=_environment_integer(
                 "TRANSFER_LEASE_SECONDS",
                 4 * 60 * 60,
-                required=production,
+                required=explicit,
             ),
         )
 

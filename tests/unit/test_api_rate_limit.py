@@ -28,6 +28,14 @@ class ApiRateLimitSettingsTests(unittest.TestCase):
                     fingerprint_secret=TEST_SECRET,
                 )
 
+    def test_restricted_requires_explicit_operator_values(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaisesRegex(ValueError, "WINDOW_SECONDS is required"):
+                ApiRateLimitSettings.from_environment(
+                    environment="restricted",
+                    fingerprint_secret=TEST_SECRET,
+                )
+
     def test_development_defaults_and_ranges(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
             settings = ApiRateLimitSettings.from_environment(

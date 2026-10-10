@@ -9,10 +9,15 @@ from email.utils import parseaddr
 from typing import Protocol
 from urllib.parse import quote, urlsplit
 
+from backend.environment import (
+    DEVELOPMENT_ENVIRONMENTS,
+    PRODUCTION_ENVIRONMENT,
+    RESTRICTED_ENVIRONMENT,
+    is_loopback_host,
+    normalize_environment,
+)
+
 from .errors import EmailDeliveryError
-
-
-DEVELOPMENT_ENVIRONMENTS = {"development", "test"}
 
 
 @dataclass(frozen=True)
@@ -49,6 +54,7 @@ class AuthEmailSettings:
 
     @classmethod
     def from_environment(cls, *, environment: str) -> "AuthEmailSettings":
+        environment = normalize_environment(environment)
         host = os.environ.get("SMTP_HOST", "").strip() or None
         username = os.environ.get("SMTP_USERNAME", "").strip() or None
         password = os.environ.get("SMTP_PASSWORD", "") or None
@@ -68,12 +74,28 @@ class AuthEmailSettings:
         if environment not in DEVELOPMENT_ENVIRONMENTS:
             if settings.host is None:
                 raise ValueError("SMTP_HOST is required outside development")
+        if environment == PRODUCTION_ENVIRONMENT:
             if urlsplit(settings.public_base_url).scheme != "https":
                 raise ValueError("APP_PUBLIC_BASE_URL must use HTTPS outside development")
             if not settings.starttls:
                 raise ValueError("SMTP_STARTTLS must be true outside development")
             if parseaddr(settings.sender)[1].lower().endswith(".invalid"):
                 raise ValueError("SMTP_FROM must not use an .invalid domain outside development")
+        elif environment == RESTRICTED_ENVIRONMENT:
+            parsed_url = urlsplit(settings.public_base_url)
+            if (
+                not is_loopback_host(parsed_url.hostname)
+                or parsed_url.path not in {"", "/"}
+            ):
+                raise ValueError(
+                    "restricted APP_PUBLIC_BASE_URL must be a loopback origin"
+                )
+            if not is_loopback_host(settings.host):
+                raise ValueError("restricted SMTP_HOST must be a loopback host")
+            if parseaddr(settings.sender)[1].lower().endswith(".invalid"):
+                raise ValueError(
+                    "restricted SMTP_FROM must not use an .invalid domain"
+                )
         return settings
 
 

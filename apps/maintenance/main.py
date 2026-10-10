@@ -16,7 +16,11 @@ from backend.db.runtime import (
 )
 from backend.monitoring import StorageCalibrationSettings, StorageCapacityReporter
 from backend.re3d_adapter import AdapterError
-from .readiness import check_local_readiness, check_production_readiness
+from .readiness import (
+    check_local_readiness,
+    check_production_readiness,
+    check_restricted_readiness,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -40,6 +44,18 @@ def build_parser() -> argparse.ArgumentParser:
         description="Validate production configuration without exposing secrets",
     )
     production.add_argument(
+        "--component",
+        choices=["api", "worker", "all"],
+        default="all",
+        help="Process role to validate (default: all)",
+    )
+    restricted = subparsers.add_parser(
+        "check-restricted-readiness",
+        description=(
+            "Validate loopback-only restricted configuration without exposing secrets"
+        ),
+    )
+    restricted.add_argument(
         "--component",
         choices=["api", "worker", "all"],
         default="all",
@@ -81,6 +97,8 @@ def main(argv: list[str] | None = None) -> int:
             response = check_local_readiness()
         elif args.command == "check-production-readiness":
             response = check_production_readiness(component=args.component)
+        elif args.command == "check-restricted-readiness":
+            response = check_restricted_readiness(component=args.component)
         elif args.command == "cleanup-auth-security":
             database = DatabaseSettings.from_environment(args.database_url)
             engine = create_database_engine(database)

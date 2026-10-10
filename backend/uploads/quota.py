@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.db.models import JobUpload, ReconstructionJob, User
+from backend.environment import requires_explicit_operational_settings
 
 
 USER_STORAGE_QUOTA_CODE = "USER_STORAGE_QUOTA_EXCEEDED"
@@ -43,17 +44,17 @@ class StorageQuotaSettings:
         *,
         environment: str = "development",
     ) -> "StorageQuotaSettings":
-        production = environment.strip().lower() == "production"
+        explicit = requires_explicit_operational_settings(environment)
         return cls(
             quota_bytes=_read_integer(
                 "RE3D_USER_STORAGE_QUOTA_BYTES",
                 default=10 * 1024**3,
-                required=production,
+                required=explicit,
             ),
             job_reservation_bytes=_read_integer(
                 "RE3D_JOB_STORAGE_RESERVATION_BYTES",
                 default=2 * 1024**3,
-                required=production,
+                required=explicit,
             ),
         )
 
@@ -147,7 +148,7 @@ def _read_integer(name: str, *, default: int, required: bool) -> int:
     configured = os.environ.get(name)
     if configured is None or not configured.strip():
         if required:
-            raise ValueError(f"{name} is required in production")
+            raise ValueError(f"{name} is required for restricted and production")
         return default
     try:
         return int(configured)

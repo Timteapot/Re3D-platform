@@ -22,6 +22,7 @@ from backend.db.runtime import (
     SchedulerSettings,
     create_database_engine,
 )
+from backend.environment import is_loopback_host
 from backend.jobs import (
     FailedJobCleanupSettings,
     SuccessRetentionSettings,
@@ -38,6 +39,7 @@ from backend.uploads import StorageQuotaSettings, UploadSettings
 ROOT = Path(__file__).resolve().parents[2]
 BASELINE_PATH = ROOT / "config" / "pipeline-baseline.json"
 ProductionComponent = Literal["api", "worker", "all"]
+RestrictedComponent = Literal["api", "worker", "all"]
 
 
 def check_local_readiness() -> dict[str, Any]:
@@ -314,6 +316,152 @@ def check_production_readiness(
     return response
 
 
+def check_restricted_readiness(
+    *,
+    component: RestrictedComponent = "all",
+) -> dict[str, Any]:
+    """Validate the loopback-only, real-pipeline restricted deployment."""
+
+    if component not in {"api", "worker", "all"}:
+        raise ValueError("restricted component must be api, worker, or all")
+    environment = os.environ.get("APP_ENV", "").strip().lower()
+    if environment != "restricted":
+        raise ValueError(
+            "APP_ENV must be restricted for restricted readiness checks"
+        )
+
+    response: dict[str, Any] = {
+        "status": "ready",
+        "environment": environment,
+        "component": component,
+        "network_scope": "loopback-only",
+    }
+
+    if component in {"api", "all"}:
+        api_host = os.environ.get("API_HOST", "").strip()
+        if not is_loopback_host(api_host):
+            raise ValueError("restricted API_HOST must be a loopback host")
+        auth = AuthSettings.from_environment(environment=environment)
+        api_rate_limit = ApiRateLimitSettings.from_environment(
+            environment=environment,
+            fingerprint_secret=auth.jwt_secret,
+        )
+        email = AuthEmailSettings.from_environment(environment=environment)
+        uploads = UploadSettings.from_environment()
+        transfer_limits = TransferLimitSettings.from_environment(
+            environment=environment
+        )
+        if transfer_limits.upload_max_bytes < uploads.max_file_bytes:
+            raise ValueError(
+                "TRANSFER_UPLOAD_MAX_BYTES must be at least "
+                "UPLOAD_MAX_FILE_BYTES"
+            )
+        if transfer_limits.download_max_bytes < uploads.max_file_bytes:
+            raise ValueError(
+                "TRANSFER_DOWNLOAD_MAX_BYTES must be at least "
+                "UPLOAD_MAX_FILE_BYTES"
+            )
+        task_submission = TaskSubmissionSettings.from_environment(
+            environment=environment
+        )
+        storage_quota = StorageQuotaSettings.from_environment(
+            environment=environment
+        )
+        if storage_quota.job_reservation_bytes < max(
+            1024**3,
+            uploads.max_total_bytes,
+        ):
+            raise ValueError(
+                "RE3D_JOB_STORAGE_RESERVATION_BYTES must be at least 1 GiB "
+                "and UPLOAD_MAX_TOTAL_BYTES"
+            )
+        response["authentication"] = {
+            "cookie_secure": auth.cookie_secure,
+            "trusted_proxy_network_count": len(auth.trusted_proxy_cidrs),
+        }
+        response["api_ip_rate_limit"] = {
+            "window_seconds": api_rate_limit.window_seconds,
+            "max_requests": api_rate_limit.ip_max_requests,
+            "backend": "database",
+        }
+        response["transfer_limits"] = _transfer_limit_summary(transfer_limits)
+        response["public_base_url"] = email.public_base_url
+        response["smtp"] = _check_smtp(email)
+        response["uploads"] = {
+            "max_file_bytes": uploads.max_file_bytes,
+            "max_total_bytes": uploads.max_total_bytes,
+            "max_pixels": uploads.max_pixels,
+        }
+        response["task_submission"] = {
+            "max_pending_jobs": task_submission.max_pending_jobs,
+            "max_submissions_per_24h": (
+                task_submission.max_submissions_per_24h
+            ),
+        }
+        response["user_storage_quota"] = {
+            "quota_bytes": storage_quota.quota_bytes,
+            "job_reservation_bytes": storage_quota.job_reservation_bytes,
+            "accounting_backend": "database",
+        }
+
+    database = DatabaseSettings.from_environment()
+    response["database"] = _check_restricted_database(database)
+    response["storage"] = _check_restricted_storage()
+
+    if component in {"worker", "all"}:
+        scheduler = SchedulerSettings.from_environment()
+        failed_job_cleanup = FailedJobCleanupSettings.from_environment()
+        success_retention = SuccessRetentionSettings.from_environment()
+        if (
+            success_retention.input_retention_days,
+            success_retention.runtime_retention_days,
+            success_retention.artifact_retention_days,
+        ) != (30, 30, 30):
+            raise ValueError(
+                "restricted successful-task retention tiers must all be 30 days"
+            )
+        if not success_retention.scheduled_dry_run_enabled:
+            raise ValueError(
+                "restricted scheduled retention dry-run must be enabled"
+            )
+        resource_monitor = ResourceMonitorSettings.from_environment()
+        response["scheduler"] = {
+            "resource_key": scheduler.resource_key,
+            "lease_seconds": scheduler.lease_seconds,
+            "heartbeat_seconds": scheduler.heartbeat_seconds,
+        }
+        response["failed_job_cleanup"] = {
+            "grace_minutes": failed_job_cleanup.grace_minutes,
+            "interval_seconds": failed_job_cleanup.interval_seconds,
+            "batch_size": failed_job_cleanup.batch_size,
+        }
+        response["success_retention"] = {
+            "input_days": success_retention.input_retention_days,
+            "runtime_days": success_retention.runtime_retention_days,
+            "artifact_days": success_retention.artifact_retention_days,
+            "batch_size": success_retention.cleanup_batch_size,
+            "scheduled_dry_run_enabled": (
+                success_retention.scheduled_dry_run_enabled
+            ),
+            "scheduled_dry_run_interval_seconds": (
+                success_retention.scheduled_dry_run_interval_seconds
+            ),
+            "audit_backend": "database",
+            "execution_requires_delete_confirmation": True,
+        }
+        response["resource_monitor"] = {
+            "enabled": resource_monitor.enabled,
+            "interval_seconds": resource_monitor.interval_seconds,
+            "task_storage_interval_seconds": (
+                resource_monitor.task_storage_interval_seconds
+            ),
+            "nvidia_smi_configured": resource_monitor.nvidia_smi_path is not None,
+        }
+        response["re3d"] = _check_re3d_installation()
+
+    return response
+
+
 def _transfer_limit_summary(
     settings: TransferLimitSettings,
 ) -> dict[str, Any]:
@@ -394,6 +542,87 @@ def _check_production_database(database: DatabaseSettings) -> dict[str, str]:
     }
 
 
+def _check_restricted_database(database: DatabaseSettings) -> dict[str, str]:
+    parsed_database = make_url(database.url)
+    if parsed_database.get_backend_name() != "postgresql":
+        raise ValueError("restricted DATABASE_URL must use PostgreSQL")
+    if not is_loopback_host(parsed_database.host):
+        raise ValueError("restricted PostgreSQL must use a loopback host")
+    if parsed_database.database != "re3d_platform_restricted":
+        raise ValueError(
+            "restricted readiness only accepts database re3d_platform_restricted"
+        )
+    if parsed_database.username != "re3d_restricted_runtime":
+        raise ValueError(
+            "restricted readiness only accepts role re3d_restricted_runtime"
+        )
+    if parsed_database.password and "replace-with" in parsed_database.password:
+        raise ValueError("restricted DATABASE_URL still contains an example password")
+
+    engine = create_database_engine(database)
+    try:
+        try:
+            with engine.connect() as connection:
+                identity = connection.execute(
+                    text(
+                        """
+                        SELECT current_database(), current_user,
+                               rolsuper, rolcreatedb, rolcreaterole,
+                               rolreplication, rolbypassrls,
+                               has_database_privilege(
+                                   current_user,
+                                   current_database(),
+                                   'CREATE'
+                               ),
+                               has_database_privilege(
+                                   current_user,
+                                   current_database(),
+                                   'TEMPORARY'
+                               ),
+                               has_schema_privilege(
+                                   current_user,
+                                   'public',
+                                   'CREATE'
+                               )
+                        FROM pg_roles
+                        WHERE rolname = current_user
+                        """
+                    )
+                ).one()
+                migrated_revision = connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+        except SQLAlchemyError as exc:
+            raise ValueError(
+                "cannot connect to the restricted database or read its migration state"
+            ) from exc
+    finally:
+        engine.dispose()
+
+    database_name, role_name, *role_capabilities = identity
+    if (
+        database_name != "re3d_platform_restricted"
+        or role_name != "re3d_restricted_runtime"
+    ):
+        raise ValueError("restricted database identity does not match its runtime role")
+    if any(bool(value) for value in role_capabilities):
+        raise ValueError(
+            "restricted database role must not have administrative, temporary, "
+            "or schema-creation privileges"
+        )
+    expected_revision = _expected_migration_revision()
+    if migrated_revision != expected_revision:
+        raise ValueError(
+            f"restricted database migration is {migrated_revision}; "
+            f"expected {expected_revision}"
+        )
+    return {
+        "name": database_name,
+        "role": role_name,
+        "migration": migrated_revision,
+    }
+
+
 def _validate_production_database_identity(
     *,
     database_name: str,
@@ -446,13 +675,26 @@ def _is_example_host(host: str) -> bool:
 
 
 def _check_production_storage() -> dict[str, int | str]:
+    return _check_operational_storage(environment="production")
+
+
+def _check_restricted_storage() -> dict[str, int | str]:
+    return _check_operational_storage(environment="restricted")
+
+
+def _check_operational_storage(
+    *,
+    environment: str,
+) -> dict[str, int | str]:
     worker = WorkerSettings.from_environment()
     if not worker.data_root.is_dir():
         raise ValueError("RE3D_DATA_ROOT must be an existing directory")
     if not os.access(worker.data_root, os.W_OK):
         raise ValueError("RE3D_DATA_ROOT is not writable")
     if worker.data_root == ROOT or ROOT in worker.data_root.parents:
-        raise ValueError("production RE3D_DATA_ROOT must be outside the source checkout")
+        raise ValueError(
+            f"{environment} RE3D_DATA_ROOT must be outside the source checkout"
+        )
 
     minimum_free_bytes = _required_environment_integer(
         "RE3D_MIN_FREE_DISK_BYTES",

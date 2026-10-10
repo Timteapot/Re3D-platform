@@ -611,6 +611,40 @@ class AuthSettingsTests(unittest.TestCase):
             ("127.0.0.1/32", "::1/128"),
         )
 
+    def test_restricted_http_uses_non_secure_cookie_and_loopback_proxy(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "JWT_SECRET": TEST_SECRET,
+                "APP_PUBLIC_BASE_URL": "http://127.0.0.1:8080",
+                "REFRESH_COOKIE_SECURE": "false",
+                "AUTH_TRUSTED_PROXY_CIDRS": "127.0.0.1/32,::1/128",
+            },
+            clear=True,
+        ):
+            settings = AuthSettings.from_environment(environment="restricted")
+        self.assertFalse(settings.cookie_secure)
+
+    def test_restricted_rejects_non_loopback_boundaries(self) -> None:
+        environment = {
+            "JWT_SECRET": TEST_SECRET,
+            "APP_PUBLIC_BASE_URL": "http://192.168.1.10:8080",
+            "REFRESH_COOKIE_SECURE": "false",
+            "AUTH_TRUSTED_PROXY_CIDRS": "127.0.0.1/32",
+        }
+        with patch.dict("os.environ", environment, clear=True):
+            with self.assertRaisesRegex(ValueError, "loopback origin"):
+                AuthSettings.from_environment(environment="restricted")
+        environment.update(
+            {
+                "APP_PUBLIC_BASE_URL": "http://127.0.0.1:8080",
+                "AUTH_TRUSTED_PROXY_CIDRS": "0.0.0.0/0",
+            }
+        )
+        with patch.dict("os.environ", environment, clear=True):
+            with self.assertRaisesRegex(ValueError, "only loopback"):
+                AuthSettings.from_environment(environment="restricted")
+
     def test_rejects_invalid_login_limits_and_proxy_networks(self) -> None:
         with self.assertRaises(ValueError):
             AuthSettings(

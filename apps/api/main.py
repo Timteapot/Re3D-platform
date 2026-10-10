@@ -30,14 +30,17 @@ from backend.db.runtime import (
     create_database_engine,
     create_session_factory,
 )
+from backend.environment import (
+    RESTRICTED_ENVIRONMENT,
+    is_development_environment,
+    is_loopback_host,
+    normalize_environment,
+)
 from backend.jobs import TaskSubmissionSettings
 from backend.jobs.development import DevelopmentJobService
 from backend.rate_limit import ApiRateLimitService, ApiRateLimitSettings
 from backend.transfers import TransferLimitService, TransferLimitSettings
 from backend.uploads import StorageQuotaSettings, UploadService, UploadSettings
-
-
-DEVELOPMENT_ENVIRONMENTS = {"development", "test"}
 
 
 @dataclass(frozen=True)
@@ -100,7 +103,13 @@ def create_app(
     services: AppServices | None = None,
     app_env: str | None = None,
 ) -> FastAPI:
-    environment = (app_env or os.environ.get("APP_ENV") or "production").lower()
+    environment = normalize_environment(
+        app_env or os.environ.get("APP_ENV") or "production"
+    )
+    if environment == RESTRICTED_ENVIRONMENT and not is_loopback_host(
+        os.environ.get("API_HOST")
+    ):
+        raise ValueError("restricted API_HOST must be a loopback host")
     app = FastAPI(title="Re3D Platform API", version="0.1.0")
 
     @app.get("/health/live", tags=["health"])
@@ -108,7 +117,7 @@ def create_app(
         return {
             "status": "ok",
             "environment": environment,
-            "development_routes_enabled": environment in DEVELOPMENT_ENVIRONMENTS,
+            "development_routes_enabled": is_development_environment(environment),
         }
 
     resolved_services = services or build_services(environment=environment)
@@ -154,7 +163,7 @@ def create_app(
         )
     )
 
-    is_development = environment in DEVELOPMENT_ENVIRONMENTS
+    is_development = is_development_environment(environment)
     app.include_router(
         create_upload_router(
             resolved_services.uploads,

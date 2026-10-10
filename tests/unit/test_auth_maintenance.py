@@ -70,6 +70,24 @@ class AuthMaintenanceTests(unittest.TestCase):
         )
         readiness.assert_called_once_with(component="worker")
 
+    @patch(
+        "apps.maintenance.main.check_restricted_readiness",
+        return_value={"status": "ready", "component": "api"},
+    )
+    def test_restricted_readiness_command_selects_component(self, readiness) -> None:
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = maintenance_main(
+                ["check-restricted-readiness", "--component", "api"]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            json.loads(stdout.getvalue()),
+            {"status": "ready", "component": "api"},
+        )
+        readiness.assert_called_once_with(component="api")
+
     def test_cleanup_removes_expired_records_but_preserves_active_blocks(self) -> None:
         now = datetime.now(timezone.utc)
         old = now - timedelta(days=100)

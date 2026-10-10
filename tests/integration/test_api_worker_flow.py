@@ -606,6 +606,84 @@ class ApiWorkerFlowTests(unittest.TestCase):
         finally:
             production.close()
 
+    def test_restricted_routes_are_stable_and_uploads_are_real_only(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"API_HOST": "0.0.0.0"},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(ValueError, "API_HOST must be a loopback"):
+                create_app(services=self.services, app_env="restricted")
+
+        with patch.dict(
+            "os.environ",
+            {
+                "API_HOST": "127.0.0.1",
+                "API_IP_RATE_LIMIT_WINDOW_SECONDS": "60",
+                "API_IP_RATE_LIMIT_MAX_REQUESTS": "300",
+                **PRODUCTION_TRANSFER_ENV,
+            },
+            clear=False,
+        ):
+            restricted_app = create_app(
+                services=self.services,
+                app_env="restricted",
+            )
+        restricted = TestClient(restricted_app)
+        headers = self.auth_headers(self.access_token)
+        try:
+            development = restricted.post(
+                "/api/v1/development/simulated-jobs",
+                json={
+                    "image_count": 3,
+                    "idempotency_key": "restricted-dev-route-must-not-exist",
+                },
+                headers=headers,
+            )
+            self.assertEqual(development.status_code, 404)
+
+            created = restricted.post(
+                "/api/v1/uploads",
+                json={"idempotency_key": "restricted-real-upload"},
+                headers=headers,
+            )
+            self.assertEqual(created.status_code, 201, created.text)
+            upload_id = created.json()["upload_id"]
+            for index, color in enumerate(
+                ((130, 30, 20), (20, 120, 60), (40, 80, 150))
+            ):
+                uploaded = restricted.post(
+                    f"/api/v1/uploads/{upload_id}/images",
+                    files={
+                        "file": (
+                            f"restricted-{index}.png",
+                            self.png_bytes(color),
+                            "image/png",
+                        )
+                    },
+                    headers=headers,
+                )
+                self.assertEqual(uploaded.status_code, 201, uploaded.text)
+
+            simulated = restricted.post(
+                f"/api/v1/uploads/{upload_id}/submit",
+                json={"execution_mode": "simulated"},
+                headers=headers,
+            )
+            self.assertEqual(simulated.status_code, 422, simulated.text)
+            submitted = restricted.post(
+                f"/api/v1/uploads/{upload_id}/submit",
+                headers=headers,
+            )
+            self.assertEqual(submitted.status_code, 202, submitted.text)
+            self.assertEqual(submitted.json()["execution_mode"], "real")
+
+            health = restricted.get("/health/live").json()
+            self.assertEqual(health["environment"], "restricted")
+            self.assertFalse(health["development_routes_enabled"])
+        finally:
+            restricted.close()
+
     def test_auth_refresh_rotation_logout_and_required_bearer(self) -> None:
         missing = self.client.post(
             "/api/v1/development/simulated-jobs",

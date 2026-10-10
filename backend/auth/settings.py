@@ -4,9 +4,15 @@ import os
 import re
 from dataclasses import dataclass
 from ipaddress import ip_network
+from urllib.parse import urlsplit
 
-
-DEVELOPMENT_ENVIRONMENTS = {"development", "test"}
+from backend.environment import (
+    DEVELOPMENT_ENVIRONMENTS,
+    PRODUCTION_ENVIRONMENT,
+    RESTRICTED_ENVIRONMENT,
+    is_loopback_host,
+    normalize_environment,
+)
 
 
 @dataclass(frozen=True)
@@ -119,19 +125,39 @@ class AuthSettings:
 
     @classmethod
     def from_environment(cls, *, environment: str) -> "AuthSettings":
+        environment = normalize_environment(environment)
         secret = os.environ.get("JWT_SECRET", "")
-        secure_default = environment not in DEVELOPMENT_ENVIRONMENTS
+        restricted_scheme: str | None = None
+        if environment == RESTRICTED_ENVIRONMENT:
+            public_base_url = os.environ.get("APP_PUBLIC_BASE_URL", "").strip()
+            restricted_scheme = _validate_restricted_public_base_url(
+                public_base_url
+            )
+        secure_default = environment == PRODUCTION_ENVIRONMENT or (
+            environment == RESTRICTED_ENVIRONMENT
+            and restricted_scheme == "https"
+        )
         cookie_secure = _environment_bool(
             "REFRESH_COOKIE_SECURE",
             secure_default,
         )
-        if environment not in DEVELOPMENT_ENVIRONMENTS and not cookie_secure:
+        if environment == PRODUCTION_ENVIRONMENT and not cookie_secure:
             raise ValueError("REFRESH_COOKIE_SECURE must be true outside development")
+        if environment == RESTRICTED_ENVIRONMENT and cookie_secure != (
+            restricted_scheme == "https"
+        ):
+            expected = "true" if restricted_scheme == "https" else "false"
+            raise ValueError(
+                "REFRESH_COOKIE_SECURE must be "
+                f"{expected} for the restricted APP_PUBLIC_BASE_URL scheme"
+            )
         trusted_proxy_cidrs = _environment_csv("AUTH_TRUSTED_PROXY_CIDRS")
         if environment not in DEVELOPMENT_ENVIRONMENTS and not trusted_proxy_cidrs:
             raise ValueError(
                 "AUTH_TRUSTED_PROXY_CIDRS is required outside development"
             )
+        if environment == RESTRICTED_ENVIRONMENT:
+            _validate_restricted_proxy_networks(trusted_proxy_cidrs)
         return cls(
             jwt_secret=secret,
             access_token_ttl_minutes=_environment_integer(
@@ -232,3 +258,33 @@ def _environment_bool(name: str, default: bool) -> bool:
 def _environment_csv(name: str) -> tuple[str, ...]:
     raw = os.environ.get(name, "")
     return tuple(value.strip() for value in raw.split(",") if value.strip())
+
+
+def _validate_restricted_public_base_url(value: str) -> str:
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or not is_loopback_host(parsed.hostname)
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+    ):
+        raise ValueError(
+            "restricted APP_PUBLIC_BASE_URL must be an HTTP(S) loopback origin"
+        )
+    return parsed.scheme
+
+
+def _validate_restricted_proxy_networks(cidrs: tuple[str, ...]) -> None:
+    for cidr in cidrs:
+        network = ip_network(cidr, strict=False)
+        if not (
+            network.network_address.is_loopback
+            and network.broadcast_address.is_loopback
+        ):
+            raise ValueError(
+                "restricted AUTH_TRUSTED_PROXY_CIDRS may contain only loopback networks"
+            )

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from backend.db.models import ReconstructionJob, TaskActionEvent, User
 from backend.db.state_machine import TERMINAL_STATUSES
+from backend.environment import requires_explicit_operational_settings
 
 
 PENDING_LIMIT_CODE = "PENDING_JOB_LIMIT_REACHED"
@@ -58,17 +59,17 @@ class TaskSubmissionSettings:
         *,
         environment: str = "development",
     ) -> "TaskSubmissionSettings":
-        production = environment.strip().lower() == "production"
+        explicit = requires_explicit_operational_settings(environment)
         return cls(
             max_pending_jobs=_read_integer(
                 "RE3D_USER_MAX_PENDING_JOBS",
                 default=3,
-                required=production,
+                required=explicit,
             ),
             max_submissions_per_24h=_read_integer(
                 "RE3D_USER_MAX_SUBMISSIONS_PER_24H",
                 default=20,
-                required=production,
+                required=explicit,
             ),
         )
 
@@ -182,7 +183,7 @@ def _read_integer(name: str, *, default: int, required: bool) -> int:
     configured = os.environ.get(name)
     if configured is None or not configured.strip():
         if required:
-            raise ValueError(f"{name} is required in production")
+            raise ValueError(f"{name} is required for restricted and production")
         return default
     try:
         return int(configured)

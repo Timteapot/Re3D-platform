@@ -34,6 +34,13 @@ class TransferLimitSettingsTests(unittest.TestCase):
                     environment="production"
                 )
 
+    def test_restricted_requires_explicit_operator_values(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaisesRegex(ValueError, "WINDOW_SECONDS is required"):
+                TransferLimitSettings.from_environment(
+                    environment="restricted"
+                )
+
     def test_development_uses_bounded_defaults(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
             settings = TransferLimitSettings.from_environment(

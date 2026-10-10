@@ -442,6 +442,15 @@ class UploadServiceTests(unittest.TestCase):
         self.assertEqual(settings.quota_bytes, 4096)
         self.assertEqual(settings.job_reservation_bytes, 2048)
 
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaisesRegex(
+                ValueError,
+                "RE3D_USER_STORAGE_QUOTA_BYTES",
+            ):
+                StorageQuotaSettings.from_environment(
+                    environment="restricted"
+                )
+
         with self.assertRaisesRegex(ValueError, "must not exceed"):
             StorageQuotaSettings(
                 quota_bytes=1024,
