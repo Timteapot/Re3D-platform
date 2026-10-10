@@ -25,7 +25,7 @@ from backend.jobs import (
 )
 
 
-PIPELINE_COMMIT = "2c5ba174dae9fe53dcec8f7d8466793fdebf0c58"
+PIPELINE_COMMIT = "d5c51e580ddc54ac96bbb2635e5147713c2db4e7"
 
 
 class SuccessRetentionTests(unittest.TestCase):
@@ -64,7 +64,7 @@ class SuccessRetentionTests(unittest.TestCase):
             job_id=job_id,
             user_id=uuid.uuid4(),
             execution_mode="real",
-            pipeline_tag="re3d-pipeline-v1.1.0",
+            pipeline_tag="re3d-pipeline-v1.1.1",
             pipeline_commit=PIPELINE_COMMIT,
             config_sha256="a" * 64,
             input_manifest_sha256="b" * 64,

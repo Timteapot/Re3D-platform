@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import uuid
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from .errors import PathBoundaryError
 
@@ -79,9 +79,11 @@ class TaskLayout:
 
     def resolve(self, relative_path: str) -> Path:
         pure = PurePosixPath(relative_path)
+        windows_path = PureWindowsPath(relative_path)
         if (
             not relative_path
             or pure.is_absolute()
+            or bool(windows_path.drive)
             or "\\" in relative_path
             or any(part in {"", ".", ".."} for part in pure.parts)
             or len(pure.parts) == 0

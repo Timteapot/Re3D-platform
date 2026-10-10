@@ -6,8 +6,9 @@ Re3D Platform 是基于 Re3D 三维重建管线的非商业学习与工程实践
 
 核心功能闭环、首轮本机真实 GPU 验收和 Windows 单机生产拓扑的非公网验收已经完成。项目当前处于部署工程阶段：应用层已增加单用户上传/下载并发与累计字节控制，可进入目标 Windows 服务器安装和内部验收；但在边缘防护、真实主机传输压力测试、集中监控、生产邮件、故障恢复及任务空间预留值实测校准完成前，不具备公开发布条件。
 
-- Re3D 活动基线标签：`re3d-pipeline-v1.1.0`
-- Re3D 活动基线提交：`2c5ba174dae9fe53dcec8f7d8466793fdebf0c58`
+- Re3D 活动基线标签：`re3d-pipeline-v1.1.1`
+- Re3D 活动基线提交：`d5c51e580ddc54ac96bbb2635e5147713c2db4e7`
+- 目标 GPU 兼容参数：Tesla T4（15 GiB）使用 MapAnything `batch_size=4`
 - 首个冻结基线：`re3d-pipeline-v1.0.0`，保持不变并保留历史清单
 - 首期固定分支：`A-v4`、`B-v2`、`C`
 - 当前开发环境：Windows

@@ -24,8 +24,8 @@ from backend.db.runtime import DatabaseSettings, SchedulerSettings
 from backend.db.state_machine import JobStatus, assert_transition, can_transition
 
 
-PIPELINE_COMMIT = "2c5ba174dae9fe53dcec8f7d8466793fdebf0c58"
-CONFIG_SHA256 = "e0b7ff8b5613884dba4eb6e86ff66419c4b5df96f3d89fa4b7756184fb055c69"
+PIPELINE_COMMIT = "d5c51e580ddc54ac96bbb2635e5147713c2db4e7"
+CONFIG_SHA256 = "9f8cbc83cb67b8313f624913686fbdc453e7572a18603d015bc198a9a92b8883"
 
 
 class StateMachineTests(unittest.TestCase):
@@ -188,7 +188,7 @@ class JobQueueTests(unittest.TestCase):
             job_id=job_id,
             user_id=uuid.uuid4(),
             execution_mode=execution_mode,
-            pipeline_tag="re3d-pipeline-v1.1.0",
+            pipeline_tag="re3d-pipeline-v1.1.1",
             pipeline_commit=PIPELINE_COMMIT,
             config_sha256=CONFIG_SHA256,
             input_manifest_sha256="a" * 64,
@@ -325,7 +325,7 @@ class JobQueueTests(unittest.TestCase):
                 job_id=uuid.uuid4(),
                 user_id=uuid.uuid4(),
                 execution_mode="simulated",
-                pipeline_tag="re3d-pipeline-v1.1.0",
+                pipeline_tag="re3d-pipeline-v1.1.1",
                 pipeline_commit=PIPELINE_COMMIT,
                 config_sha256=CONFIG_SHA256,
                 input_manifest_sha256="b" * 64,
@@ -346,7 +346,7 @@ class JobQueueTests(unittest.TestCase):
             job_id=job_id,
             user_id=user_id,
             execution_mode="simulated",
-            pipeline_tag="re3d-pipeline-v1.1.0",
+            pipeline_tag="re3d-pipeline-v1.1.1",
             pipeline_commit=PIPELINE_COMMIT,
             config_sha256=CONFIG_SHA256,
             input_manifest_sha256="a" * 64,

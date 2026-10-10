@@ -2,7 +2,7 @@
 
 ## 当前实现范围
 
-当前 Worker 包含相互隔离的模拟消费者和真实消费者。模拟消费者用于日常前后端联调；真实消费者只领取 `execution_mode=real` 的任务，在 PostgreSQL 租约下启动固定 Re3D v1.1.0，并在运行期间监督心跳、取消、总超时和子进程树。
+当前 Worker 包含相互隔离的模拟消费者和真实消费者。模拟消费者用于日常前后端联调；真实消费者只领取 `execution_mode=real` 的任务，在 PostgreSQL 租约下启动固定 Re3D v1.1.1，并在运行期间监督心跳、取消、总超时和子进程树。该基线将 MapAnything 批量固定为 4，以适配 15 GiB Tesla T4。
 
 模拟器不会启动 Re3D、不会占用 GPU，也不会把模拟指标解释为真实重建质量。请求和结果都必须包含 `execution_mode: simulated`，避免模拟数据进入真实任务统计。
 
