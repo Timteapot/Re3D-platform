@@ -185,7 +185,9 @@ export function WorkspacePage() {
       setUploadSession(null);
       setFiles([]);
       draftKey.current = crypto.randomUUID();
-      setOperationNotice("输入已冻结，任务已进入模拟队列。");
+      setOperationNotice(
+        `输入已冻结，任务已进入${job.execution_mode === "real" ? "真实 Re3D" : "模拟"}队列。`,
+      );
       void queryClient.invalidateQueries({ queryKey: ["jobs", auth.user?.id] });
       refreshStorageQuota();
     },
@@ -492,7 +494,11 @@ export function WorkspacePage() {
                 {statusLabels[displayedLatestJob.status] ?? displayedLatestJob.status}
               </span>
               <strong>{displayedLatestJob.job_id}</strong>
-              <p>任务已进入数据库队列。启动独立模拟 Worker 后，页面会定期读取最新状态。</p>
+              <p>
+                任务已进入数据库队列，独立 Worker 将按
+                {displayedLatestJob.execution_mode === "real" ? "真实 Re3D" : "模拟"}
+                模式执行；页面会定期读取最新状态。
+              </p>
               <Link className="text-link" to={`/workspace/jobs/${displayedLatestJob.job_id}`}>查看任务详情</Link>
             </div>
           ) : (
@@ -500,7 +506,7 @@ export function WorkspacePage() {
               {[
                 "图片上传与解码校验",
                 "不可变输入清单",
-                "三分支模拟执行",
+                "三分支重建执行",
                 "结构评估报告",
               ].map((stage, index) => (
                 <li key={stage}><span>{String(index + 1).padStart(2, "0")}</span>{stage}</li>
