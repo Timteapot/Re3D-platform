@@ -119,6 +119,68 @@ function Invoke-Re3DVersionCommand {
     }
 }
 
+function Invoke-Re3DWinSWVersionCheck {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (
+        Test-Path -LiteralPath $Path -PathType Leaf
+    )) {
+        Add-Re3DHostCheck `
+            -Id "winsw" `
+            -Status blocker `
+            -Summary "WinSW executable was not found."
+        return
+    }
+
+    try {
+        # WinSW 2.12.0 uses bundled mode and attempts to load a same-name
+        # XML/YAML file before handling `version`. The pristine release asset
+        # has no configuration file yet, so inspect its PE version resource
+        # during host preflight instead of creating a misleading dummy config.
+        $versionInfo = (Get-Item -LiteralPath $Path).VersionInfo
+        $fileVersion = "$($versionInfo.FileVersion)"
+        $productVersion = "$($versionInfo.ProductVersion)"
+        $description = "$($versionInfo.FileDescription)"
+        $requiredPattern = '(?<![0-9])2\.12\.0(?:\.0)?(?![0-9])'
+        if (
+            $description -cne "Windows Service Wrapper" -or
+            (
+                $fileVersion -notmatch $requiredPattern -and
+                $productVersion -notmatch $requiredPattern
+            )
+        ) {
+            Add-Re3DHostCheck `
+                -Id "winsw" `
+                -Status blocker `
+                -Summary "WinSW does not match the required version." `
+                -Details @{
+                    path = $Path
+                    file_version = $fileVersion
+                    product_version = $productVersion
+                    description = $description
+                }
+            return
+        }
+        Add-Re3DHostCheck `
+            -Id "winsw" `
+            -Status pass `
+            -Summary "WinSW is available." `
+            -Details @{
+                path = $Path
+                file_version = $fileVersion
+                product_version = $productVersion
+            }
+    } catch {
+        Add-Re3DHostCheck `
+            -Id "winsw" `
+            -Status blocker `
+            -Summary "WinSW version metadata could not be inspected." `
+            -Details @{ path = $Path; error = $_.Exception.Message }
+    }
+}
+
 function Test-Re3DTcpEndpoint {
     param(
         [Parameter(Mandatory = $true)][string]$HostName,
@@ -324,12 +386,7 @@ foreach ($postgresTool in @("psql.exe", "pg_dump.exe", "pg_restore.exe")) {
         -RequiredPattern 'PostgreSQL\) 18\.'
 }
 
-Invoke-Re3DVersionCommand `
-    -Id "winsw" `
-    -Label "WinSW" `
-    -Path $WinSWPath `
-    -Arguments @("version") `
-    -RequiredPattern '(?<![0-9])2\.12\.0(?:\.0)?(?![0-9])'
+Invoke-Re3DWinSWVersionCheck -Path $WinSWPath
 Invoke-Re3DVersionCommand `
     -Id "caddy" `
     -Label "Caddy" `

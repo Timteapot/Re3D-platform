@@ -48,9 +48,22 @@ SfM 注册 11/11 张图片，生成 10,613 个三维点和 49,992 个观测，�
 
 修复后先完成 B-v2 恢复式验证，再在新的空任务目录从头执行一次三分支验收。严格验收中两个 DINOv2 加载点均直接命中本地缓存，没有访问 GitHub。
 
+## 主机部署预检
+
+同日继续执行 Windows 单机生产拓扑安装前预检，并把无秘密报告保存在服务器 `D:\Re3D-data\acceptance`。固定部署工具已从官方 Release 下载、在本机和服务器两端校验后安装：
+
+| 工具 | 安装路径 | 验证结果 |
+|---|---|---|
+| WinSW 2.12.0 | `C:\Install\WinSW-x64.exe` | SHA-256 `05b82d46ad331cc16bdc00de5c6332c1ef818df8ceefcd49c726553209b3a0da` |
+| Caddy 2.11.4 | `C:\Program Files\Caddy\caddy.exe` | 官方 SHA-512 清单匹配，版本输出为 `v2.11.4` |
+
+预检发现 WinSW 2.12.0 的原始 bundled 可执行文件在没有同名 XML/YAML 时不能执行 `version` 子命令。主机预检已改为验证 PE 文件描述、文件版本和产品版本，并增加静态回归合同；平台全量 155 项单元测试和目标机 2 项新增回归测试均通过。
+
+安装工具后的预检共有 22 项通过、0 项警告、1 项阻断。唯一阻断项是尚未提供最终 HTTPS 域名及 DNS；WinSW、Caddy、PowerShell 7、Git、Node.js、PostgreSQL 18 客户端、GPU、磁盘、Re3D 固定提交、服务名、端口和数据库本机端点均通过。此时尚未注册 Windows 服务、打开 80/443 端口或启动 Caddy。
+
 ## 后续边界
 
-- 当前服务器尚未创建平台 `.env.production` 和 `.env.worker.production`，API/Worker/Caddy 尚未服务化；
+- 当前服务器尚未创建平台 `.env.production` 和 `.env.worker.production`，API/Worker/Caddy 尚未服务化；WinSW/Caddy 二进制已准备完成；
 - 本次是管线直连验收，不覆盖 PostgreSQL 租约、取消、总超时、平台评估、授权下载和浏览器查看器；
 - 仍需在生产 Worker 下执行一次端到端真实任务，并采集 GPU/CPU/内存/磁盘峰值；
 - 公网开放前仍需完成域名 TLS、生产邮件、验证码、边缘防护、集中监控、备份恢复和并发压力验收。
