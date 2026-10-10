@@ -22,6 +22,7 @@
 - [x] Re3D 管线冻结为 `re3d-pipeline-v1.0.0`；
 - [x] 发布 `re3d-pipeline-v1.1.0` 隔离运行目录接口，原 v1.0.0 标签保持不变；
 - [x] 发布 `re3d-pipeline-v1.1.1` Tesla T4 兼容基线，将 MapAnything 批量固定为 4，并归档 v1.1.0 基线清单；
+- [x] 发布 `re3d-pipeline-v1.1.2`，修复 MVSAnywhere 对 GitHub 的运行时依赖，并在目标 Tesla T4 服务器完成 11 图三分支空目录真实验收；
 - [x] 记录 Re3D Git SHA、配置 SHA-256 和模型清单 SHA-256；
 - [x] 初始化并推送 `Re3D-platform` 仓库；
 - [x] 固定首期 A-v4、B-v2、C 三分支策略；

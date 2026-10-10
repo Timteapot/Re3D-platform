@@ -34,6 +34,8 @@
 
 2026-10-10 发布 `re3d-pipeline-v1.1.1` Tesla T4 兼容基线，将 MapAnything 默认批量从 12 调整为 4；平台请求、结果契约和活动基线同步固定到新标签，`v1.1.0` 清单保留为历史证据。
 
+同日目标服务器验收发现 MVSAnywhere 的 DINOv2 Torch Hub 加载在已有本地缓存时仍可能访问 GitHub，并在网络失败后进入有缺陷的检查点回退。`re3d-pipeline-v1.1.2` 固定 DINOv2 `main` 缓存引用并修正回退顺序；在 Tesla T4 服务器上从空目录完成 11 图三分支真实重建后，平台活动基线升级到该版本，`v1.1.1` 清单保留为历史证据。
+
 2026-09-24 首个数据库迁移建立 `reconstruction_jobs` 和 `worker_leases`。首期用唯一资源槽 `gpu:0` 强制单 GPU 并发为 1；领取事务先锁资源槽，再使用 `FOR UPDATE SKIP LOCKED` 选择任务。每次领取生成新的 fencing token，心跳、状态推进和终态提交均必须持有有效 token。租约过期优先恢复原 job/attempt，不自动创建新的重试 attempt。
 
 同日建立本机开发库 `re3d_platform_dev` 和受限角色 `re3d_app`。数据库集成测试只允许连接名称以 `_test` 结尾的 PostgreSQL 数据库，并由无持久卷的临时 Docker 容器提供，禁止复用开发库。

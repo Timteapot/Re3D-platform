@@ -10,8 +10,8 @@
   },
   "pipeline": {
     "name": "Re3D",
-    "tag": "re3d-pipeline-v1.1.1",
-    "commit": "d5c51e580ddc54ac96bbb2635e5147713c2db4e7",
+    "tag": "re3d-pipeline-v1.1.2",
+    "commit": "5acd79496fb3614133019b4ab590823696d8e958",
     "config_sha256": "9f8cbc83cb67b8313f624913686fbdc453e7572a18603d015bc198a9a92b8883"
   },
   "input": {

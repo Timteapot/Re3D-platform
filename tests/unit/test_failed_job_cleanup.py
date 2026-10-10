@@ -24,7 +24,7 @@ from backend.jobs.cleanup import (
 from backend.jobs.details import JobDetailReader
 
 
-PIPELINE_COMMIT = "d5c51e580ddc54ac96bbb2635e5147713c2db4e7"
+PIPELINE_COMMIT = "5acd79496fb3614133019b4ab590823696d8e958"
 
 
 class FailedJobStorageCleanerTests(unittest.TestCase):
@@ -61,7 +61,7 @@ class FailedJobStorageCleanerTests(unittest.TestCase):
             job_id=job_id,
             user_id=uuid.uuid4(),
             execution_mode="real",
-            pipeline_tag="re3d-pipeline-v1.1.1",
+            pipeline_tag="re3d-pipeline-v1.1.2",
             pipeline_commit=PIPELINE_COMMIT,
             config_sha256="a" * 64,
             input_manifest_sha256="b" * 64,

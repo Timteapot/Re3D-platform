@@ -24,7 +24,7 @@ from backend.db.runtime import DatabaseSettings, SchedulerSettings
 from backend.db.state_machine import JobStatus, assert_transition, can_transition
 
 
-PIPELINE_COMMIT = "d5c51e580ddc54ac96bbb2635e5147713c2db4e7"
+PIPELINE_COMMIT = "5acd79496fb3614133019b4ab590823696d8e958"
 CONFIG_SHA256 = "9f8cbc83cb67b8313f624913686fbdc453e7572a18603d015bc198a9a92b8883"
 
 
@@ -188,7 +188,7 @@ class JobQueueTests(unittest.TestCase):
             job_id=job_id,
             user_id=uuid.uuid4(),
             execution_mode=execution_mode,
-            pipeline_tag="re3d-pipeline-v1.1.1",
+            pipeline_tag="re3d-pipeline-v1.1.2",
             pipeline_commit=PIPELINE_COMMIT,
             config_sha256=CONFIG_SHA256,
             input_manifest_sha256="a" * 64,
@@ -325,7 +325,7 @@ class JobQueueTests(unittest.TestCase):
                 job_id=uuid.uuid4(),
                 user_id=uuid.uuid4(),
                 execution_mode="simulated",
-                pipeline_tag="re3d-pipeline-v1.1.1",
+                pipeline_tag="re3d-pipeline-v1.1.2",
                 pipeline_commit=PIPELINE_COMMIT,
                 config_sha256=CONFIG_SHA256,
                 input_manifest_sha256="b" * 64,
@@ -346,7 +346,7 @@ class JobQueueTests(unittest.TestCase):
             job_id=job_id,
             user_id=user_id,
             execution_mode="simulated",
-            pipeline_tag="re3d-pipeline-v1.1.1",
+            pipeline_tag="re3d-pipeline-v1.1.2",
             pipeline_commit=PIPELINE_COMMIT,
             config_sha256=CONFIG_SHA256,
             input_manifest_sha256="a" * 64,
