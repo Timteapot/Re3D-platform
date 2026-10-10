@@ -44,12 +44,21 @@ Enter the same runtime password used above:
 Every script accepts `SecureString` parameters for automation but never prints
 or persists the administrator or migration passwords. Only the runtime password
 and a generated JWT secret are saved in the ignored local environment files.
-The initialization scripts refuse to overwrite either environment file.
-
-Start the existing loopback Mailpit instance, then validate the complete
-single-host profile with:
+The initialization scripts refuse to overwrite either environment file. Both
+files receive protected Windows ACLs limited to the creating user,
+Administrators and SYSTEM. Existing files can be hardened and verified with:
 
 ```powershell
+& .\deploy\restricted\protect-restricted-env.ps1
+```
+
+Start the loopback Mailpit instance. When Docker Desktop is unavailable, use
+the pinned standalone Windows binary and then validate the complete single-host
+profile:
+
+```powershell
+& .\deploy\mailpit\install-standalone.ps1
+& .\deploy\mailpit\start-standalone.ps1
 & .\deploy\restricted\check-restricted-readiness.ps1 -Component all
 ```
 

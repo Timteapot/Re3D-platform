@@ -59,6 +59,47 @@ class RestrictedDeploymentAssetTests(unittest.TestCase):
             self.assertNotIn("RandomNumberGenerator]::Fill", content)
             self.assertNotIn("Convert]::ToHexString", content)
 
+    def test_restricted_environment_files_receive_protected_acls(self) -> None:
+        common = (ROOT / "deploy/restricted/common.ps1").read_text(encoding="utf-8")
+        initializer = (
+            ROOT / "deploy/restricted/initialize-restricted-env.ps1"
+        ).read_text(encoding="utf-8")
+        readiness = (
+            ROOT / "deploy/restricted/check-restricted-readiness.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn("SetAccessRuleProtection($true, $false)", common)
+        self.assertIn("$acl.GetOwner", common)
+        self.assertIn("Assert-Re3DRestrictedSecretFileAcl", common)
+        self.assertIn("Set-Re3DRestrictedSecretFileAcl", initializer)
+        self.assertIn("Assert-Re3DRestrictedSecretFileAcl", readiness)
+
+    def test_standalone_mailpit_is_pinned_and_loopback_only(self) -> None:
+        install = (ROOT / "deploy/mailpit/install-standalone.ps1").read_text(
+            encoding="utf-8"
+        )
+        start = (ROOT / "deploy/mailpit/start-standalone.ps1").read_text(
+            encoding="utf-8"
+        )
+        stop = (ROOT / "deploy/mailpit/stop-standalone.ps1").read_text(
+            encoding="utf-8"
+        )
+        expected_executable_hash = (
+            "ee0b025bc9f61e6856d6032128408ee6fe1627f510c118a4fa0faa7bfdb7cd33"
+        )
+        self.assertIn("mailpit/releases/download/v$version", install)
+        self.assertIn(expected_executable_hash, install)
+        self.assertIn(expected_executable_hash, start)
+        self.assertIn('"--smtp=$smtpAddress"', start)
+        self.assertIn('"--listen=$uiAddress"', start)
+        self.assertIn('"127.0.0.1:1025"', start)
+        self.assertIn('"127.0.0.1:8025"', start)
+        self.assertNotIn("--pop3", start)
+        self.assertIn("-WindowStyle Hidden", start)
+        self.assertIn("[switch]$StayAttached", start)
+        self.assertIn("Wait-Process -Id $process.Id", start)
+        self.assertIn("PID $savedPid belongs to another executable", start)
+        self.assertIn("PID $savedPid belongs to another executable", stop)
+
 
 if __name__ == "__main__":
     unittest.main()

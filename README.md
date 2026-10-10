@@ -65,7 +65,7 @@ tests                    集成、端到端与测试夹具
 
 生产配置模板、按 `api` / `worker` / `all` 区分的无秘密就绪检查、前端生产构建、API/Worker 启动入口、Caddy 同源代理和本机闭环验收见 [`deploy/production/README.md`](deploy/production/README.md)。生产 PostgreSQL 的管理员/迁移/运行权限拆分以及备份恢复流程见 [`deploy/postgres/README.md`](deploy/postgres/README.md)。目标 Windows 主机安装前还应运行 [`test-target-host-prerequisites.ps1`](deploy/production/windows-services/test-target-host-prerequisites.ps1)，生成不含秘密的主机阻断项报告。这些检查用于提前拒绝开发库、管理员数据库账户、不安全 Cookie、非 HTTPS 公共地址、未加密 SMTP、漂移的 Re3D 基线、不兼容工具链和不足的数据盘；检查通过本身不代表允许开放公网。
 
-短期本机受限部署使用 [`.env.restricted.example`](.env.restricted.example) 和 [`.env.worker.restricted.example`](.env.worker.restricted.example)。其安全边界、当前尚未创建的独立数据库/数据目录前置条件及就绪命令见 [`deploy/restricted/README.md`](deploy/restricted/README.md)。`restricted` 不等于 development：它不注册开发任务路由，也不允许模拟重建；同时它也不等于 production，允许回环 HTTP Cookie 和本机无 STARTTLS Mailpit，但拒绝局域网或公网地址。
+短期本机受限部署使用 [`.env.restricted.example`](.env.restricted.example) 和 [`.env.worker.restricted.example`](.env.worker.restricted.example)。本机已创建独立数据库/最小权限角色、仓库外数据目录和受保护的私密环境文件，并通过全组件就绪检查与 Mailpit 认证邮件验收；安全边界和复现命令见 [`deploy/restricted/README.md`](deploy/restricted/README.md)。`restricted` 不等于 development：它不注册开发任务路由，也不允许模拟重建；同时它也不等于 production，允许回环 HTTP Cookie 和本机无 STARTTLS Mailpit，但拒绝局域网或公网地址。
 
 `.env`、用户数据、模型权重和运行产物不得提交到 Git。
 
@@ -96,9 +96,9 @@ Vite 开发服务器只绑定 `127.0.0.1:5173`，并将 `/api` 代理到本机 F
 
 当前按以下顺序推进，不把“代码已实现”“本机可用”和“公网可用”混为一谈：
 
-1. 初始化本机受限部署专用 PostgreSQL 数据库、最小权限运行角色和仓库外数据目录，迁移到 Alembic head；
-2. 增加可重复、仅绑定回环地址的前端/API/Worker/Mailpit 启停与状态脚本，并先通过 `check-restricted-readiness`；
-3. 使用代表性图片完成一次受限环境真实 GPU 全链路和重启恢复验收，确认 development、restricted、production 数据完全隔离；
+1. 增加可重复、仅绑定回环地址的静态前端/Caddy/API/Worker 启停与状态脚本；Mailpit 独立程序启停和全组件就绪检查已完成；
+2. 使用代表性图片完成一次受限环境真实 GPU 全链路验收；
+3. 完成进程重启恢复与 development、restricted、production 数据隔离验收；
 4. 在不启动云服务器的情况下继续完善验证码、管理员二次验证、备份恢复和本机压力/低磁盘演练；
 5. 未来重新进入公网阶段时，再启动目标服务器复测容量和 GPU，补齐备案或合规域名、TLS、生产 SMTP、边缘防护与集中监控。
 

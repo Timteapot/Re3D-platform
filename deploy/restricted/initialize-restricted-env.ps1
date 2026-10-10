@@ -8,6 +8,7 @@ $ErrorActionPreference = "Stop"
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $postgresCommon = Join-Path $projectRoot "deploy\postgres\common.ps1"
 . $postgresCommon
+. (Join-Path $PSScriptRoot "common.ps1")
 
 $apiTemplate = Join-Path $projectRoot ".env.restricted.example"
 $workerTemplate = Join-Path $projectRoot ".env.worker.restricted.example"
@@ -117,6 +118,10 @@ try {
     $createdTargets.Add($apiTarget)
     [IO.File]::WriteAllText($workerTarget, $workerContent, $utf8WithoutBom)
     $createdTargets.Add($workerTarget)
+    foreach ($target in $createdTargets) {
+        Set-Re3DRestrictedSecretFileAcl -Path $target
+        Assert-Re3DRestrictedSecretFileAcl -Path $target
+    }
 
     Write-Host "Restricted configuration initialized." -ForegroundColor Green
     Write-Host "API environment: .env.restricted"

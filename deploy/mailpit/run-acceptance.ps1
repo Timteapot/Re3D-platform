@@ -1,3 +1,8 @@
+param(
+    [ValidateSet("Docker", "Standalone", "Existing")]
+    [string]$StartupMode = "Docker"
+)
+
 $ErrorActionPreference = "Stop"
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
@@ -6,9 +11,13 @@ if (-not (Test-Path -LiteralPath $venvPython -PathType Leaf)) {
     throw "Project virtual environment was not found at $venvPython"
 }
 
-& (Join-Path $PSScriptRoot "start-local.ps1")
-if ($LASTEXITCODE -ne 0) {
-    throw "Mailpit startup failed."
+if ($StartupMode -eq "Docker") {
+    & (Join-Path $PSScriptRoot "start-local.ps1")
+} elseif ($StartupMode -eq "Standalone") {
+    & (Join-Path $PSScriptRoot "start-standalone.ps1")
+}
+if ($StartupMode -ne "Existing" -and $LASTEXITCODE -ne 0) {
+    throw "Mailpit startup failed for mode $StartupMode."
 }
 
 $previousHost = $env:RE3D_TEST_MAILPIT_SMTP_HOST

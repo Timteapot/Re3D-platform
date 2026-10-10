@@ -113,11 +113,12 @@
 - [x] 增加独立 `restricted` 环境模型：API/网页入口、可信代理、SMTP 和数据库连接仅允许回环边界，稳定上传仅创建 real 任务，开发路由不注册，限流、任务限制和存储配额必须显式配置；
 - [x] 增加受限 API/Worker 配置模板、无秘密 `api`/`worker`/`all` 就绪检查与 PowerShell 入口；就绪检查固定独立数据库 `re3d_platform_restricted`、运行角色 `re3d_restricted_runtime`、仓库外数据目录、30 天保留和 dry-run 清理边界；
 - [x] 增加受限数据库迁移/运行身份拆分、幂等建库、Alembic 迁移授权、运行权限验证、一次性 PostgreSQL 18 合同验收和本机私密配置初始化脚本；
+- [x] 创建本机 `re3d_platform_restricted`、迁移/运行角色并升级到 `0015_transfer_limits`，运行身份无管理员权限且无数据库 CREATE/TEMPORARY 权限；
+- [x] 创建仓库外 `D:\3Dreconstruction\Re3D-data\restricted` 和忽略提交的 API/Worker 环境文件，将 ACL 限定为当前用户、Administrators 和 SYSTEM；
+- [x] 增加固定版本/哈希的 Windows Mailpit 独立程序回退方案，仅监听 `127.0.0.1:1025/8025`；注册验证/密码重置邮件验收及 `restricted` 全组件就绪检查通过；
 
 ## 当前下一步（本机受限部署）
 
-- [ ] 使用已实现脚本创建 `re3d_platform_restricted`、迁移/运行角色并升级到 Alembic head；
-- [ ] 使用已实现脚本创建 `D:\3Dreconstruction\Re3D-data\restricted` 和忽略提交的 `.env.restricted` / `.env.worker.restricted`，启动本机 Mailpit 并通过全量就绪检查；
 - [ ] 实现回环 Caddy/静态前端、API、Worker、Mailpit 的可重复启停和状态检查，不安装系统服务；
 - [ ] 用代表性图片执行一次 restricted 真实 GPU 全链路、进程重启和数据隔离验收。
 
