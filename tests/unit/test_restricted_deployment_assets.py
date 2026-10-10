@@ -47,6 +47,18 @@ class RestrictedDeploymentAssetTests(unittest.TestCase):
         self.assertIn("current_user = 're3d_restricted_runtime'", verification)
         self.assertIn("NOT has_database_privilege", verification)
 
+    def test_initializers_use_windows_powershell_compatible_randomness(self) -> None:
+        for relative in (
+            "deploy/development/initialize-local-env.ps1",
+            "deploy/restricted/initialize-restricted-env.ps1",
+        ):
+            content = (ROOT / relative).read_text(encoding="utf-8")
+            self.assertIn("RandomNumberGenerator]::Create()", content)
+            self.assertIn("GetBytes($secretBytes)", content)
+            self.assertIn("BitConverter]::ToString", content)
+            self.assertNotIn("RandomNumberGenerator]::Fill", content)
+            self.assertNotIn("Convert]::ToHexString", content)
+
 
 if __name__ == "__main__":
     unittest.main()

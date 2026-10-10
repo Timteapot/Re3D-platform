@@ -63,8 +63,16 @@ try {
         -DatabaseName "re3d_platform_restricted"
 
     $secretBytes = New-Object byte[] 48
-    [Security.Cryptography.RandomNumberGenerator]::Fill($secretBytes)
-    $jwtSecret = [Convert]::ToHexString($secretBytes).ToLowerInvariant()
+    $random = [Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $random.GetBytes($secretBytes)
+    } finally {
+        $random.Dispose()
+    }
+    $jwtSecret = [BitConverter]::ToString($secretBytes).Replace(
+        "-",
+        ""
+    ).ToLowerInvariant()
     $portableDataRoot = $resolvedDataRoot.Replace("\", "/")
 
     $apiContent = [IO.File]::ReadAllText($apiTemplate)

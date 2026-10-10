@@ -32,8 +32,16 @@ try {
     }
     $encodedPassword = [Uri]::EscapeDataString($plainPassword)
     $secretBytes = New-Object byte[] 48
-    [Security.Cryptography.RandomNumberGenerator]::Fill($secretBytes)
-    $jwtSecret = [Convert]::ToHexString($secretBytes).ToLowerInvariant()
+    $random = [Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $random.GetBytes($secretBytes)
+    } finally {
+        $random.Dispose()
+    }
+    $jwtSecret = [BitConverter]::ToString($secretBytes).Replace(
+        "-",
+        ""
+    ).ToLowerInvariant()
 
     $content = [IO.File]::ReadAllText($templatePath)
     $databaseUrl = (
