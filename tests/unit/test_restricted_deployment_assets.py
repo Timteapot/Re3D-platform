@@ -100,6 +100,54 @@ class RestrictedDeploymentAssetTests(unittest.TestCase):
         self.assertIn("PID $savedPid belongs to another executable", start)
         self.assertIn("PID $savedPid belongs to another executable", stop)
 
+    def test_restricted_caddy_is_pinned_and_http_loopback_only(self) -> None:
+        installer = (ROOT / "deploy/restricted/install-caddy.ps1").read_text(
+            encoding="utf-8"
+        )
+        runner = (ROOT / "deploy/restricted/run-caddy.ps1").read_text(
+            encoding="utf-8"
+        )
+        caddyfile = (ROOT / "deploy/restricted/Caddyfile").read_text(
+            encoding="utf-8"
+        )
+        archive_sha512 = (
+            "cd5ccfd86a4b40732cf715890d0dca5bf3f63adefec5a7914de85adf240c60ce"
+            "7e5d2791631b88ef9758e46b23bb1730e020b9c5d696889740b284ffd4788e35"
+        )
+        executable_sha256 = (
+            "5cb9ab71e5756ce72840b8234177a2f40c8b4ab47a806b8e841e2b784e9df62b"
+        )
+        self.assertIn(archive_sha512, installer)
+        self.assertIn(executable_sha256, installer)
+        self.assertIn(executable_sha256, runner)
+        self.assertIn("http://127.0.0.1:8080", caddyfile)
+        self.assertIn("bind 127.0.0.1", caddyfile)
+        self.assertIn("reverse_proxy 127.0.0.1:8000", caddyfile)
+        self.assertNotIn("Strict-Transport-Security", caddyfile)
+        self.assertIn("admin off", caddyfile)
+
+    def test_restricted_stack_tracks_process_identity_before_stopping(self) -> None:
+        process_common = (
+            ROOT / "deploy/restricted/process-common.ps1"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "deploy/restricted/start-restricted-stack.ps1"
+        ).read_text(encoding="utf-8")
+        stop = (
+            ROOT / "deploy/restricted/stop-restricted-stack.ps1"
+        ).read_text(encoding="utf-8")
+        status = (
+            ROOT / "deploy/restricted/get-restricted-stack-status.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn("start_time_utc_ticks", process_common)
+        self.assertIn("identity-mismatch", process_common)
+        self.assertIn("taskkill.exe", process_common)
+        self.assertIn("No process was stopped", process_common)
+        self.assertIn('127.0.0.1" -Port 8000', start)
+        self.assertIn('127.0.0.1" -Port 8080', start)
+        self.assertIn('@("caddy", "worker", "api")', stop)
+        self.assertIn('network_scope = "loopback-only"', status)
+
 
 if __name__ == "__main__":
     unittest.main()

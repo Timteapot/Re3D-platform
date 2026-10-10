@@ -1,0 +1,50 @@
+{
+	admin off
+	persist_config off
+	grace_period 30s
+}
+
+http://127.0.0.1:8080 {
+	bind 127.0.0.1
+	encode zstd gzip
+
+	log {
+		output stdout
+		format json
+	}
+
+	header {
+		-Server
+		Content-Security-Policy "default-src 'self'; base-uri 'self'; connect-src 'self'; font-src 'self' data:; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self'; worker-src 'self' blob:"
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Resource-Policy "same-origin"
+		Permissions-Policy "camera=(), geolocation=(), microphone=()"
+		Referrer-Policy "no-referrer"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+	}
+
+	@documents not path /api/* /health/* /assets/*
+	header @documents Cache-Control "no-cache"
+
+	@api path /api/* /health/*
+	handle @api {
+		request_body {
+			max_size 27MB
+		}
+		header Cache-Control "private, no-store"
+		reverse_proxy 127.0.0.1:8000 {
+			flush_interval -1
+			header_down -Server
+		}
+	}
+
+	@assets path /assets/*
+	header @assets Cache-Control "public, max-age=31536000, immutable"
+
+	handle {
+		root * {$RE3D_RESTRICTED_WEB_ROOT}
+		try_files {path} /index.html
+		file_server
+	}
+}

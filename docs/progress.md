@@ -116,10 +116,10 @@
 - [x] 创建本机 `re3d_platform_restricted`、迁移/运行角色并升级到 `0015_transfer_limits`，运行身份无管理员权限且无数据库 CREATE/TEMPORARY 权限；
 - [x] 创建仓库外 `D:\3Dreconstruction\Re3D-data\restricted` 和忽略提交的 API/Worker 环境文件，将 ACL 限定为当前用户、Administrators 和 SYSTEM；
 - [x] 增加固定版本/哈希的 Windows Mailpit 独立程序回退方案，仅监听 `127.0.0.1:1025/8025`；注册验证/密码重置邮件验收及 `restricted` 全组件就绪检查通过；
+- [x] 增加固定版本/官方 SHA-512/可执行文件 SHA-256 校验的 Caddy v2.11.4、本机 HTTP 专用安全头配置，以及 API/真实 Worker/Caddy/Mailpit 的统一启动、身份校验状态和逆序停止脚本；首次启动、失败回滚、完整停止和再次启动验收通过，四个服务端口仅监听 `127.0.0.1`；
 
 ## 当前下一步（本机受限部署）
 
-- [ ] 实现回环 Caddy/静态前端、API、Worker、Mailpit 的可重复启停和状态检查，不安装系统服务；
 - [ ] 用代表性图片执行一次 restricted 真实 GPU 全链路、进程重启和数据隔离验收。
 
 ## 后续公网部署任务（暂缓）

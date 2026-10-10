@@ -10,6 +10,20 @@ function Get-Re3DRestrictedSecretAclSids {
     )
 }
 
+function Get-Re3DRestrictedProjectRoot {
+    return (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+}
+
+function Get-Re3DRestrictedPython {
+    param([Parameter(Mandatory = $true)][string]$ProjectRoot)
+
+    $venvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+    if (-not (Test-Path -LiteralPath $venvPython -PathType Leaf)) {
+        throw "Project virtual environment was not found at $venvPython"
+    }
+    return $venvPython
+}
+
 function Set-Re3DRestrictedSecretFileAcl {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -80,4 +94,19 @@ function Assert-Re3DRestrictedSecretFileAcl {
             throw "Restricted secret ACL is incomplete for SID $expectedSid"
         }
     }
+}
+
+function Assert-Re3DRestrictedEnvironmentFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Python
+    )
+
+    $resolved = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
+    Assert-Re3DRestrictedSecretFileAcl -Path $resolved
+    $environment = (& $Python -m dotenv -f $resolved get APP_ENV).Trim()
+    if ($LASTEXITCODE -ne 0 -or $environment -cne "restricted") {
+        throw "Restricted process environment must set APP_ENV=restricted."
+    }
+    return $resolved
 }
