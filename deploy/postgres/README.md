@@ -84,6 +84,30 @@ DATABASE_URL=postgresql+psycopg://re3d_runtime:<URL编码后的密码>@127.0.0.1
 
 数据库不应直接监听公网。若不在同机，应只允许来自应用/Worker 私网地址的加密连接，并在实际服务器方案确定后补充 PostgreSQL TLS 和防火墙验收。
 
+## 本机受限部署数据库
+
+受限部署不复用 `re3d_platform_dev` 或生产数据库。它采用与生产相同的迁移/运行身份分离原则，但名称和连接数独立：
+
+- 数据库 `re3d_platform_restricted`；
+- 对象所有者 `re3d_restricted_migrator`，连接上限 2；
+- API/Worker 角色 `re3d_restricted_runtime`，连接上限 10；
+- 运行角色不能创建数据库、角色、Schema 或临时表，不能修改 `alembic_version`。
+
+先使用一次性 PostgreSQL 18 容器验证幂等建库、迁移和权限合同：
+
+```powershell
+& .\deploy\postgres\run-restricted-database-acceptance.ps1
+```
+
+再初始化本机实例并执行迁移：
+
+```powershell
+& .\deploy\postgres\bootstrap-restricted.ps1
+& .\deploy\postgres\migrate-restricted.ps1
+```
+
+两次操作都通过安全输入读取密码；迁移密码不会写入配置。API/Worker 配置仅保存受限运行角色密码。完整顺序见 [`deploy/restricted/README.md`](../restricted/README.md)。
+
 ### 备份与恢复演练
 
 备份目标必须在源码仓库之外，而且脚本拒绝覆盖已有文件：

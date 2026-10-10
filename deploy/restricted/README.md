@@ -18,15 +18,36 @@ Internet exposure.
   floor. Successful input, runtime and artifact retention remains 30 days with
   scheduled cleanup in dry-run mode.
 
-## Current implementation stage
+## Initialization order
 
-Copy `.env.restricted.example` to `.env.restricted` and
-`.env.worker.restricted.example` to `.env.worker.restricted`, but do not expect
-readiness to pass until the next bootstrap step creates the dedicated database,
-runtime role and data directory and applies migrations. Real passwords and JWT
-secrets must stay only in the ignored copies.
+First validate the database contract without touching the installed PostgreSQL:
 
-Once those prerequisites exist, validate the complete single-host profile with:
+```powershell
+& .\deploy\postgres\run-restricted-database-acceptance.ps1
+```
+
+Then initialize the installed local PostgreSQL. Choose different passwords of
+at least 16 characters for the migration and runtime roles:
+
+```powershell
+& .\deploy\postgres\bootstrap-restricted.ps1
+& .\deploy\postgres\migrate-restricted.ps1
+```
+
+Finally create the ignored API/Worker environment files and external data root.
+Enter the same runtime password used above:
+
+```powershell
+& .\deploy\restricted\initialize-restricted-env.ps1
+```
+
+Every script accepts `SecureString` parameters for automation but never prints
+or persists the administrator or migration passwords. Only the runtime password
+and a generated JWT secret are saved in the ignored local environment files.
+The initialization scripts refuse to overwrite either environment file.
+
+Start the existing loopback Mailpit instance, then validate the complete
+single-host profile with:
 
 ```powershell
 & .\deploy\restricted\check-restricted-readiness.ps1 -Component all

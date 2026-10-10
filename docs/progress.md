@@ -112,11 +112,12 @@
 - [x] 增加 PostgreSQL 共享的单用户上传/下载字节令牌桶和并发租约、异常租约过期恢复、稳定 429 合同、生产显式配置和 `0015_transfer_limits` 迁移；临时 PostgreSQL 并发/往返、生产权限拆分和备份恢复验收已通过，本机开发库已升级，目标服务器压力值待校准；
 - [x] 增加独立 `restricted` 环境模型：API/网页入口、可信代理、SMTP 和数据库连接仅允许回环边界，稳定上传仅创建 real 任务，开发路由不注册，限流、任务限制和存储配额必须显式配置；
 - [x] 增加受限 API/Worker 配置模板、无秘密 `api`/`worker`/`all` 就绪检查与 PowerShell 入口；就绪检查固定独立数据库 `re3d_platform_restricted`、运行角色 `re3d_restricted_runtime`、仓库外数据目录、30 天保留和 dry-run 清理边界；
+- [x] 增加受限数据库迁移/运行身份拆分、幂等建库、Alembic 迁移授权、运行权限验证、一次性 PostgreSQL 18 合同验收和本机私密配置初始化脚本；
 
 ## 当前下一步（本机受限部署）
 
-- [ ] 创建 `re3d_platform_restricted` 和最小权限 `re3d_restricted_runtime`，使用迁移身份升级到 Alembic head；
-- [ ] 创建 `D:\3Dreconstruction\Re3D-data\restricted`，生成忽略提交的 `.env.restricted` / `.env.worker.restricted`，启动本机 Mailpit 并通过全量就绪检查；
+- [ ] 使用已实现脚本创建 `re3d_platform_restricted`、迁移/运行角色并升级到 Alembic head；
+- [ ] 使用已实现脚本创建 `D:\3Dreconstruction\Re3D-data\restricted` 和忽略提交的 `.env.restricted` / `.env.worker.restricted`，启动本机 Mailpit 并通过全量就绪检查；
 - [ ] 实现回环 Caddy/静态前端、API、Worker、Mailpit 的可重复启停和状态检查，不安装系统服务；
 - [ ] 用代表性图片执行一次 restricted 真实 GPU 全链路、进程重启和数据隔离验收。
 

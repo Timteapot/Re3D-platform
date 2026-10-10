@@ -491,7 +491,7 @@ def _check_production_database(database: DatabaseSettings) -> dict[str, str]:
                     text(
                         """
                         SELECT current_database(), current_user,
-                               rolsuper, rolcreatedb, rolcreaterole,
+                               rolsuper, rolcreatedb, rolcreaterole, rolinherit,
                                rolreplication, rolbypassrls,
                                has_database_privilege(
                                    current_user,
@@ -567,7 +567,7 @@ def _check_restricted_database(database: DatabaseSettings) -> dict[str, str]:
                     text(
                         """
                         SELECT current_database(), current_user,
-                               rolsuper, rolcreatedb, rolcreaterole,
+                               rolsuper, rolcreatedb, rolcreaterole, rolinherit,
                                rolreplication, rolbypassrls,
                                has_database_privilege(
                                    current_user,
