@@ -71,6 +71,11 @@ class WorkerPreflightTests(unittest.TestCase):
             "RE3D_JOB_STORAGE_RESERVATION_BYTES": str(32 * GIBIBYTE),
             "RE3D_MIN_FREE_DISK_BYTES": str(75 * GIBIBYTE),
         }
+        self.environment_300 = {
+            "RE3D_EXECUTION_PROFILE": "gpu-large-300",
+            "RE3D_JOB_STORAGE_RESERVATION_BYTES": str(64 * GIBIBYTE),
+            "RE3D_MIN_FREE_DISK_BYTES": str(75 * GIBIBYTE),
+        }
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -127,6 +132,17 @@ class WorkerPreflightTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, message):
                         WorkerExecutionProfile.from_environment()
 
+    def test_large_300_profile_enforces_provisional_capacity_contract(self) -> None:
+        with patch.dict(os.environ, self.environment_300, clear=True):
+            profile = WorkerExecutionProfile.from_environment()
+        self.assertEqual(profile.name, "gpu-large-300")
+        self.assertEqual(profile.target_image_count, 300)
+        self.assertEqual(profile.minimum_job_reservation_bytes, 64 * GIBIBYTE)
+        self.assertEqual(profile.minimum_free_disk_bytes, 75 * GIBIBYTE)
+        self.assertEqual(profile.minimum_gpu_memory_bytes, 14 * GIBIBYTE)
+        self.assertEqual(profile.minimum_free_gpu_memory_bytes, 12 * GIBIBYTE)
+        self.assertEqual(profile.mapanything_batch_size, 4)
+
     def test_runtime_preflight_checks_disk_gpu_cuda_and_fixed_batch(self) -> None:
         with patch.dict(os.environ, self.environment, clear=True):
             report = check_worker_runtime_preflight(
@@ -179,6 +195,24 @@ class WorkerPreflightTests(unittest.TestCase):
         self.assertEqual(report["storage"]["required_free_bytes"], 107 * GIBIBYTE)
         self.assertEqual(report["pipeline"]["mapanything_batch_size"], 4)
 
+    def test_runtime_preflight_accepts_large_300_capacity(self) -> None:
+        with patch.dict(os.environ, self.environment_300, clear=True):
+            report = check_worker_runtime_preflight(
+                data_root=self.root,
+                re3d_root=self.root,
+                driver_python=self.driver_python,
+                resource_key="gpu:0",
+                nvidia_smi_path=None,
+                gpu_reader=FakeGpuReader(),
+                disk_usage=lambda _path: SimpleNamespace(free=140 * GIBIBYTE),
+                process_runner=successful_cuda_probe,
+            )
+        self.assertEqual(report["status"], "ready")
+        self.assertEqual(report["execution_profile"]["name"], "gpu-large-300")
+        self.assertEqual(report["execution_profile"]["target_image_count"], 300)
+        self.assertEqual(report["storage"]["required_free_bytes"], 139 * GIBIBYTE)
+        self.assertEqual(report["pipeline"]["mapanything_batch_size"], 4)
+
     def test_runtime_preflight_rejects_small_gpu_for_large_profile(self) -> None:
         with patch.dict(os.environ, self.environment, clear=True):
             with self.assertRaisesRegex(ValueError, "GPU memory"):
@@ -214,11 +248,11 @@ class WorkerPreflightTests(unittest.TestCase):
         )
         self.assertEqual(
             production_worker["RE3D_EXECUTION_PROFILE"],
-            "gpu-large-150",
+            "gpu-large-300",
         )
         self.assertEqual(
             production_api["RE3D_USER_STORAGE_QUOTA_BYTES"],
-            str(64 * GIBIBYTE),
+            str(128 * GIBIBYTE),
         )
         self.assertEqual(
             production_worker["RE3D_MIN_FREE_DISK_BYTES"],

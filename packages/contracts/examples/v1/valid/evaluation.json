@@ -21,7 +21,7 @@
           "status": "pass",
           "actual": 49,
           "unit": "images",
-          "thresholds": { "minimum": 3, "maximum": 150 },
+          "thresholds": { "minimum": 3, "maximum": 300 },
           "evidence_refs": ["input/input-manifest.json"]
         }
       ]

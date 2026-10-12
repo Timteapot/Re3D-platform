@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [Security.SecureString]$RuntimePassword,
-    [string]$DataRoot = "D:\3Dreconstruction\Re3D-data\restricted"
+    [string]$DataRoot = "",
+    [string]$Re3DRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -14,8 +15,15 @@ $apiTemplate = Join-Path $projectRoot ".env.restricted.example"
 $workerTemplate = Join-Path $projectRoot ".env.worker.restricted.example"
 $apiTarget = Join-Path $projectRoot ".env.restricted"
 $workerTarget = Join-Path $projectRoot ".env.worker.restricted"
-$resolvedDataRoot = [IO.Path]::GetFullPath($DataRoot)
 $dataParent = [IO.Path]::GetFullPath((Join-Path $projectRoot "..\Re3D-data"))
+if ([string]::IsNullOrWhiteSpace($DataRoot)) {
+    $DataRoot = Join-Path $dataParent "restricted"
+}
+if ([string]::IsNullOrWhiteSpace($Re3DRoot)) {
+    $Re3DRoot = Join-Path $projectRoot "..\Re3D"
+}
+$resolvedDataRoot = [IO.Path]::GetFullPath($DataRoot)
+$resolvedRe3DRoot = [IO.Path]::GetFullPath($Re3DRoot)
 
 foreach ($template in ($apiTemplate, $workerTemplate)) {
     if (-not (Test-Path -LiteralPath $template -PathType Leaf)) {
@@ -35,6 +43,12 @@ if ($resolvedDataRoot.Equals($dataParent, [StringComparison]::OrdinalIgnoreCase)
 }
 if (-not (Test-Re3DPathWithin -Candidate $resolvedDataRoot -Root $dataParent)) {
     throw "Restricted data root must stay within $dataParent"
+}
+if (-not (Test-Path -LiteralPath $resolvedRe3DRoot -PathType Container)) {
+    throw "Re3D root was not found: $resolvedRe3DRoot"
+}
+if (Test-Re3DPathWithin -Candidate $resolvedRe3DRoot -Root $projectRoot) {
+    throw "Re3D root must be outside the platform source checkout."
 }
 
 if ($null -eq $RuntimePassword) {
@@ -75,6 +89,7 @@ try {
         ""
     ).ToLowerInvariant()
     $portableDataRoot = $resolvedDataRoot.Replace("\", "/")
+    $portableRe3DRoot = $resolvedRe3DRoot.Replace("\", "/")
 
     $apiContent = [IO.File]::ReadAllText($apiTemplate)
     $apiContent = [regex]::Replace(
@@ -92,6 +107,11 @@ try {
         "(?m)^RE3D_DATA_ROOT=.*$",
         "RE3D_DATA_ROOT=$portableDataRoot"
     )
+    $apiContent = [regex]::Replace(
+        $apiContent,
+        "(?m)^RE3D_ROOT=.*$",
+        "RE3D_ROOT=$portableRe3DRoot"
+    )
 
     $workerContent = [IO.File]::ReadAllText($workerTemplate)
     $workerContent = [regex]::Replace(
@@ -103,6 +123,11 @@ try {
         $workerContent,
         "(?m)^RE3D_DATA_ROOT=.*$",
         "RE3D_DATA_ROOT=$portableDataRoot"
+    )
+    $workerContent = [regex]::Replace(
+        $workerContent,
+        "(?m)^RE3D_ROOT=.*$",
+        "RE3D_ROOT=$portableRe3DRoot"
     )
 
     if (
@@ -127,6 +152,7 @@ try {
     Write-Host "API environment: .env.restricted"
     Write-Host "Worker environment: .env.worker.restricted"
     Write-Host "Data root: $resolvedDataRoot"
+    Write-Host "Re3D root: $resolvedRe3DRoot"
     Write-Host "No secret values were printed."
 } catch {
     foreach ($target in $createdTargets) {

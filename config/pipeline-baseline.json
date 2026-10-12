@@ -1,12 +1,12 @@
 {
   "schema_version": "1.0",
-  "name": "re3d-pipeline-v1.1.2",
+  "name": "re3d-pipeline-v1.1.3",
   "repository": "git@github.com:Timteapot/Re3D.git",
-  "tag": "re3d-pipeline-v1.1.2",
-  "commit": "5acd79496fb3614133019b4ab590823696d8e958",
+  "tag": "re3d-pipeline-v1.1.3",
+  "commit": "e517a161b4c0895f8be4258fb339272e4f99e1d6",
   "supersedes": {
-    "tag": "re3d-pipeline-v1.1.1",
-    "commit": "d5c51e580ddc54ac96bbb2635e5147713c2db4e7"
+    "tag": "re3d-pipeline-v1.1.2",
+    "commit": "5acd79496fb3614133019b4ab590823696d8e958"
   },
   "pipeline_config": {
     "path": "configs/pipeline.json",
@@ -24,10 +24,10 @@
     "offline_dinov2_torch_hub": true
   },
   "verification": {
-    "verified_at": "2026-10-10",
+    "verified_at": "2026-10-12",
     "doctor": "pass",
     "unit_tests": {
-      "passed": 24,
+      "passed": 30,
       "failed": 0
     }
   }

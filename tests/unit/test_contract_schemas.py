@@ -66,6 +66,21 @@ class ContractSchemaTests(unittest.TestCase):
         absolute_path["input"]["images_path"] = "D:/private/images"
         assert_invalid(self, request_validator, absolute_path)
 
+    def test_pipeline_contracts_accept_300_images_and_reject_301(self) -> None:
+        request = load_json(EXAMPLE_ROOT / "pipeline-request.json")
+        request_validator = validator("pipeline-request")
+        request["input"]["image_count"] = 300
+        request_validator.validate(request)
+        request["input"]["image_count"] = 301
+        assert_invalid(self, request_validator, request)
+
+        result = load_json(EXAMPLE_ROOT / "pipeline-result.json")
+        result_validator = validator("pipeline-result")
+        result["input_summary"]["image_count"] = 300
+        result_validator.validate(result)
+        result["input_summary"]["image_count"] = 301
+        assert_invalid(self, result_validator, result)
+
     def test_valid_pipeline_events_and_sequence(self) -> None:
         events = load_jsonl(EXAMPLE_ROOT / "pipeline-events.jsonl")
         event_validator = validator("pipeline-event")

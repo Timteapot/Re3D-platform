@@ -107,7 +107,7 @@ class SimulationEvaluator:
                             "status": "pass",
                             "actual": result["input_summary"]["image_count"],
                             "unit": "images",
-                            "thresholds": {"minimum": 3, "maximum": 150},
+                            "thresholds": {"minimum": 3, "maximum": 300},
                             "evidence_refs": ["input/input-manifest.json"],
                         }
                     ],

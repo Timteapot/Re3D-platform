@@ -47,8 +47,8 @@ class DevelopmentJobService:
         image_count: int,
         idempotency_token: str,
     ) -> CreatedDevelopmentJob:
-        if not 3 <= image_count <= 150:
-            raise ValueError("image_count must be between 3 and 150")
+        if not 3 <= image_count <= 300:
+            raise ValueError("image_count must be between 3 and 300")
         if not 8 <= len(idempotency_token) <= 128:
             raise ValueError("idempotency_token must contain 8 to 128 characters")
         idempotency_key = hashlib.sha256(

@@ -1,12 +1,20 @@
 param(
-    [string]$InstallRoot = "D:\3Dreconstruction\tools\mailpit\v1.31.3",
-    [string]$ArchivePath = "D:\3Dreconstruction\tools\mailpit\mailpit-windows-amd64-v1.31.3.zip"
+    [string]$InstallRoot = "",
+    [string]$ArchivePath = ""
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $version = "1.31.3"
+$projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$workspaceRoot = Split-Path -Parent $projectRoot
+if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
+    $InstallRoot = Join-Path $workspaceRoot "tools\mailpit\v$version"
+}
+if ([string]::IsNullOrWhiteSpace($ArchivePath)) {
+    $ArchivePath = Join-Path $workspaceRoot "tools\mailpit\mailpit-windows-amd64-v1.31.3.zip"
+}
 $downloadUrl = "https://github.com/axllent/mailpit/releases/download/v$version/mailpit-windows-amd64.zip"
 $archiveSha256 = "863e9502d4e0f14a78c0f91c5091797b1c7b7b7e3fc7e5eab62e5770ce44b76e"
 $executableSha256 = "ee0b025bc9f61e6856d6032128408ee6fe1627f510c118a4fa0faa7bfdb7cd33"

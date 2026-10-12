@@ -47,7 +47,7 @@
 - 仅接受能被 Pillow 完整解码和验证的单帧 JPEG 或 PNG；
 - 不相信扩展名和浏览器声明的 MIME，由服务端识别实际格式；
 - 默认单张不超过 25 MiB、总量不超过 1 GiB、图片不超过 5000 万像素；
-- 每个上传会话允许 3–150 张图片；
+- 每个上传会话允许 3–300 张图片；
 - 同一上传中 SHA-256 相同的图片被视为重复内容并拒绝；
 - 原始文件名只保留为经过规范化的显示元数据；磁盘文件名由平台生成；
 - 文件先写入任务内 staging，超过限制或解码失败时删除临时文件；
@@ -72,8 +72,8 @@ TRANSFER_UPLOAD_MAX_BYTES=2147483648
 TRANSFER_LEASE_SECONDS=14400
 ```
 
-目标服务器 `gpu-large-150` 将用户配额和任务预留分别提高到 64 GiB 与
-32 GiB，具体值见 [`worker-execution-profiles.md`](worker-execution-profiles.md)。
+目标服务器实验性 `gpu-large-300` 将用户配额和任务预留分别提高到
+128 GiB 与 64 GiB，具体值见 [`worker-execution-profiles.md`](worker-execution-profiles.md)。
 服务会拒绝不合理的配置值。反向代理仍需设置请求体大小、请求速率和连接超时；应用层限制不能替代代理层的早期拒绝。
 
 图片接口在 multipart 解析后按用户申请 PostgreSQL 共享的上传并发租约，并按文件实际字节从连续补充的令牌桶预扣额度。超限返回 429 和稳定错误码；它保护后续图片校验与落盘阶段，但不能阻止请求体先到达反向代理和 multipart 解析器。完整配置、错误合同和目标服务器验收边界见 [`transfer-limits.md`](transfer-limits.md)。

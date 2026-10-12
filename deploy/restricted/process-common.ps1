@@ -1,7 +1,9 @@
 . (Join-Path $PSScriptRoot "common.ps1")
 
 function Get-Re3DRestrictedStackStateRoot {
-    return "D:\3Dreconstruction\Re3D-data\_services\restricted-stack"
+    $projectRoot = Get-Re3DRestrictedProjectRoot
+    $workspaceRoot = Split-Path -Parent $projectRoot
+    return Join-Path $workspaceRoot "Re3D-data\_services\restricted-stack"
 }
 
 function Get-Re3DRestrictedCanonicalPath {

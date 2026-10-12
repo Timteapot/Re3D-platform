@@ -10,7 +10,7 @@
 
 真实队列执行使用独立命令 `run-real-queued-once` 或持续的 `run-real-queued-loop`。没有该显式命令时，模拟 Worker 不会领取 real 任务。开发/测试环境的网页提交默认为 simulated，real 可由开发 API 显式请求；production 上传提交由服务端强制为 real。
 
-持续真实 Worker 会在进入队列循环前执行运行时预检。`baseline` 用于本机小样本开发；`gpu-large-100` 用于目标服务器 100 图阶梯验收；`gpu-large-150` 用于 150 图验收，并要求 32 GiB 任务预留、75 GiB 数据盘安全线、至少 14 GiB 总显存和 12 GiB 启动空闲显存。固定管线的 MapAnything `batch_size=4` 不随执行档改变。详细合同见 [`worker-execution-profiles.md`](worker-execution-profiles.md)。
+持续真实 Worker 会在进入队列循环前执行运行时预检。`baseline` 用于受限部署和小样本开发；`gpu-large-100`、`gpu-large-150` 用于已规划的阶梯验收；实验性 `gpu-large-300` 要求 64 GiB 任务预留、75 GiB 数据盘安全线、至少 14 GiB 总显存和 12 GiB 启动空闲显存。固定管线的 MapAnything `batch_size=4` 不随执行档改变。详细合同见 [`worker-execution-profiles.md`](worker-execution-profiles.md)。
 
 ## 模块职责
 

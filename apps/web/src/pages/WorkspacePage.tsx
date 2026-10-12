@@ -16,7 +16,7 @@ import {
   type UploadSession,
 } from "../jobs/api";
 
-const MAX_IMAGES = 150;
+const MAX_IMAGES = 300;
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 1024 * 1024 * 1024;
 const ACTIVE_STATUSES = new Set([
@@ -337,7 +337,7 @@ export function WorkspacePage() {
         <article className="workspace-card upload-card">
           <div className="card-label">INPUT</div>
           <h2>管理多视图输入</h2>
-          <p>支持 JPEG、PNG，3–150 张，单张最大 25 MB、合计最大 1 GiB。图片先验证并保留在可修改上传中，确认后再冻结并入队。</p>
+          <p>支持 JPEG、PNG，3–300 张，单张最大 25 MB、合计最大 1 GiB。图片先验证并保留在可修改上传中，确认后再冻结并入队。</p>
           {storageQuota.data ? (
             <div className="storage-quota" aria-live="polite">
               <div>

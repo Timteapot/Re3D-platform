@@ -1,11 +1,14 @@
 [CmdletBinding()]
 param(
     [switch]$KeepMailpit,
-    [string]$StateRoot = "D:\3Dreconstruction\Re3D-data\_services\restricted-stack"
+    [string]$StateRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "process-common.ps1")
+if ([string]::IsNullOrWhiteSpace($StateRoot)) {
+    $StateRoot = Get-Re3DRestrictedStackStateRoot
+}
 
 $failures = [Collections.Generic.List[string]]::new()
 foreach ($component in @("caddy", "worker", "api")) {

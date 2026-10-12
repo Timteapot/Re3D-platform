@@ -61,7 +61,7 @@ class ProductionReadinessTests(unittest.TestCase):
                 return_value={
                     "name": "re3d_platform",
                     "role": "re3d_runtime",
-                    "migration": "0015_transfer_limits",
+                    "migration": "0016_expand_image_count_300",
                 },
             ),
             patch(
@@ -145,7 +145,7 @@ class ProductionReadinessTests(unittest.TestCase):
                 return_value={
                     "name": "re3d_platform",
                     "role": "re3d_runtime",
-                    "migration": "0015_transfer_limits",
+                    "migration": "0016_expand_image_count_300",
                 },
             ),
             patch(
@@ -229,7 +229,7 @@ class ProductionReadinessTests(unittest.TestCase):
                 return_value={
                     "name": "re3d_platform",
                     "role": "re3d_runtime",
-                    "migration": "0015_transfer_limits",
+                    "migration": "0016_expand_image_count_300",
                 },
             ),
             patch(

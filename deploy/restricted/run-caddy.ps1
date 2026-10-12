@@ -1,12 +1,16 @@
 [CmdletBinding()]
 param(
-    [string]$CaddyPath = "D:\3Dreconstruction\tools\caddy\v2.11.4\caddy.exe",
+    [string]$CaddyPath = "",
     [string]$WebRoot
 )
 
 $ErrorActionPreference = "Stop"
-$expectedSha256 = "5cb9ab71e5756ce72840b8234177a2f40c8b4ab47a806b8e841e2b784e9df62b"
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+if ([string]::IsNullOrWhiteSpace($CaddyPath)) {
+    $workspaceRoot = Split-Path -Parent $projectRoot
+    $CaddyPath = Join-Path $workspaceRoot "tools\caddy\v2.11.4\caddy.exe"
+}
+$expectedSha256 = "5cb9ab71e5756ce72840b8234177a2f40c8b4ab47a806b8e841e2b784e9df62b"
 $configPath = Join-Path $PSScriptRoot "Caddyfile"
 $resolvedCaddy = (Resolve-Path -LiteralPath $CaddyPath -ErrorAction Stop).Path
 $resolvedWebRoot = if ($WebRoot) {

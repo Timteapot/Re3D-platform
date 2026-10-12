@@ -11,7 +11,7 @@
 - 元数据、清单和小型报告不单独计费；
 - 任务预留是容量控制估算，不是 Worker 文件系统硬上限。真实 Re3D 中间文件峰值仍需在目标 GPU 服务器用代表性数据测量并校准。
 
-默认 development 值为每用户 10 GiB、每任务预留 2 GiB。当前本机 restricted 仍采用每用户 32 GiB、每任务 16 GiB；目标服务器 150 图档暂定采用每用户 64 GiB、每任务 32 GiB。这些暂定值仍需目标服务器实测校准。
+默认 development 值为每用户 10 GiB、每任务预留 2 GiB。restricted 仍采用每用户 32 GiB、每任务 16 GiB；实验性 300 图生产档暂定采用每用户 128 GiB、每任务 64 GiB。这些暂定值仍需目标服务器阶梯实测校准。
 
 ## 2. 并发与生命周期
 
@@ -40,18 +40,18 @@
 ## 3. 配置合同
 
 ```dotenv
-RE3D_USER_STORAGE_QUOTA_BYTES=68719476736
-RE3D_JOB_STORAGE_RESERVATION_BYTES=34359738368
+RE3D_USER_STORAGE_QUOTA_BYTES=137438953472
+RE3D_JOB_STORAGE_RESERVATION_BYTES=68719476736
 ```
 
-以上是目标服务器 `gpu-large-150` 的暂定生产示例；本机 restricted 仍为
+以上是目标服务器 `gpu-large-300` 的暂定生产示例；restricted 仍为
 32/16 GiB。生产环境必须显式提供两个整数。约束如下：
 
 - 用户总配额必须为正数；
 - 任务预留必须为正数且不得大于用户总配额；
 - API 初始化和生产就绪检查要求任务预留至少为 1 GiB，并且不小于 `UPLOAD_MAX_TOTAL_BYTES`。
 
-生产值应以代表性图片数量、分辨率、三分支运行时峰值、结果大小、并行任务上限和数据盘容量为依据。真实 Worker 现在会在 `reports/storage-usage.json` 记录任务最终分层字节数和离散观测峰值；只读 `report-storage-capacity` 命令可以汇总完整样本并生成候选预留值。在目标服务器完成代表性任务实测前，不能把 100 图档的 16 GiB 或 150 图档的 32 GiB 暂定值当作可靠的最坏情况上限。
+生产值应以代表性图片数量、分辨率、三分支运行时峰值、结果大小、并行任务上限和数据盘容量为依据。真实 Worker 现在会在 `reports/storage-usage.json` 记录任务最终分层字节数和离散观测峰值；只读 `report-storage-capacity` 命令可以汇总完整样本并生成候选预留值。在完成 300 图平台任务实测前，不能把 64 GiB 暂定值当作可靠的最坏情况上限。
 
 ## 4. API 合同
 

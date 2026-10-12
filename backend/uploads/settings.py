@@ -7,7 +7,7 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class UploadSettings:
     min_images: int = 3
-    max_images: int = 150
+    max_images: int = 300
     max_file_bytes: int = 25 * 1024 * 1024
     max_total_bytes: int = 1024 * 1024 * 1024
     max_pixels: int = 50_000_000
@@ -16,8 +16,8 @@ class UploadSettings:
     min_free_disk_bytes: int = 0
 
     def __post_init__(self) -> None:
-        if not 3 <= self.min_images <= self.max_images <= 150:
-            raise ValueError("upload image limits must satisfy 3 <= min <= max <= 150")
+        if not 3 <= self.min_images <= self.max_images <= 300:
+            raise ValueError("upload image limits must satisfy 3 <= min <= max <= 300")
         if not 1024 <= self.max_file_bytes <= self.max_total_bytes:
             raise ValueError("upload byte limits are inconsistent")
         if not 1_000_000 <= self.max_pixels <= 80_000_000:

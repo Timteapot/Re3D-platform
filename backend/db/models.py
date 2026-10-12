@@ -424,7 +424,7 @@ class JobUpload(Base):
             name="ck_job_uploads_status",
         ),
         CheckConstraint(
-            "image_count >= 0 AND image_count <= 150",
+            "image_count >= 0 AND image_count <= 300",
             name="ck_job_uploads_image_count",
         ),
         CheckConstraint("total_bytes >= 0", name="ck_job_uploads_total_bytes"),

@@ -51,7 +51,7 @@ class RestrictedReadinessTests(unittest.TestCase):
                 return_value={
                     "name": "re3d_platform_restricted",
                     "role": "re3d_restricted_runtime",
-                    "migration": "0015_transfer_limits",
+                    "migration": "0016_expand_image_count_300",
                 },
             ),
             patch(
@@ -99,7 +99,7 @@ class RestrictedReadinessTests(unittest.TestCase):
                 return_value={
                     "name": "re3d_platform_restricted",
                     "role": "re3d_restricted_runtime",
-                    "migration": "0015_transfer_limits",
+                    "migration": "0016_expand_image_count_300",
                 },
             ),
             patch(

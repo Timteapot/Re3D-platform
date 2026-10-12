@@ -41,9 +41,9 @@
       "required": ["name", "tag", "commit", "config_sha256"],
       "properties": {
         "name": { "const": "Re3D" },
-        "tag": { "const": "re3d-pipeline-v1.1.2" },
+        "tag": { "const": "re3d-pipeline-v1.1.3" },
         "commit": {
-          "const": "5acd79496fb3614133019b4ab590823696d8e958"
+          "const": "e517a161b4c0895f8be4258fb339272e4f99e1d6"
         },
         "config_sha256": {
           "const": "9f8cbc83cb67b8313f624913686fbdc453e7572a18603d015bc198a9a92b8883"
@@ -58,7 +58,7 @@
         "images_path": { "const": "input/images" },
         "manifest_path": { "const": "input/input-manifest.json" },
         "manifest_sha256": { "$ref": "#/$defs/sha256" },
-        "image_count": { "type": "integer", "minimum": 3, "maximum": 150 },
+        "image_count": { "type": "integer", "minimum": 3, "maximum": 300 },
         "total_bytes": { "type": "integer", "minimum": 1 }
       }
     },

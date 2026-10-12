@@ -54,13 +54,21 @@ class WorkerExecutionProfile:
                 minimum_gpu_memory_bytes=14 * GIBIBYTE,
                 minimum_free_gpu_memory_bytes=12 * GIBIBYTE,
             ),
+            "gpu-large-300": cls(
+                name="gpu-large-300",
+                target_image_count=300,
+                minimum_job_reservation_bytes=64 * GIBIBYTE,
+                minimum_free_disk_bytes=75 * GIBIBYTE,
+                minimum_gpu_memory_bytes=14 * GIBIBYTE,
+                minimum_free_gpu_memory_bytes=12 * GIBIBYTE,
+            ),
         }
         try:
             profile = profiles[name]
         except KeyError as exc:
             raise ValueError(
                 "RE3D_EXECUTION_PROFILE must be baseline, gpu-large-100, "
-                "or gpu-large-150"
+                "gpu-large-150, or gpu-large-300"
             ) from exc
 
         reservation = _environment_integer(

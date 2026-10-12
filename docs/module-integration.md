@@ -1,12 +1,12 @@
 # 当前实现的系统作用与模块对接
 
-更新时间：2026-10-10
+更新时间：2026-10-12
 
 文档职责：本文件说明运行时模块边界、数据流和后续模块的接入点；完成度和部署阻断项以 [`progress.md`](progress.md) 为准。
 
 ## 1. 当前实现处于哪一层
 
-当前代码已经连接 React 前端、FastAPI、PostgreSQL 租约队列、独立 Worker、Re3D 三分支管线、结构健康评估、产物下载和 Three.js 查看器。认证、邮箱验证/密码重置、任务提交限额、单用户存储配额、普通 API 来源 IP 共享限流、单用户传输令牌桶/租约、磁盘安全线、失败任务清理、成功任务三层 30 天保留和每日受审计 dry-run 已接入运行链路。Windows 单机非公网拓扑及服务包已完成仓库级验收；本机回环 `restricted` 环境已完成专用数据库、最小权限身份、数据目录、私密配置 ACL、独立 Mailpit、静态前端/API/Worker/Caddy 统一启停、11 图真实 GPU 任务及全组件就绪验收。目标服务器的 100 图和 150 图大任务执行档及运行前检查已经进入代码，实际容量仍待目标服务器阶梯实测。
+当前代码已经连接 React 前端、FastAPI、PostgreSQL 租约队列、独立 Worker、Re3D 三分支管线、结构健康评估、产物下载和 Three.js 查看器。认证、邮箱验证/密码重置、任务提交限额、单用户存储配额、普通 API 来源 IP 共享限流、单用户传输令牌桶/租约、磁盘安全线、失败任务清理、成功任务三层 30 天保留和每日受审计 dry-run 已接入运行链路。Windows 单机非公网拓扑及服务包已完成仓库级验收；本机回环 `restricted` 环境已完成专用数据库、最小权限身份、数据目录、私密配置 ACL、独立 Mailpit、静态前端/API/Worker/Caddy 统一启停、11 图真实 GPU 任务及全组件就绪验收。平台协议现支持最多 300 图，目标服务器已经完成直接管线 150 图三分支验收；实验性 300 图容量仍待阶梯实测。
 
 ```text
 浏览器 → Caddy（静态页面/同源代理/安全响应头已完成非公网验收）
@@ -32,7 +32,7 @@ Windows Worker
     └─ 失败任务清理、成功任务 30 天分层 dry-run 与数据库审计（已实现）
           │
           ▼
-Re3D v1.1.2 A-v4 / B-v2 / C（Tesla T4：MapAnything batch size 4；DINOv2 离线缓存）
+Re3D v1.1.3 A-v4 / B-v2 / C（Tesla T4：MapAnything batch size 4；DINOv2 离线缓存）
           │
           ▼
 真实产物归一化/结构评估（已实现） → 查询/下载 API → 三维查看器（已实现）
@@ -60,7 +60,7 @@ Re3D v1.1.2 A-v4 / B-v2 / C（Tesla T4：MapAnything batch size 4；DINOv2 离�
 | 资源采样器 | 真实任务生命周期、主机计数器、`nvidia-smi`、任务目录 | 私有 `resource-samples.jsonl` 和 `storage-usage.json` | 记录 CPU、内存、数据盘、GPU 与任务分层容量，不影响任务终态或用户评分 |
 | 真实结构评估器 | result、SfM 指标、A/B 一致性清单 | evaluation.json | 用版本化阈值生成 pass/warning/fail；没有真值时不伪造绝对精度分数 |
 | Three.js 查看器 | 受鉴权 GLB Blob、分支摘要 | 浏览器交互预览 | 在不暴露令牌和磁盘路径的前提下切换、检查三分支结果 |
-| Re3D v1.1.2 兼容接口 | work/output/log 精确路径、MapAnything batch size 4、本地 DINOv2 缓存 | 任务内运行文件 | 阻止不同用户任务散落或互相覆盖，并将 15 GiB Tesla T4 显存安全参数和离线模型加载纳入版本基线 |
+| Re3D v1.1.3 兼容接口 | work/output/log 精确路径、MapAnything batch size 4、本地 DINOv2 缓存 | 任务内运行文件 | 阻止不同用户任务散落或互相覆盖，并将 15 GiB Tesla T4 显存参数、离线模型加载和大场景尺度回退纳入版本基线 |
 | 原子写入与 SHA-256 | JSON、产物 | 完整文件和摘要 | 避免读取半文件，并支持篡改检测和幂等复用 |
 | 数据保留清理器 | 终态、分层完成时间、30 天策略 | 删除审计、`expired` 状态或 dry-run 摘要 | 失败任务整目录清理；成功任务按输入、运行文件和产物分层处理 |
 | Windows 部署工程 | 生产配置、发布提交、外部二进制 | WinSW 服务包、ACL、主机预检和验收报告 | 把前台进程转换为可重启、可审计且身份隔离的目标服务器服务 |

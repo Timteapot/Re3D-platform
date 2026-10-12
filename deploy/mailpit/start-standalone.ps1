@@ -1,11 +1,19 @@
 param(
-    [string]$ExecutablePath = "D:\3Dreconstruction\tools\mailpit\v1.31.3\mailpit.exe",
-    [string]$StateRoot = "D:\3Dreconstruction\Re3D-data\_services\mailpit",
+    [string]$ExecutablePath = "",
+    [string]$StateRoot = "",
     [switch]$StayAttached
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$workspaceRoot = Split-Path -Parent $projectRoot
+if ([string]::IsNullOrWhiteSpace($ExecutablePath)) {
+    $ExecutablePath = Join-Path $workspaceRoot "tools\mailpit\v1.31.3\mailpit.exe"
+}
+if ([string]::IsNullOrWhiteSpace($StateRoot)) {
+    $StateRoot = Join-Path $workspaceRoot "Re3D-data\_services\mailpit"
+}
 
 $expectedSha256 = "ee0b025bc9f61e6856d6032128408ee6fe1627f510c118a4fa0faa7bfdb7cd33"
 $smtpAddress = "127.0.0.1:1025"

@@ -74,6 +74,12 @@ class UploadServiceTests(unittest.TestCase):
         self.engine.dispose()
         self.temporary.cleanup()
 
+    def test_upload_settings_cap_image_count_at_300(self) -> None:
+        self.assertEqual(UploadSettings().max_images, 300)
+        self.assertEqual(UploadSettings(max_images=300).max_images, 300)
+        with self.assertRaisesRegex(ValueError, "max <= 300"):
+            UploadSettings(max_images=301)
+
     def test_idempotent_creation_duplicate_and_size_limit(self) -> None:
         upload, reused = self.service.create(
             user_id=self.user_id,

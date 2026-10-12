@@ -40,7 +40,7 @@ LEGACY_DEVELOPMENT_JOB_PREFIX = "/api/v1/development/jobs"
 
 
 class SimulatedJobCreate(BaseModel):
-    image_count: int = Field(default=3, ge=3, le=150)
+    image_count: int = Field(default=3, ge=3, le=300)
     idempotency_key: str = Field(min_length=8, max_length=128)
 
 

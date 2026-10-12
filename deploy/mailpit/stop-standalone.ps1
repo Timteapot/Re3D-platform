@@ -1,10 +1,18 @@
 param(
-    [string]$ExecutablePath = "D:\3Dreconstruction\tools\mailpit\v1.31.3\mailpit.exe",
-    [string]$StateRoot = "D:\3Dreconstruction\Re3D-data\_services\mailpit"
+    [string]$ExecutablePath = "",
+    [string]$StateRoot = ""
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$workspaceRoot = Split-Path -Parent $projectRoot
+if ([string]::IsNullOrWhiteSpace($ExecutablePath)) {
+    $ExecutablePath = Join-Path $workspaceRoot "tools\mailpit\v1.31.3\mailpit.exe"
+}
+if ([string]::IsNullOrWhiteSpace($StateRoot)) {
+    $StateRoot = Join-Path $workspaceRoot "Re3D-data\_services\mailpit"
+}
 
 $pidPath = Join-Path $StateRoot "mailpit.pid"
 

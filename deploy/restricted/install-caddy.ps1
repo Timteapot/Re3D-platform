@@ -1,12 +1,20 @@
 param(
-    [string]$InstallRoot = "D:\3Dreconstruction\tools\caddy\v2.11.4",
-    [string]$ArchivePath = "D:\3Dreconstruction\tools\caddy\caddy_2.11.4_windows_amd64.zip"
+    [string]$InstallRoot = "",
+    [string]$ArchivePath = ""
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $version = "2.11.4"
+$projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$workspaceRoot = Split-Path -Parent $projectRoot
+if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
+    $InstallRoot = Join-Path $workspaceRoot "tools\caddy\v$version"
+}
+if ([string]::IsNullOrWhiteSpace($ArchivePath)) {
+    $ArchivePath = Join-Path $workspaceRoot "tools\caddy\caddy_2.11.4_windows_amd64.zip"
+}
 $downloadUrl = "https://github.com/caddyserver/caddy/releases/download/v$version/caddy_2.11.4_windows_amd64.zip"
 $archiveSha512 = "cd5ccfd86a4b40732cf715890d0dca5bf3f63adefec5a7914de85adf240c60ce7e5d2791631b88ef9758e46b23bb1730e020b9c5d696889740b284ffd4788e35"
 $executableSha256 = "5cb9ab71e5756ce72840b8234177a2f40c8b4ab47a806b8e841e2b784e9df62b"

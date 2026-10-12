@@ -2,14 +2,21 @@
 param(
     [switch]$SkipWebBuild,
     [switch]$InstallWebDependencies,
-    [string]$CaddyPath = "D:\3Dreconstruction\tools\caddy\v2.11.4\caddy.exe",
-    [string]$StateRoot = "D:\3Dreconstruction\Re3D-data\_services\restricted-stack"
+    [string]$CaddyPath = "",
+    [string]$StateRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "process-common.ps1")
 
 $projectRoot = Get-Re3DRestrictedProjectRoot
+$workspaceRoot = Split-Path -Parent $projectRoot
+if ([string]::IsNullOrWhiteSpace($CaddyPath)) {
+    $CaddyPath = Join-Path $workspaceRoot "tools\caddy\v2.11.4\caddy.exe"
+}
+if ([string]::IsNullOrWhiteSpace($StateRoot)) {
+    $StateRoot = Join-Path $workspaceRoot "Re3D-data\_services\restricted-stack"
+}
 $powerShell = (Get-Process -Id $PID).Path
 $startedComponents = [Collections.Generic.List[string]]::new()
 $apiProcess = $null
@@ -33,7 +40,8 @@ try {
     & (Join-Path $projectRoot "deploy\mailpit\start-standalone.ps1")
     & (Join-Path $PSScriptRoot "check-restricted-readiness.ps1") -Component all
 
-    & (Join-Path $PSScriptRoot "install-caddy.ps1")
+    & (Join-Path $PSScriptRoot "install-caddy.ps1") `
+        -InstallRoot (Split-Path -Parent $CaddyPath)
     if (-not $SkipWebBuild) {
         & (Join-Path $projectRoot "deploy\production\build-web.ps1") `
             -SkipInstall:(-not $InstallWebDependencies) `
