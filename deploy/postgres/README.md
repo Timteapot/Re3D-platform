@@ -127,10 +127,13 @@ powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File 
 3. 先把自包含回滚助手冻结到本次仅管理员可写的恢复目录并校验哈希，再注册只执行
    该快照的 SYSTEM 回滚计划任务，然后原子插入唯一的
    `host postgres postgres 127.0.0.1/32 trust` 临时规则；
-4. 确认 PostgreSQL 实际读取的是目标 HBA 且规则无解析错误，通过 `psql` 的
-   `\password postgres` 安全元命令设置随机密码；
-5. 无论成功还是异常都从备份原子恢复 HBA 并重启服务；成功路径还会在原始 HBA
-   下验证新密码和备份哈希。
+4. 在修改 HBA 前，以受限 DLL 搜索规则预加载并检查 PostgreSQL 18 `libpq` 的版本
+   和全部必需导出；确认 PostgreSQL 实际读取的是目标 HBA 且规则无解析错误后，
+   通过官方 `PQchangePassword` 在客户端生成加密 verifier 并设置随机密码，避免无
+   控制台会话中的交互提示，也不把明文密码放入 SQL、命令行参数或文件；
+5. 无论成功还是异常都从备份原子恢复 HBA 并重启服务；成功路径在原始 HBA 下强制
+   使用 SCRAM 重新认证，并通过 `PQconnectionUsedPassword` 排除 trust/SSPI 假阳性，
+   随后验证 HBA 路径、规则与备份哈希。
 
 若恢复进程被终止，默认 5 分钟后启动的 SYSTEM 回滚任务会恢复原 HBA，并配置了
 失败重试。脚本只保留审计/恢复所需的 HBA 备份，不输出或向磁盘写入明文密码。

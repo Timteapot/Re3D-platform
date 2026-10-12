@@ -392,10 +392,7 @@ function New-Re3DRecoveryPassword {
 }
 
 function Invoke-Re3DPsqlInput {
-    param(
-        [Parameter(Mandatory = $true)][string[]]$InputLines,
-        [string]$Password = ""
-    )
+    param([Parameter(Mandatory = $true)][string[]]$InputLines)
 
     $startInfo = New-Object Diagnostics.ProcessStartInfo
     $startInfo.FileName = $psqlPath
@@ -415,10 +412,6 @@ function Invoke-Re3DPsqlInput {
     $startInfo.EnvironmentVariables["PGCONNECT_TIMEOUT"] = "5"
     $startInfo.EnvironmentVariables["PGSSLMODE"] = "disable"
     $startInfo.EnvironmentVariables["PGAPPNAME"] = "re3d-admin-recovery"
-    if (-not [string]::IsNullOrEmpty($Password)) {
-        $startInfo.EnvironmentVariables["PGPASSWORD"] = $Password
-    }
-
     $process = New-Object Diagnostics.Process
     $process.StartInfo = $startInfo
     $standardOutput = $null
@@ -456,22 +449,536 @@ function Invoke-Re3DPsqlInput {
 }
 
 function Invoke-Re3DPsqlScalar {
+    param([Parameter(Mandatory = $true)][string]$Sql)
+
+    return Invoke-Re3DPsqlInput -InputLines @($Sql, "\q")
+}
+
+function New-Re3DUtf8CString {
     param(
-        [Parameter(Mandatory = $true)][string]$Sql,
-        [string]$Password = ""
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Value
     )
 
-    return Invoke-Re3DPsqlInput `
-        -InputLines @($Sql, "\q") `
-        -Password $Password
+    $bytes = [Text.Encoding]::UTF8.GetBytes($Value)
+    $pointer = [IntPtr]::Zero
+    try {
+        $pointer = [Runtime.InteropServices.Marshal]::AllocHGlobal(
+            $bytes.Length + 1
+        )
+        [Runtime.InteropServices.Marshal]::Copy(
+            $bytes,
+            0,
+            $pointer,
+            $bytes.Length
+        )
+        [Runtime.InteropServices.Marshal]::WriteByte(
+            $pointer,
+            $bytes.Length,
+            0
+        )
+        $buffer = [pscustomobject]@{
+            Pointer = $pointer
+            Length = $bytes.Length + 1
+        }
+        $pointer = [IntPtr]::Zero
+        return $buffer
+    } finally {
+        [Array]::Clear($bytes, 0, $bytes.Length)
+        if ($pointer -ne [IntPtr]::Zero) {
+            try {
+                for ($index = 0; $index -le $bytes.Length; $index++) {
+                    [Runtime.InteropServices.Marshal]::WriteByte(
+                        $pointer,
+                        $index,
+                        0
+                    )
+                }
+            } finally {
+                [Runtime.InteropServices.Marshal]::FreeHGlobal($pointer)
+            }
+        }
+    }
+}
+
+function Clear-Re3DUtf8CString {
+    param($Buffer)
+
+    if ($null -eq $Buffer -or $Buffer.Pointer -eq [IntPtr]::Zero) {
+        return
+    }
+    $pointer = $Buffer.Pointer
+    try {
+        for ($index = 0; $index -lt $Buffer.Length; $index++) {
+            [Runtime.InteropServices.Marshal]::WriteByte(
+                $pointer,
+                $index,
+                0
+            )
+        }
+    } finally {
+        [Runtime.InteropServices.Marshal]::FreeHGlobal($pointer)
+        $Buffer.Pointer = [IntPtr]::Zero
+    }
+}
+
+function ConvertFrom-Re3DUtf8CString {
+    param([Parameter(Mandatory = $true)][IntPtr]$Pointer)
+
+    if ($Pointer -eq [IntPtr]::Zero) {
+        return ""
+    }
+    $maximumLength = 65536
+    $length = 0
+    while (
+        $length -lt $maximumLength -and
+        [Runtime.InteropServices.Marshal]::ReadByte($Pointer, $length) -ne 0
+    ) {
+        $length++
+    }
+    if ($length -eq $maximumLength) {
+        throw "libpq returned an unterminated error or result string."
+    }
+    $bytes = New-Object byte[] $length
+    try {
+        if ($length -gt 0) {
+            [Runtime.InteropServices.Marshal]::Copy(
+                $Pointer,
+                $bytes,
+                0,
+                $length
+            )
+        }
+        return [Text.Encoding]::UTF8.GetString($bytes)
+    } finally {
+        [Array]::Clear($bytes, 0, $bytes.Length)
+    }
+}
+
+function New-Re3DPointerArray {
+    param([Parameter(Mandatory = $true)][object[]]$Buffers)
+
+    $length = ($Buffers.Count + 1) * [IntPtr]::Size
+    $pointer = [Runtime.InteropServices.Marshal]::AllocHGlobal($length)
+    try {
+        for ($index = 0; $index -lt $Buffers.Count; $index++) {
+            [Runtime.InteropServices.Marshal]::WriteIntPtr(
+                $pointer,
+                $index * [IntPtr]::Size,
+                $Buffers[$index].Pointer
+            )
+        }
+        [Runtime.InteropServices.Marshal]::WriteIntPtr(
+            $pointer,
+            $Buffers.Count * [IntPtr]::Size,
+            [IntPtr]::Zero
+        )
+        $array = [pscustomobject]@{
+            Pointer = $pointer
+            Length = $length
+        }
+        $pointer = [IntPtr]::Zero
+        return $array
+    } finally {
+        if ($pointer -ne [IntPtr]::Zero) {
+            [Runtime.InteropServices.Marshal]::FreeHGlobal($pointer)
+        }
+    }
+}
+
+function Clear-Re3DPointerArray {
+    param($Array)
+
+    if ($null -eq $Array -or $Array.Pointer -eq [IntPtr]::Zero) {
+        return
+    }
+    $pointer = $Array.Pointer
+    try {
+        for ($offset = 0; $offset -lt $Array.Length; $offset++) {
+            [Runtime.InteropServices.Marshal]::WriteByte($pointer, $offset, 0)
+        }
+    } finally {
+        [Runtime.InteropServices.Marshal]::FreeHGlobal($pointer)
+        $Array.Pointer = [IntPtr]::Zero
+    }
+}
+
+function Open-Re3DLibpqContext {
+    param([Parameter(Mandatory = $true)][string]$PostgresBin)
+
+    $interopSource = @"
+using System;
+using System.Runtime.InteropServices;
+
+public static class Re3DPostgresRecoveryNative
+{
+    [DllImport("kernel32.dll", EntryPoint = "LoadLibraryExW",
+        CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    public static extern IntPtr LoadLibraryExW(
+        string path, IntPtr file, UInt32 flags);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Ansi,
+        ExactSpelling = true, SetLastError = true)]
+    public static extern IntPtr GetProcAddress(IntPtr module, string name);
+
+    [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool FreeLibrary(IntPtr module);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate int PQlibVersionDelegate();
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate IntPtr PQconnectdbParamsDelegate(
+        IntPtr keywords, IntPtr values, int expandDbname);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate int PQstatusDelegate(IntPtr connection);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate IntPtr PQerrorMessageDelegate(IntPtr connection);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate IntPtr PQchangePasswordDelegate(
+        IntPtr connection, IntPtr userName, IntPtr password);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate int PQresultStatusDelegate(IntPtr result);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate IntPtr PQresultErrorMessageDelegate(IntPtr result);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate void PQclearDelegate(IntPtr result);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate void PQfinishDelegate(IntPtr connection);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate int PQserverVersionDelegate(IntPtr connection);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate int PQconnectionUsedPasswordDelegate(IntPtr connection);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate IntPtr PQexecDelegate(IntPtr connection, IntPtr command);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate int PQntuplesDelegate(IntPtr result);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate int PQnfieldsDelegate(IntPtr result);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate int PQgetisnullDelegate(
+        IntPtr result, int rowNumber, int columnNumber);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate IntPtr PQgetvalueDelegate(
+        IntPtr result, int rowNumber, int columnNumber);
+}
+"@
+
+    if ($null -eq ("Re3DPostgresRecoveryNative" -as [type])) {
+        Add-Type `
+            -TypeDefinition $interopSource `
+            -Language CSharp `
+            -ErrorAction Stop |
+            Out-Null
+    }
+    $libpqPath = (
+        Resolve-Path -LiteralPath (Join-Path $PostgresBin "libpq.dll") `
+            -ErrorAction Stop
+    ).Path
+    $module = [Re3DPostgresRecoveryNative]::LoadLibraryExW(
+        $libpqPath,
+        [IntPtr]::Zero,
+        [uint32]0x00001100
+    )
+    if ($module -eq [IntPtr]::Zero) {
+        $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        $exception = New-Object ComponentModel.Win32Exception($errorCode)
+        throw "Could not safely load libpq.dll: $($exception.Message)"
+    }
+
+    $delegateSpecs = [ordered]@{
+        PQlibVersion = "PQlibVersionDelegate"
+        PQconnectdbParams = "PQconnectdbParamsDelegate"
+        PQstatus = "PQstatusDelegate"
+        PQerrorMessage = "PQerrorMessageDelegate"
+        PQchangePassword = "PQchangePasswordDelegate"
+        PQresultStatus = "PQresultStatusDelegate"
+        PQresultErrorMessage = "PQresultErrorMessageDelegate"
+        PQclear = "PQclearDelegate"
+        PQfinish = "PQfinishDelegate"
+        PQserverVersion = "PQserverVersionDelegate"
+        PQconnectionUsedPassword = "PQconnectionUsedPasswordDelegate"
+        PQexec = "PQexecDelegate"
+        PQntuples = "PQntuplesDelegate"
+        PQnfields = "PQnfieldsDelegate"
+        PQgetisnull = "PQgetisnullDelegate"
+        PQgetvalue = "PQgetvalueDelegate"
+    }
+    $delegates = [ordered]@{}
+    try {
+        foreach ($entry in $delegateSpecs.GetEnumerator()) {
+            $address = [Re3DPostgresRecoveryNative]::GetProcAddress(
+                $module,
+                $entry.Key
+            )
+            if ($address -eq [IntPtr]::Zero) {
+                throw "PostgreSQL 18 libpq export is missing: $($entry.Key)"
+            }
+            $delegateTypeName = (
+                "Re3DPostgresRecoveryNative+" + $entry.Value
+            )
+            $delegateType = $delegateTypeName -as [type]
+            if ($null -eq $delegateType) {
+                throw "Could not resolve interop type: $delegateTypeName"
+            }
+            $delegates[$entry.Key] = (
+                [Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer(
+                    $address,
+                    $delegateType
+                )
+            )
+        }
+        $libpqVersion = $delegates.PQlibVersion.Invoke()
+        if ($libpqVersion -lt 180000 -or $libpqVersion -ge 190000) {
+            throw "Expected PostgreSQL 18 libpq but found $libpqVersion."
+        }
+        $contextData = [ordered]@{
+            Module = $module
+            LibpqPath = $libpqPath
+            Version = $libpqVersion
+        }
+        foreach ($entry in $delegates.GetEnumerator()) {
+            $contextData[$entry.Key] = $entry.Value
+        }
+        $context = [pscustomobject]$contextData
+        $module = [IntPtr]::Zero
+        return $context
+    } finally {
+        $interopSource = $null
+        if ($module -ne [IntPtr]::Zero) {
+            [void][Re3DPostgresRecoveryNative]::FreeLibrary($module)
+        }
+    }
+}
+
+function Close-Re3DLibpqContext {
+    param([Parameter(Mandatory = $true)]$Context)
+
+    if ($Context.Module -eq [IntPtr]::Zero) {
+        return
+    }
+    $module = $Context.Module
+    foreach ($property in @(
+        "PQlibVersion",
+        "PQconnectdbParams",
+        "PQstatus",
+        "PQerrorMessage",
+        "PQchangePassword",
+        "PQresultStatus",
+        "PQresultErrorMessage",
+        "PQclear",
+        "PQfinish",
+        "PQserverVersion",
+        "PQconnectionUsedPassword",
+        "PQexec",
+        "PQntuples",
+        "PQnfields",
+        "PQgetisnull",
+        "PQgetvalue"
+    )) {
+        $Context.$property = $null
+    }
+    if (-not [Re3DPostgresRecoveryNative]::FreeLibrary($module)) {
+        $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        $exception = New-Object ComponentModel.Win32Exception($errorCode)
+        Write-Warning "Could not unload libpq.dll: $($exception.Message)"
+        return
+    }
+    $Context.Module = [IntPtr]::Zero
+}
+
+function Open-Re3DLibpqConnection {
+    param(
+        [Parameter(Mandatory = $true)]$Context,
+        [Parameter(Mandatory = $true)][string]$RequireAuth,
+        [Parameter(Mandatory = $true)][string]$ApplicationName,
+        [AllowNull()][string]$Password = $null,
+        [switch]$ForPasswordChange
+    )
+
+    $passwordSupplied = $PSBoundParameters.ContainsKey("Password")
+    $options = (
+        "-csearch_path= -c statement_timeout=30000 " +
+        "-c lock_timeout=5000"
+    )
+    if ($ForPasswordChange) {
+        $options += " -c password_encryption=scram-sha-256"
+    }
+    $parameters = [ordered]@{
+        hostaddr = "127.0.0.1"
+        port = "$DatabasePort"
+        user = "postgres"
+        dbname = "postgres"
+        connect_timeout = "5"
+        sslmode = "disable"
+        gssencmode = "disable"
+        require_auth = $RequireAuth
+        target_session_attrs = "any"
+        load_balance_hosts = "disable"
+        application_name = $ApplicationName
+        client_encoding = "UTF8"
+        passfile = $noPasswordFile
+        options = $options
+    }
+    if ($passwordSupplied) {
+        $parameters["password"] = $Password
+    }
+
+    $keywordBuffers = @()
+    $valueBuffers = @()
+    $keywordArray = $null
+    $valueArray = $null
+    $passwordBuffer = $null
+    $connection = [IntPtr]::Zero
+    $succeeded = $false
+    try {
+        foreach ($entry in $parameters.GetEnumerator()) {
+            $keywordBuffers += New-Re3DUtf8CString -Value $entry.Key
+            $valueBuffer = New-Re3DUtf8CString -Value $entry.Value
+            $valueBuffers += $valueBuffer
+            if ($entry.Key -ceq "password") {
+                $passwordBuffer = $valueBuffer
+            }
+        }
+        $keywordArray = New-Re3DPointerArray -Buffers $keywordBuffers
+        $valueArray = New-Re3DPointerArray -Buffers $valueBuffers
+        $connection = $Context.PQconnectdbParams.Invoke(
+            $keywordArray.Pointer,
+            $valueArray.Pointer,
+            0
+        )
+        if ($connection -eq [IntPtr]::Zero) {
+            throw "libpq could not allocate a PostgreSQL connection."
+        }
+        if ($Context.PQstatus.Invoke($connection) -ne 0) {
+            $errorMessage = ConvertFrom-Re3DUtf8CString `
+                -Pointer $Context.PQerrorMessage.Invoke($connection)
+            throw "libpq connection failed: $($errorMessage.Trim())"
+        }
+        $serverVersion = $Context.PQserverVersion.Invoke($connection)
+        if ($serverVersion -lt 180000 -or $serverVersion -ge 190000) {
+            throw "Expected PostgreSQL 18 server but found $serverVersion."
+        }
+        $usedPassword = $Context.PQconnectionUsedPassword.Invoke($connection)
+        if ($RequireAuth -ceq "none" -and $usedPassword -ne 0) {
+            throw "Temporary recovery connection unexpectedly used a password."
+        }
+        if ($RequireAuth -ceq "scram-sha-256" -and $usedPassword -ne 1) {
+            throw "Password verification connection did not use a password."
+        }
+        $succeeded = $true
+        return $connection
+    } finally {
+        Clear-Re3DPointerArray -Array $valueArray
+        Clear-Re3DPointerArray -Array $keywordArray
+        if ($null -ne $passwordBuffer) {
+            Clear-Re3DUtf8CString -Buffer $passwordBuffer
+        }
+        foreach ($buffer in $valueBuffers) {
+            Clear-Re3DUtf8CString -Buffer $buffer
+        }
+        foreach ($buffer in $keywordBuffers) {
+            Clear-Re3DUtf8CString -Buffer $buffer
+        }
+        if (-not $succeeded -and $connection -ne [IntPtr]::Zero) {
+            $Context.PQfinish.Invoke($connection)
+        }
+    }
+}
+
+function Invoke-Re3DLibpqScalar {
+    param(
+        [Parameter(Mandatory = $true)]$Context,
+        [Parameter(Mandatory = $true)][IntPtr]$Connection,
+        [Parameter(Mandatory = $true)][string]$Sql
+    )
+
+    $commandBuffer = $null
+    $result = [IntPtr]::Zero
+    try {
+        $commandBuffer = New-Re3DUtf8CString -Value $Sql
+        $result = $Context.PQexec.Invoke(
+            $Connection,
+            $commandBuffer.Pointer
+        )
+        if ($result -eq [IntPtr]::Zero) {
+            $errorMessage = ConvertFrom-Re3DUtf8CString `
+                -Pointer $Context.PQerrorMessage.Invoke($Connection)
+            throw "libpq returned no query result: $($errorMessage.Trim())"
+        }
+        if ($Context.PQresultStatus.Invoke($result) -ne 2) {
+            $errorMessage = ConvertFrom-Re3DUtf8CString `
+                -Pointer $Context.PQresultErrorMessage.Invoke($result)
+            throw "libpq query failed: $($errorMessage.Trim())"
+        }
+        if (
+            $Context.PQntuples.Invoke($result) -ne 1 -or
+            $Context.PQnfields.Invoke($result) -ne 1 -or
+            $Context.PQgetisnull.Invoke($result, 0, 0) -ne 0
+        ) {
+            throw "libpq scalar query did not return one non-null value."
+        }
+        return ConvertFrom-Re3DUtf8CString `
+            -Pointer $Context.PQgetvalue.Invoke($result, 0, 0)
+    } finally {
+        if ($result -ne [IntPtr]::Zero) {
+            $Context.PQclear.Invoke($result)
+        }
+        Clear-Re3DUtf8CString -Buffer $commandBuffer
+    }
 }
 
 function Set-Re3DPostgresPasswordSecurely {
-    param([Parameter(Mandatory = $true)][string]$Password)
+    param(
+        [Parameter(Mandatory = $true)]$Context,
+        [Parameter(Mandatory = $true)][string]$Password
+    )
 
-    Invoke-Re3DPsqlInput `
-        -InputLines @("\password postgres", $Password, $Password, "\q") |
-        Out-Null
+    $connection = [IntPtr]::Zero
+    $result = [IntPtr]::Zero
+    $userBuffer = $null
+    $passwordBuffer = $null
+    try {
+        $connection = Open-Re3DLibpqConnection `
+            -Context $Context `
+            -RequireAuth "none" `
+            -ApplicationName "re3d-admin-recovery-change" `
+            -ForPasswordChange
+        $userBuffer = New-Re3DUtf8CString -Value "postgres"
+        $passwordBuffer = New-Re3DUtf8CString -Value $Password
+
+        # The official libpq routine sends only a client-generated verifier in
+        # its role-password command; plaintext is not put in SQL, process
+        # command-line arguments, or files.
+        $result = $Context.PQchangePassword.Invoke(
+            $connection,
+            $userBuffer.Pointer,
+            $passwordBuffer.Pointer
+        )
+        if ($result -eq [IntPtr]::Zero) {
+            $errorMessage = ConvertFrom-Re3DUtf8CString `
+                -Pointer $Context.PQerrorMessage.Invoke($connection)
+            throw (
+                "libpq returned no result while changing the password: " +
+                $errorMessage.Trim()
+            )
+        }
+        if ($Context.PQresultStatus.Invoke($result) -ne 1) {
+            $errorMessage = ConvertFrom-Re3DUtf8CString `
+                -Pointer $Context.PQresultErrorMessage.Invoke($result)
+            throw "libpq password change failed: $($errorMessage.Trim())"
+        }
+    } finally {
+        if ($result -ne [IntPtr]::Zero) {
+            $Context.PQclear.Invoke($result)
+        }
+        Clear-Re3DUtf8CString -Buffer $passwordBuffer
+        Clear-Re3DUtf8CString -Buffer $userBuffer
+        if ($connection -ne [IntPtr]::Zero) {
+            $Context.PQfinish.Invoke($connection)
+        }
+    }
 }
 
 function Register-Re3DHbaRollback {
@@ -659,6 +1166,9 @@ $psqlPath = (
         Join-Path (Split-Path -Parent $resolvedPgCtl) "psql.exe"
     ) -ErrorAction Stop
 ).Path
+$postgresBin = Split-Path -Parent $resolvedPgCtl
+$libpqContext = Open-Re3DLibpqContext -PostgresBin $postgresBin
+try {
 $restoreScriptSource = (
     Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "restore-pg-hba.ps1") `
         -ErrorAction Stop
@@ -818,14 +1328,16 @@ try {
         throw "PostgreSQL is using a different pg_hba.conf file."
     }
     $hbaErrorCount = Invoke-Re3DPsqlScalar -Sql (
-        "SELECT count(*) FROM pg_hba_file_rules " +
+        "SELECT count(*) FROM pg_catalog.pg_hba_file_rules " +
         "WHERE error IS NOT NULL;"
     )
     if ($hbaErrorCount -ne "0") {
         throw "PostgreSQL reports invalid pg_hba.conf rules."
     }
 
-    Set-Re3DPostgresPasswordSecurely -Password $plainPassword
+    Set-Re3DPostgresPasswordSecurely `
+        -Context $libpqContext `
+        -Password $plainPassword
 } catch {
     $operationFailure = $_
 } finally {
@@ -860,29 +1372,43 @@ if ($null -ne $operationFailure) {
 }
 
 try {
-    $passwordProbe = Invoke-Re3DPsqlScalar `
-        -Sql "SELECT 1;" `
+    $verificationConnection = Open-Re3DLibpqConnection `
+        -Context $libpqContext `
+        -RequireAuth "scram-sha-256" `
+        -ApplicationName "re3d-admin-recovery-verify" `
         -Password $plainPassword
-    if ($passwordProbe -ne "1") {
-        throw "New PostgreSQL administrator password could not be verified."
-    }
-    $reportedHba = Invoke-Re3DPsqlScalar `
-        -Sql "SHOW hba_file;" `
-        -Password $plainPassword
-    if (-not ([IO.Path]::GetFullPath($reportedHba)).Equals(
-        $resolvedHba,
-        [StringComparison]::OrdinalIgnoreCase
-    )) {
-        throw "PostgreSQL HBA path changed after restoration."
-    }
-    $hbaErrorCount = Invoke-Re3DPsqlScalar `
-        -Sql (
-            "SELECT count(*) FROM pg_hba_file_rules " +
-            "WHERE error IS NOT NULL;"
-        ) `
-        -Password $plainPassword
-    if ($hbaErrorCount -ne "0") {
-        throw "Restored pg_hba.conf contains an invalid rule."
+    try {
+        $passwordProbe = Invoke-Re3DLibpqScalar `
+            -Context $libpqContext `
+            -Connection $verificationConnection `
+            -Sql "SELECT 1;"
+        if ($passwordProbe -ne "1") {
+            throw "New PostgreSQL administrator password could not be verified."
+        }
+        $reportedHba = Invoke-Re3DLibpqScalar `
+            -Context $libpqContext `
+            -Connection $verificationConnection `
+            -Sql "SHOW hba_file;"
+        if (-not ([IO.Path]::GetFullPath($reportedHba)).Equals(
+            $resolvedHba,
+            [StringComparison]::OrdinalIgnoreCase
+        )) {
+            throw "PostgreSQL HBA path changed after restoration."
+        }
+        $hbaErrorCount = Invoke-Re3DLibpqScalar `
+            -Context $libpqContext `
+            -Connection $verificationConnection `
+            -Sql (
+                "SELECT count(*) FROM pg_catalog.pg_hba_file_rules " +
+                "WHERE error IS NOT NULL;"
+            )
+        if ($hbaErrorCount -ne "0") {
+            throw "Restored pg_hba.conf contains an invalid rule."
+        }
+    } finally {
+        if ($verificationConnection -ne [IntPtr]::Zero) {
+            $libpqContext.PQfinish.Invoke($verificationConnection)
+        }
     }
     $restoredHash = Get-Re3DSha256 -Path $resolvedHba
     if ($restoredHash -cne $originalHash) {
@@ -908,3 +1434,6 @@ Write-Host "pg_hba.conf was restored from a byte-identical backup."
 Write-Host "Backup retained at: $backupPath"
 Write-Host "One-time DPAPI password envelope: $resolvedEnvelope"
 Write-Host "No plaintext password was printed or written to disk."
+} finally {
+    Close-Re3DLibpqContext -Context $libpqContext
+}
