@@ -86,6 +86,8 @@ try {
         if (Test-Path -LiteralPath $workerOut -PathType Leaf) {
             $workerOutput = Get-Content -LiteralPath $workerOut -Raw
             if (
+                $workerOutput -match '"operation": "worker-runtime-preflight"' -and
+                $workerOutput -match '"status": "ready"' -and
                 $workerOutput -match '"operation": "real-worker-loop"' -and
                 $workerOutput -match '"mode": "dry_run"'
             ) {
@@ -96,7 +98,7 @@ try {
         Start-Sleep -Milliseconds 250
     }
     if (-not $workerReady) {
-        throw "Restricted Worker did not enter its real queue loop and retention dry-run."
+        throw "Restricted Worker did not pass runtime preflight, enter its real queue loop, and run the retention dry-run."
     }
 
     $caddyArguments = (

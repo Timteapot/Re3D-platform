@@ -6,10 +6,13 @@ from .queued import (
     QueuedSimulationOutcome,
     QueuedSimulationWorker,
 )
+from .preflight import WorkerExecutionProfile, check_worker_runtime_preflight
 
 __all__ = [
     "QueuedJobOutcome",
     "QueuedRealWorker",
     "QueuedSimulationOutcome",
     "QueuedSimulationWorker",
+    "WorkerExecutionProfile",
+    "check_worker_runtime_preflight",
 ]

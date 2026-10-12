@@ -34,6 +34,7 @@ from backend.transfers import TransferLimitSettings
 from backend.re3d_adapter.real import verify_re3d_installation
 from backend.re3d_adapter.settings import Re3DSettings, WorkerSettings
 from backend.uploads import StorageQuotaSettings, UploadSettings
+from backend.worker import check_worker_runtime_preflight
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -312,6 +313,7 @@ def check_production_readiness(
             "nvidia_smi_configured": resource_monitor.nvidia_smi_path is not None,
         }
         response["re3d"] = _check_re3d_installation()
+        response["worker_runtime_preflight"] = _check_worker_runtime_preflight()
 
     return response
 
@@ -458,6 +460,7 @@ def check_restricted_readiness(
             "nvidia_smi_configured": resource_monitor.nvidia_smi_path is not None,
         }
         response["re3d"] = _check_re3d_installation()
+        response["worker_runtime_preflight"] = _check_worker_runtime_preflight()
 
     return response
 
@@ -730,6 +733,20 @@ def _check_re3d_installation() -> dict[str, str]:
         "commit": baseline["commit"],
         "tag": baseline["tag"],
     }
+
+
+def _check_worker_runtime_preflight() -> dict[str, Any]:
+    worker = WorkerSettings.from_environment()
+    re3d = Re3DSettings.from_environment()
+    scheduler = SchedulerSettings.from_environment()
+    resource_monitor = ResourceMonitorSettings.from_environment()
+    return check_worker_runtime_preflight(
+        data_root=worker.data_root,
+        re3d_root=re3d.root,
+        driver_python=re3d.driver_python,
+        resource_key=scheduler.resource_key,
+        nvidia_smi_path=resource_monitor.nvidia_smi_path,
+    )
 
 
 def _check_smtp(email: AuthEmailSettings) -> dict[str, int | str | bool]:

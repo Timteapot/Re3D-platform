@@ -458,7 +458,13 @@ class UploadService:
                     return _job_snapshot(existing)
                 if upload.status != "uploading":
                     raise UploadConflictError("upload cannot be submitted")
-                self._ensure_storage_capacity()
+                self._ensure_storage_capacity(
+                    reserve_bytes=max(
+                        0,
+                        self.quota.settings.job_reservation_bytes
+                        - upload.total_bytes,
+                    )
+                )
                 images = list(
                     session.execute(
                         select(JobUploadImage)

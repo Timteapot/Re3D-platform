@@ -22,6 +22,7 @@ from backend.jobs import (
     SuccessRetentionRunner,
     SuccessRetentionSettings,
 )
+from backend.monitoring import ResourceMonitorSettings
 from backend.re3d_adapter import (
     AdapterError,
     RealDryRunRunner,
@@ -31,7 +32,11 @@ from backend.re3d_adapter import (
 )
 from backend.re3d_adapter.settings import Re3DSettings, WorkerSettings
 from backend.uploads import UploadService, UploadSettings
-from backend.worker import QueuedRealWorker, QueuedSimulationWorker
+from backend.worker import (
+    QueuedRealWorker,
+    QueuedSimulationWorker,
+    check_worker_runtime_preflight,
+)
 
 
 class RealQueueWorker(Protocol):
@@ -268,6 +273,25 @@ def main(argv: list[str] | None = None) -> int:
                         root=args.re3d_root,
                         driver_python=args.driver_python,
                     )
+                    if args.command == "run-real-queued-loop":
+                        monitor_settings = ResourceMonitorSettings.from_environment()
+                        preflight = check_worker_runtime_preflight(
+                            data_root=settings.data_root,
+                            re3d_root=re3d.root,
+                            driver_python=re3d.driver_python,
+                            resource_key=scheduler.resource_key,
+                            nvidia_smi_path=monitor_settings.nvidia_smi_path,
+                        )
+                        print(
+                            json.dumps(
+                                {
+                                    "operation": "worker-runtime-preflight",
+                                    **preflight,
+                                },
+                                ensure_ascii=False,
+                            ),
+                            flush=True,
+                        )
                     worker = QueuedRealWorker(
                         queue,
                         data_root=settings.data_root,

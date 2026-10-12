@@ -54,7 +54,7 @@
 - 提交前再次计算哈希，阻止上传完成后文件被替换；
 - manifest 和请求通过既有原子写入与 JSON Schema 校验。
 
-环境变量：
+本机 restricted 当前环境变量示例：
 
 ```dotenv
 UPLOAD_MAX_FILE_BYTES=26214400
@@ -64,19 +64,21 @@ UPLOAD_STALE_AFTER_HOURS=24
 UPLOAD_CLEANUP_BATCH_SIZE=100
 RE3D_USER_MAX_PENDING_JOBS=3
 RE3D_USER_MAX_SUBMISSIONS_PER_24H=20
-RE3D_USER_STORAGE_QUOTA_BYTES=10737418240
-RE3D_JOB_STORAGE_RESERVATION_BYTES=2147483648
+RE3D_USER_STORAGE_QUOTA_BYTES=34359738368
+RE3D_JOB_STORAGE_RESERVATION_BYTES=17179869184
 TRANSFER_WINDOW_SECONDS=3600
 TRANSFER_UPLOAD_MAX_CONCURRENT=2
 TRANSFER_UPLOAD_MAX_BYTES=2147483648
 TRANSFER_LEASE_SECONDS=14400
 ```
 
+目标服务器 `gpu-large-150` 将用户配额和任务预留分别提高到 64 GiB 与
+32 GiB，具体值见 [`worker-execution-profiles.md`](worker-execution-profiles.md)。
 服务会拒绝不合理的配置值。反向代理仍需设置请求体大小、请求速率和连接超时；应用层限制不能替代代理层的早期拒绝。
 
 图片接口在 multipart 解析后按用户申请 PostgreSQL 共享的上传并发租约，并按文件实际字节从连续补充的令牌桶预扣额度。超限返回 429 和稳定错误码；它保护后续图片校验与落盘阶段，但不能阻止请求体先到达反向代理和 multipart 解析器。完整配置、错误合同和目标服务器验收边界见 [`transfer-limits.md`](transfer-limits.md)。
 
-生产 `RE3D_MIN_FREE_DISK_BYTES` 同时作为运行时上传安全线。创建会话、写入图片和提交任务前若可用空间不足，API 返回 507 和 `STORAGE_CAPACITY_FLOOR_REACHED`；写入 staging 后跌破安全线时会删除该临时文件，不写入图片元数据。
+生产 `RE3D_MIN_FREE_DISK_BYTES` 同时作为运行时上传安全线。创建会话、写入图片和提交任务前若可用空间不足，API 返回 507 和 `STORAGE_CAPACITY_FLOOR_REACHED`；写入 staging 后跌破安全线时会删除该临时文件，不写入图片元数据。提交任务时还会扣除 `max(0, 任务预留 - 已上传字节)`，确保入队后仍保留安全线。
 
 用户配额是另一条独立边界。未提交上传按 `job_uploads.total_bytes` 实际计费；提交后改由 `reconstruction_jobs.storage_reserved_bytes` 固定预留输入、中间文件和产物空间。超额返回 507 和 `USER_STORAGE_QUOTA_EXCEEDED`，不带 `Retry-After`，因为必须删除未提交数据或等待任务清理。生产必须显式设置两个值，任务预留不得小于 1 GiB 和单次上传总量，也不得大于用户总配额。详细释放规则和估算限制见 [`user-storage-quota.md`](user-storage-quota.md)。
 

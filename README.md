@@ -20,6 +20,8 @@ Re3D Platform 是基于 Re3D 三维重建管线的非商业学习与工程实践
 
 当前已经可以通过 React 页面注册、登录、恢复会话、上传真实 JPEG/PNG 输入并创建任务。development/test 的默认网页提交进入模拟队列并允许显式 real；production 由服务端强制创建 real 任务。独立的真实 Worker 在 PostgreSQL 租约下监督 Re3D 子进程，处理取消、总超时和租约丢失，并汇总三分支产物和结构健康评估。2026-09-25 已使用 11 张真实图片完成本机 GPU 闭环验收；2026-10-08 又完成同规模真实任务的空间采样和容量报告验收；2026-10-10 在目标 Tesla T4 服务器上完成 `v1.1.2` 三分支空目录真实验收。任务详情页现可通过受所有权保护的稳定任务 API 下载清单内 GLB、OBJ、MTL 和纹理，并可在 Three.js 查看器中切换和交互预览三分支 GLB。任务 API 边界见 [`docs/job-api.md`](docs/job-api.md)，上传边界见 [`docs/image-uploads.md`](docs/image-uploads.md)，下载边界见 [`docs/artifact-downloads.md`](docs/artifact-downloads.md)，查看器边界见 [`docs/glb-viewer.md`](docs/glb-viewer.md)，实测证据见 [`docs/real-gpu-acceptance-2026-09-25.md`](docs/real-gpu-acceptance-2026-09-25.md)、[`docs/storage-capacity-acceptance-2026-10-08.md`](docs/storage-capacity-acceptance-2026-10-08.md) 和 [`docs/target-server-gpu-acceptance-2026-10-10.md`](docs/target-server-gpu-acceptance-2026-10-10.md)。
 
+持续真实 Worker 会在领取任务前验证执行档、数据盘预留、NVIDIA GPU、PyTorch CUDA 和固定 MapAnything batch size。目标服务器现提供 100 图与 150 图暂定执行档；150 图档采用 32 GiB 任务预留、75 GiB 数据盘安全线和 64 GiB 单用户配额，所有数值仍需真实任务校准，边界见 [`docs/worker-execution-profiles.md`](docs/worker-execution-profiles.md)。
+
 ## 仓库边界
 
 本仓库只保存 Web 前端、API、Worker、Re3D 适配器、评估模块、部署配置和测试。Re3D 源码、模型权重、用户上传、运行中间文件和重建产物均不复制到本仓库。

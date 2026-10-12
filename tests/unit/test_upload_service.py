@@ -180,6 +180,65 @@ class UploadServiceTests(unittest.TestCase):
         )
         self.assertEqual(list(staging.iterdir()), [])
 
+    def test_submission_preserves_floor_after_remaining_job_reservation(self) -> None:
+        minimum = 1024**3
+        reservation = 2 * 1024**3
+        service = UploadService(
+            self.sessions,
+            self.queue,
+            data_root=self.data_root,
+            settings=UploadSettings(
+                max_file_bytes=4096,
+                max_total_bytes=20_000,
+                max_pixels=1_000_000,
+                min_free_disk_bytes=minimum,
+            ),
+            quota_settings=StorageQuotaSettings(
+                quota_bytes=4 * 1024**3,
+                job_reservation_bytes=reservation,
+            ),
+        )
+        with patch(
+            "backend.uploads.service.shutil.disk_usage",
+            return_value=SimpleNamespace(free=10 * 1024**3),
+        ):
+            upload, _ = service.create(
+                user_id=self.user_id,
+                idempotency_token="capacity-submit-001",
+            )
+            for color in ((10, 20, 30), (30, 20, 10), (20, 30, 10)):
+                upload = service.add_image(
+                    upload_id=upload["upload_id"],
+                    user_id=self.user_id,
+                    source=io.BytesIO(self.png_bytes(color)),
+                    original_name="camera.png",
+                )
+
+        required_additional = reservation - upload["total_bytes"]
+        with patch(
+            "backend.uploads.service.shutil.disk_usage",
+            return_value=SimpleNamespace(
+                free=minimum + required_additional - 1
+            ),
+        ):
+            with self.assertRaises(UploadCapacityError):
+                service.submit(
+                    upload_id=upload["upload_id"],
+                    user_id=self.user_id,
+                )
+
+        with patch(
+            "backend.uploads.service.shutil.disk_usage",
+            return_value=SimpleNamespace(
+                free=minimum + required_additional
+            ),
+        ):
+            submitted = service.submit(
+                upload_id=upload["upload_id"],
+                user_id=self.user_id,
+            )
+        self.assertEqual(submitted["status"], "queued")
+
     def test_detects_actual_jpeg_and_rejects_unsupported_image_format(self) -> None:
         upload, _ = self.service.create(
             user_id=self.user_id,

@@ -118,11 +118,22 @@ class RestrictedReadinessTests(unittest.TestCase):
                     "tag": "fixed-tag",
                 },
             ),
+            patch(
+                "apps.maintenance.readiness._check_worker_runtime_preflight",
+                return_value={
+                    "status": "ready",
+                    "execution_profile": {"name": "baseline"},
+                },
+            ),
         ):
             report = check_restricted_readiness(component="worker")
 
         self.assertEqual(report["component"], "worker")
         self.assertIn("re3d", report)
+        self.assertEqual(
+            report["worker_runtime_preflight"]["execution_profile"]["name"],
+            "baseline",
+        )
         self.assertNotIn("authentication", report)
         self.assertNotIn("smtp", report)
 

@@ -145,6 +145,7 @@ class RestrictedDeploymentAssetTests(unittest.TestCase):
         self.assertIn("No process was stopped", process_common)
         self.assertIn('127.0.0.1" -Port 8000', start)
         self.assertIn('127.0.0.1" -Port 8080', start)
+        self.assertIn('"operation": "worker-runtime-preflight"', start)
         self.assertIn('@("caddy", "worker", "api")', stop)
         self.assertIn('network_scope = "loopback-only"', status)
 

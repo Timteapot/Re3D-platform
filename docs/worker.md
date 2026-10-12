@@ -10,6 +10,8 @@
 
 真实队列执行使用独立命令 `run-real-queued-once` 或持续的 `run-real-queued-loop`。没有该显式命令时，模拟 Worker 不会领取 real 任务。开发/测试环境的网页提交默认为 simulated，real 可由开发 API 显式请求；production 上传提交由服务端强制为 real。
 
+持续真实 Worker 会在进入队列循环前执行运行时预检。`baseline` 用于本机小样本开发；`gpu-large-100` 用于目标服务器 100 图阶梯验收；`gpu-large-150` 用于 150 图验收，并要求 32 GiB 任务预留、75 GiB 数据盘安全线、至少 14 GiB 总显存和 12 GiB 启动空闲显存。固定管线的 MapAnything `batch_size=4` 不随执行档改变。详细合同见 [`worker-execution-profiles.md`](worker-execution-profiles.md)。
+
 ## 模块职责
 
 | 模块 | 作用 |
@@ -23,6 +25,7 @@
 | `real.py` | 校验 Re3D Git/配置身份、执行 dry-run/真实管线、映射步骤并汇总产物 |
 | `process.py` | 以独立进程组运行 Re3D，监督取消、超时、租约健康并终止整棵子进程树 |
 | `backend/monitoring/resources.py` | 在真实任务期间采样 CPU、内存、数据盘和 NVIDIA GPU，写入私有 JSONL |
+| `backend/worker/preflight.py` | 在持续真实 Worker 领取任务前核验执行档、磁盘预留、GPU、PyTorch CUDA 和固定 batch size |
 | `settings.py` | 从参数或环境变量读取数据根目录、Worker 与 Re3D 位置 |
 | `backend/worker/queued.py` | 按 execution mode 领取任务、维持租约并推进数据库状态 |
 | `backend/jobs/cleanup.py` | 批量删除失败/取消任务目录，记录尝试和稳定错误码并安全重试 |

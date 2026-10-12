@@ -117,10 +117,14 @@
 - [x] 创建仓库外 `D:\3Dreconstruction\Re3D-data\restricted` 和忽略提交的 API/Worker 环境文件，将 ACL 限定为当前用户、Administrators 和 SYSTEM；
 - [x] 增加固定版本/哈希的 Windows Mailpit 独立程序回退方案，仅监听 `127.0.0.1:1025/8025`；注册验证/密码重置邮件验收及 `restricted` 全组件就绪检查通过；
 - [x] 增加固定版本/官方 SHA-512/可执行文件 SHA-256 校验的 Caddy v2.11.4、本机 HTTP 专用安全头配置，以及 API/真实 Worker/Caddy/Mailpit 的统一启动、身份校验状态和逆序停止脚本；首次启动、失败回滚、完整停止和再次启动验收通过，四个服务端口仅监听 `127.0.0.1`；
+- [x] 增加 `baseline` 与 `gpu-large-100` Worker 执行档；持续真实 Worker 在领取任务前核验数据盘安全线加任务预留、NVIDIA GPU、PyTorch CUDA 和固定 MapAnything batch size 4；
+- [x] 将任务提交磁盘准入改为保留安全线并扣除尚未落盘的任务预留部分，100 图暂定配置为每任务 16 GiB、每用户 32 GiB；
+- [x] 增加 `gpu-large-150` 暂定执行档和生产示例：每任务预留 32 GiB、数据盘安全线 75 GiB、单用户配额 64 GiB，继续保持固定 MapAnything batch size 4；
+- [x] 完成 Lighthouse 150 图本机输入与执行档准备验收，150 张平台检查器验证和 187 项单元测试通过；证据见 [`large-150-local-readiness-2026-10-12.md`](large-150-local-readiness-2026-10-12.md)；
 
-## 当前下一步（本机受限部署）
+## 当前下一步（目标服务器大任务验收）
 
-- [ ] 用代表性图片执行一次 restricted 真实 GPU 全链路、进程重启和数据隔离验收。
+- [ ] 服务器启动后完成真实磁盘/GPU/CUDA 预检，先运行同源 25 图冒烟任务，再按 50/75/100/150 图阶梯采集容量与耗时，并校准暂定 32 GiB 预留。
 
 ## 后续公网部署任务（暂缓）
 

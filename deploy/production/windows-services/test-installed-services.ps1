@@ -363,6 +363,17 @@ foreach ($service in @($manifest.services)) {
 $workerService = @($manifest.services) |
     Where-Object { $_.key -ceq "worker" } |
     Select-Object -First 1
+$workerPreflightEvidence = @(
+    Get-ChildItem -LiteralPath $workerService.log_directory -File |
+        ForEach-Object { Get-Content -LiteralPath $_.FullName -Tail 200 } |
+        Select-String -Pattern (
+            '"operation"\s*:\s*"worker-runtime-preflight".*' +
+            '"status"\s*:\s*"ready"'
+        )
+)
+if ($workerPreflightEvidence.Count -eq 0) {
+    throw "Worker logs do not show a successful runtime preflight."
+}
 $workerLoopEvidence = @(
     Get-ChildItem -LiteralPath $workerService.log_directory -File |
         ForEach-Object { Get-Content -LiteralPath $_.FullName -Tail 200 } |

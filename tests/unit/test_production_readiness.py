@@ -164,12 +164,23 @@ class ProductionReadinessTests(unittest.TestCase):
                     "tag": "fixed-tag",
                 },
             ),
+            patch(
+                "apps.maintenance.readiness._check_worker_runtime_preflight",
+                return_value={
+                    "status": "ready",
+                    "execution_profile": {"name": "gpu-large-150"},
+                },
+            ),
         ):
             report = check_production_readiness(component="worker")
 
         self.assertEqual(report["component"], "worker")
         self.assertIn("re3d", report)
         self.assertIn("scheduler", report)
+        self.assertEqual(
+            report["worker_runtime_preflight"]["execution_profile"]["name"],
+            "gpu-large-150",
+        )
         self.assertEqual(
             report["failed_job_cleanup"],
             {
