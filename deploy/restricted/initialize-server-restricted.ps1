@@ -5,7 +5,8 @@ param(
     [string]$DatabaseHost = "127.0.0.1",
     [ValidateRange(1, 65535)]
     [int]$DatabasePort = 5432,
-    [string]$AdminUser = "postgres"
+    [string]$AdminUser = "postgres",
+    [Security.SecureString]$AdminPassword
 )
 
 Set-StrictMode -Version Latest
@@ -80,6 +81,7 @@ $migratorPassword = $null
 $runtimePassword = $null
 $plainMigratorPassword = $null
 $plainRuntimePassword = $null
+$initializationFailure = $null
 
 try {
     Write-Host "Re3D restricted deployment initialization" -ForegroundColor Cyan
@@ -88,11 +90,8 @@ try {
         "database change. Input remains hidden."
     ) -ForegroundColor Yellow
 
-    for ($attempt = 1; $attempt -le $MaximumPasswordAttempts; $attempt++) {
-        $candidatePassword = Read-Host (
-            "Password for PostgreSQL administrator $AdminUser " +
-            "(attempt $attempt/$MaximumPasswordAttempts)"
-        ) -AsSecureString
+    if ($null -ne $AdminPassword) {
+        $candidatePassword = $AdminPassword
         if (
             Test-Re3DPostgresAdministratorPassword `
                 -Password $candidatePassword
@@ -101,18 +100,36 @@ try {
             Write-Host (
                 "PostgreSQL administrator authentication verified."
             ) -ForegroundColor Green
-            break
+        } else {
+            throw "PostgreSQL administrator password failed validation."
         }
-        $candidatePassword = $null
-        Write-Host (
-            "Authentication failed; no database changes were made."
-        ) -ForegroundColor Red
-    }
-    if ($null -eq $administratorPassword) {
-        throw (
-            "PostgreSQL administrator password failed validation " +
-            "$MaximumPasswordAttempts times."
-        )
+    } else {
+        for ($attempt = 1; $attempt -le $MaximumPasswordAttempts; $attempt++) {
+            $candidatePassword = Read-Host (
+                "Password for PostgreSQL administrator $AdminUser " +
+                "(attempt $attempt/$MaximumPasswordAttempts)"
+            ) -AsSecureString
+            if (
+                Test-Re3DPostgresAdministratorPassword `
+                    -Password $candidatePassword
+            ) {
+                $administratorPassword = $candidatePassword
+                Write-Host (
+                    "PostgreSQL administrator authentication verified."
+                ) -ForegroundColor Green
+                break
+            }
+            $candidatePassword = $null
+            Write-Host (
+                "Authentication failed; no database changes were made."
+            ) -ForegroundColor Red
+        }
+        if ($null -eq $administratorPassword) {
+            throw (
+                "PostgreSQL administrator password failed validation " +
+                "$MaximumPasswordAttempts times."
+            )
+        }
     }
 
     $plainMigratorPassword = New-Re3DGeneratedPassword
@@ -149,6 +166,8 @@ try {
         -Component all
 
     Write-Host "RE3D_RESTRICTED_INITIALIZATION_COMPLETE" -ForegroundColor Green
+} catch {
+    $initializationFailure = $_
 } finally {
     $administratorPassword = $null
     $candidatePassword = $null
@@ -156,4 +175,9 @@ try {
     $runtimePassword = $null
     $plainMigratorPassword = $null
     $plainRuntimePassword = $null
+}
+
+if ($null -ne $initializationFailure) {
+    Write-Error -ErrorRecord $initializationFailure -ErrorAction Continue
+    exit 1
 }

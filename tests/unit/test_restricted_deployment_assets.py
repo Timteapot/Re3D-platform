@@ -76,6 +76,8 @@ class RestrictedDeploymentAssetTests(unittest.TestCase):
         self.assertIn('"migrate-restricted.ps1"', initializer)
         self.assertIn('"initialize-restricted-env.ps1"', initializer)
         self.assertIn('"check-restricted-readiness.ps1"', initializer)
+        self.assertIn("[Security.SecureString]$AdminPassword", initializer)
+        self.assertIn("exit 1", initializer)
         self.assertNotIn("D:\\3Dreconstruction", initializer)
 
     def test_restricted_environment_files_receive_protected_acls(self) -> None:
