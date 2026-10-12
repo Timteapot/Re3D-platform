@@ -156,10 +156,9 @@ function Assert-Re3DRestrictedTaskFolderSecurity {
     } catch {
         throw "Could not parse the restricted task-folder DACL: $($_.Exception.Message)"
     }
-    if (-not (
-        $descriptor.ControlFlags -band
-        [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected
-    )) {
+    $descriptorFlags = [int]$descriptor.ControlFlags
+    $protectedDacl = [int][Security.AccessControl.ControlFlags]::DiscretionaryAclProtected
+    if (($descriptorFlags -band $protectedDacl) -eq 0) {
         throw "Restricted Task Scheduler folder DACL must be protected from inheritance."
     }
 
@@ -170,9 +169,9 @@ function Assert-Re3DRestrictedTaskFolderSecurity {
         "S-1-5-32-544" = $false
         $runAsSid = $false
     }
-    $objectInherit = [Security.AccessControl.AceFlags]::ObjectInherit
-    $containerInherit = [Security.AccessControl.AceFlags]::ContainerInherit
-    $inheritOnly = [Security.AccessControl.AceFlags]::InheritOnly
+    $objectInherit = [int][Security.AccessControl.AceFlags]::ObjectInherit
+    $containerInherit = [int][Security.AccessControl.AceFlags]::ContainerInherit
+    $inheritOnly = [int][Security.AccessControl.AceFlags]::InheritOnly
     $fullControlMask = 0x001f01ff
     foreach ($ace in $descriptor.DiscretionaryAcl) {
         if (
@@ -188,10 +187,11 @@ function Assert-Re3DRestrictedTaskFolderSecurity {
         if ([int]$ace.AccessMask -ne $fullControlMask) {
             throw "Restricted Task Scheduler folder does not grant reviewed full control."
         }
+        $aceFlags = [int]$ace.AceFlags
         if (
-            -not ($ace.AceFlags -band $objectInherit) -or
-            -not ($ace.AceFlags -band $containerInherit) -or
-            ($ace.AceFlags -band $inheritOnly)
+            ($aceFlags -band $objectInherit) -eq 0 -or
+            ($aceFlags -band $containerInherit) -eq 0 -or
+            ($aceFlags -band $inheritOnly) -ne 0
         ) {
             throw "Restricted Task Scheduler folder ACE inheritance is not OI/CI."
         }
