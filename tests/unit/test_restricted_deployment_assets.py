@@ -113,6 +113,21 @@ class RestrictedDeploymentAssetTests(unittest.TestCase):
         self.assertIn('Invoke-Re3DPsqlScalar -Sql "SHOW hba_file;"', recover)
         self.assertIn("pg_hba_file_rules", recover)
         self.assertIn("[IO.File]::Replace", recover)
+        self.assertIn(
+            "$replacementBackupPath = Join-Path $directory (",
+            recover,
+        )
+        self.assertRegex(
+            recover,
+            r"(?s)\[IO\.File\]::Replace\(\s*"
+            r"\$temporaryPath,\s*\$Path,\s*"
+            r"\$replacementBackupPath,\s*\$true\s*\)",
+        )
+        self.assertRegex(
+            recover,
+            r"(?s)foreach \(\$cleanupPath in @\(\s*"
+            r"\$temporaryPath,\s*\$replacementBackupPath\s*\)\)",
+        )
         self.assertIn("Register-Re3DHbaRollback", recover)
         self.assertIn(
             '$restoreScript = Join-Path $runDirectory "restore-pg-hba.ps1"',
@@ -134,6 +149,21 @@ class RestrictedDeploymentAssetTests(unittest.TestCase):
         self.assertIn("backup_sha256", recover)
 
         self.assertIn("[IO.File]::Replace", restore)
+        self.assertIn(
+            "$replacementBackupPath = Join-Path $targetDirectory (",
+            restore,
+        )
+        self.assertRegex(
+            restore,
+            r"(?s)\[IO\.File\]::Replace\(\s*"
+            r"\$temporaryPath,\s*\$Target,\s*"
+            r"\$replacementBackupPath,\s*\$true\s*\)",
+        )
+        self.assertRegex(
+            restore,
+            r"(?s)foreach \(\$cleanupPath in @\(\s*"
+            r"\$temporaryPath,\s*\$replacementBackupPath\s*\)\)",
+        )
         self.assertIn("Get-Re3DSha256", restore)
         self.assertIn("Assert-Re3DAdminOnlyAcl", restore)
         self.assertIn("restore_script_sha256", restore)

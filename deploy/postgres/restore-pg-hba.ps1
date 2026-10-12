@@ -192,7 +192,11 @@ function Restore-Re3DHbaAtomically {
     $temporaryPath = Join-Path $targetDirectory (
         ".re3d-hba-restore-$([Guid]::NewGuid().ToString('N')).tmp"
     )
+    $replacementBackupPath = Join-Path $targetDirectory (
+        ".re3d-hba-restore-backup-$([Guid]::NewGuid().ToString('N')).tmp"
+    )
     $sourceBytes = $null
+    $replacementFailure = $null
     try {
         $sourceBytes = [IO.File]::ReadAllBytes($Source)
         [IO.File]::WriteAllBytes($temporaryPath, $sourceBytes)
@@ -200,18 +204,61 @@ function Restore-Re3DHbaAtomically {
             -Path $temporaryPath `
             -Descriptor $Descriptor
         if (Test-Path -LiteralPath $Target -PathType Leaf) {
-            [IO.File]::Replace($temporaryPath, $Target, $null, $true)
+            [IO.File]::Replace(
+                $temporaryPath,
+                $Target,
+                $replacementBackupPath,
+                $true
+            )
         } else {
             [IO.File]::Move($temporaryPath, $Target)
         }
         Set-Re3DFileSecurityDescriptor -Path $Target -Descriptor $Descriptor
-    } finally {
+    } catch {
+        $replacementFailure = $_
+    }
+
+    $cleanupFailures = @()
+    try {
         if ($null -ne $sourceBytes) {
             [Array]::Clear($sourceBytes, 0, $sourceBytes.Length)
         }
-        if (Test-Path -LiteralPath $temporaryPath -PathType Leaf) {
-            [IO.File]::Delete($temporaryPath)
+    } catch {
+        $cleanupFailures += (
+            "Source-byte cleanup: $($_.Exception.Message)"
+        )
+    }
+    foreach ($cleanupPath in @(
+        $temporaryPath,
+        $replacementBackupPath
+    )) {
+        try {
+            if (Test-Path -LiteralPath $cleanupPath -PathType Leaf) {
+                [IO.File]::Delete($cleanupPath)
+            }
+        } catch {
+            $cleanupFailures += (
+                "${cleanupPath}: $($_.Exception.Message)"
+            )
         }
+    }
+
+    if ($null -ne $replacementFailure) {
+        if ($cleanupFailures.Count -gt 0) {
+            throw (
+                "Atomic HBA restoration failed: " +
+                "$($replacementFailure.Exception.Message). " +
+                "Temporary-data cleanup also failed: " +
+                ($cleanupFailures -join "; ")
+            )
+        }
+        throw $replacementFailure
+    }
+    if ($cleanupFailures.Count -gt 0) {
+        throw (
+            "Atomic HBA restoration completed, but temporary-data cleanup " +
+            "failed: " + ($cleanupFailures -join "; ")
+        )
     }
 }
 

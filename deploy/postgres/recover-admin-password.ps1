@@ -249,6 +249,10 @@ function Set-Re3DFileAtomically {
     $temporaryPath = Join-Path $directory (
         ".re3d-hba-update-$([Guid]::NewGuid().ToString('N')).tmp"
     )
+    $replacementBackupPath = Join-Path $directory (
+        ".re3d-hba-update-backup-$([Guid]::NewGuid().ToString('N')).tmp"
+    )
+    $replacementFailure = $null
     try {
         [IO.File]::WriteAllBytes($temporaryPath, $Bytes)
         $security = New-Object Security.AccessControl.FileSecurity
@@ -257,12 +261,49 @@ function Set-Re3DFileAtomically {
             $securitySections
         )
         [IO.File]::SetAccessControl($temporaryPath, $security)
-        [IO.File]::Replace($temporaryPath, $Path, $null, $true)
+        [IO.File]::Replace(
+            $temporaryPath,
+            $Path,
+            $replacementBackupPath,
+            $true
+        )
         [IO.File]::SetAccessControl($Path, $security)
-    } finally {
-        if (Test-Path -LiteralPath $temporaryPath -PathType Leaf) {
-            [IO.File]::Delete($temporaryPath)
+    } catch {
+        $replacementFailure = $_
+    }
+
+    $cleanupFailures = @()
+    foreach ($cleanupPath in @(
+        $temporaryPath,
+        $replacementBackupPath
+    )) {
+        try {
+            if (Test-Path -LiteralPath $cleanupPath -PathType Leaf) {
+                [IO.File]::Delete($cleanupPath)
+            }
+        } catch {
+            $cleanupFailures += (
+                "${cleanupPath}: $($_.Exception.Message)"
+            )
         }
+    }
+
+    if ($null -ne $replacementFailure) {
+        if ($cleanupFailures.Count -gt 0) {
+            throw (
+                "Atomic HBA replacement failed: " +
+                "$($replacementFailure.Exception.Message). " +
+                "Temporary-file cleanup also failed: " +
+                ($cleanupFailures -join "; ")
+            )
+        }
+        throw $replacementFailure
+    }
+    if ($cleanupFailures.Count -gt 0) {
+        throw (
+            "Atomic HBA replacement completed, but temporary-file cleanup " +
+            "failed: " + ($cleanupFailures -join "; ")
+        )
     }
 }
 
