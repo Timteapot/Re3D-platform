@@ -2,6 +2,7 @@
 param(
     [switch]$SkipWebBuild,
     [switch]$InstallWebDependencies,
+    [switch]$StayAttached,
     [string]$CaddyPath = "",
     [string]$StateRoot = ""
 )
@@ -154,6 +155,59 @@ try {
     Write-Host "Web: http://127.0.0.1:8080"
     Write-Host "Mail: http://127.0.0.1:8025"
     Write-Host "State: $StateRoot"
+
+    if ($StayAttached) {
+        Write-Host (
+            "Restricted stack will remain attached to this PowerShell process. " +
+            "Use stop-restricted-scheduled-task.ps1 for a scheduled instance."
+        )
+        $consecutiveEndpointFailures = 0
+        $expectedPorts = [ordered]@{
+            "mailpit-smtp" = 1025
+            "mailpit-web" = 8025
+            "api" = 8000
+            "caddy" = 8080
+        }
+        while ($true) {
+            foreach ($componentProcess in @(
+                [pscustomobject]@{ name = "api"; process = $apiProcess },
+                [pscustomobject]@{ name = "worker"; process = $workerProcess },
+                [pscustomobject]@{ name = "caddy"; process = $caddyProcess }
+            )) {
+                if ($componentProcess.process.HasExited) {
+                    Read-Re3DRestrictedProcessFailure `
+                        -StateRoot $StateRoot `
+                        -Component $componentProcess.name `
+                        -Cause "supervised process exited"
+                }
+            }
+
+            $unavailableEndpoints = [Collections.Generic.List[string]]::new()
+            foreach ($endpoint in $expectedPorts.GetEnumerator()) {
+                if (-not (Test-Re3DRestrictedTcpPort `
+                    -HostName "127.0.0.1" `
+                    -Port $endpoint.Value `
+                    -TimeoutMilliseconds 1000
+                )) {
+                    $unavailableEndpoints.Add(
+                        "$($endpoint.Key):$($endpoint.Value)"
+                    )
+                }
+            }
+            if ($unavailableEndpoints.Count -eq 0) {
+                $consecutiveEndpointFailures = 0
+            } else {
+                $consecutiveEndpointFailures++
+            }
+            if ($consecutiveEndpointFailures -ge 3) {
+                throw (
+                    "Restricted stack endpoint supervision failed three times: " +
+                    ($unavailableEndpoints -join ", ")
+                )
+            }
+            Start-Sleep -Seconds 2
+        }
+    }
 } catch {
     for ($index = $startedComponents.Count - 1; $index -ge 0; $index--) {
         try {
@@ -162,6 +216,13 @@ try {
                 -Component $startedComponents[$index] | Out-Null
         } catch {
             Write-Warning "Rollback could not stop $($startedComponents[$index]): $($_.Exception.Message)"
+        }
+    }
+    if ($StayAttached) {
+        try {
+            & (Join-Path $projectRoot "deploy\mailpit\stop-standalone.ps1")
+        } catch {
+            Write-Warning "Rollback could not stop Mailpit: $($_.Exception.Message)"
         }
     }
     throw

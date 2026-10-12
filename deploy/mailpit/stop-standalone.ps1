@@ -23,7 +23,7 @@ function Get-CanonicalPath {
 
 if (-not (Test-Path -LiteralPath $pidPath -PathType Leaf)) {
     Write-Host "Mailpit standalone is not running (PID file is absent)."
-    exit 0
+    return
 }
 
 $savedPidText = (Get-Content -LiteralPath $pidPath -Raw).Trim()
@@ -36,7 +36,7 @@ $process = Get-Process -Id $savedPid -ErrorAction SilentlyContinue
 if ($null -eq $process) {
     Remove-Item -LiteralPath $pidPath
     Write-Host "Removed a stale Mailpit PID file. No process was stopped."
-    exit 0
+    return
 }
 
 try {

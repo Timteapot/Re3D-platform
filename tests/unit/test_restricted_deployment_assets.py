@@ -323,6 +323,109 @@ class RestrictedDeploymentAssetTests(unittest.TestCase):
         self.assertIn('@("caddy", "worker", "api")', stop)
         self.assertIn('network_scope = "loopback-only"', status)
 
+    def test_restricted_scheduled_task_is_on_demand_and_passwordless(self) -> None:
+        restricted = ROOT / "deploy" / "restricted"
+        common = (restricted / "scheduled-task-common.ps1").read_text(
+            encoding="utf-8"
+        )
+        install = (restricted / "install-restricted-scheduled-task.ps1").read_text(
+            encoding="utf-8"
+        )
+        start_task = (
+            restricted / "start-restricted-scheduled-task.ps1"
+        ).read_text(encoding="utf-8")
+        stop_task = (
+            restricted / "stop-restricted-scheduled-task.ps1"
+        ).read_text(encoding="utf-8")
+        status_task = (
+            restricted / "get-restricted-scheduled-task-status.ps1"
+        ).read_text(encoding="utf-8")
+        uninstall = (
+            restricted / "uninstall-restricted-scheduled-task.ps1"
+        ).read_text(encoding="utf-8")
+        provision = (
+            restricted / "provision-restricted-task-folder.ps1"
+        ).read_text(encoding="utf-8")
+        deprovision = (
+            restricted / "deprovision-restricted-task-folder.ps1"
+        ).read_text(encoding="utf-8")
+        stack_start = (restricted / "start-restricted-stack.ps1").read_text(
+            encoding="utf-8"
+        )
+        mailpit_start = (ROOT / "deploy/mailpit/start-standalone.ps1").read_text(
+            encoding="utf-8"
+        )
+        mailpit_stop = (ROOT / "deploy/mailpit/stop-standalone.ps1").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("[switch]$StayAttached", stack_start)
+        self.assertIn("$consecutiveEndpointFailures -ge 3", stack_start)
+        for port in (1025, 8025, 8000, 8080):
+            self.assertIn(f'= {port}', stack_start)
+        self.assertIn("-SkipWebBuild -StayAttached", common)
+        self.assertIn("WindowsPowerShell\\v1.0\\powershell.exe", common)
+        self.assertIn('task_folder_path = "\\Re3D"', common)
+        self.assertIn('task_name = "RestrictedStack"', common)
+        self.assertIn('New-Object -ComObject "Schedule.Service"', common)
+        self.assertIn("Principal.LogonType -ne 2", common)
+        self.assertIn("Principal.RunLevel -ne 0", common)
+        self.assertIn("settings.MultipleInstances -ne 2", common)
+        self.assertIn("Get-Re3DRestrictedAccountSid", common)
+        self.assertNotIn("Get-ScheduledTask", common)
+        self.assertIn("GetSecurityDescriptor(4)", common)
+        self.assertIn("DiscretionaryAclProtected", common)
+        self.assertIn('"S-1-5-18"', common)
+        self.assertIn('"S-1-5-32-544"', common)
+
+        self.assertIn("Assert-Re3DRestrictedTaskOwnerIdentity", install)
+        self.assertIn('Get-LocalUser -Name "re3d-deploy"', install)
+        self.assertIn("$definition.Principal.LogonType = 2", install)
+        self.assertIn("$definition.Principal.RunLevel = 0", install)
+        self.assertIn("$definition.Settings.MultipleInstances = 2", install)
+        self.assertIn('$definition.Settings.ExecutionTimeLimit = "PT0S"', install)
+        self.assertIn("$definition.Triggers", common)
+        self.assertIn("$definition.Settings.RestartCount = 0", install)
+        self.assertIn("$definition.Settings.StartWhenAvailable = $false", install)
+        self.assertIn("$definition.Actions.Create(0)", install)
+        self.assertIn("$folder.RegisterTaskDefinition", install)
+        self.assertIn("$context.run_as_user", install)
+        self.assertNotIn("New-ScheduledTask", install)
+        self.assertNotIn("Register-ScheduledTask", install)
+        self.assertNotIn("Password", install)
+        self.assertIn("Refusing to overwrite it", install)
+        self.assertIn("definition.Triggers.Count -ne 0", common)
+        self.assertIn("settings.RestartCount -ne 0", common)
+        self.assertIn("AllowDemandStart", common)
+        self.assertIn("StartWhenAvailable", common)
+
+        self.assertIn("$task.Run($null)", start_task)
+        self.assertIn("$dispatchObserved", start_task)
+        self.assertIn("$observedRunning", start_task)
+        self.assertIn("-RequireReady", start_task)
+        self.assertIn("get-restricted-scheduled-task-status.ps1", start_task)
+        self.assertIn('status.status -ceq "ready"', start_task)
+        self.assertLess(
+            stop_task.index("$task.Stop(0)"),
+            stop_task.index('"deploy\\restricted\\stop-restricted-stack.ps1"'),
+        )
+        self.assertIn('status.status -cne "stopped"', stop_task)
+        self.assertIn("definition_valid", status_task)
+        self.assertIn("security_error", status_task)
+        self.assertIn('"orphaned-stack"', status_task)
+        self.assertIn("$folder.DeleteTask", uninstall)
+        self.assertIn("$ForceUnsafeDefinition", uninstall)
+        self.assertIn("Data and logs were retained", uninstall)
+        self.assertIn("Assert-Re3DRestrictedTaskAdministrator", provision)
+        self.assertIn("Get-Re3DRestrictedTaskFolderSddl", provision)
+        self.assertIn("$rootFolder.CreateFolder", provision)
+        self.assertIn("$rootFolder.DeleteFolder", provision)
+        self.assertIn("$folder.GetTasks(1).Count", deprovision)
+        self.assertIn("$folder.GetFolders(0).Count", deprovision)
+        self.assertIn("$rootFolder.DeleteFolder", deprovision)
+        self.assertNotIn("exit 0", mailpit_start)
+        self.assertNotIn("exit 0", mailpit_stop)
+
 
 if __name__ == "__main__":
     unittest.main()

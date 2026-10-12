@@ -104,10 +104,45 @@ The command returns only non-secret identities, limits and dependency status.
 
 The restricted stack does not install Windows services. It uses a pinned Caddy
 v2.11.4 binary, builds the static React application and starts Mailpit, API,
-the real-queue Worker and Caddy as hidden processes:
+the real-queue Worker and Caddy as hidden processes. A direct interactive start
+is suitable for a local PowerShell session:
 
 ```powershell
 & .\deploy\restricted\start-restricted-stack.ps1
+```
+
+Processes created by a non-interactive Windows SSH session are tied to that
+session and must not be treated as a durable deployment. For an SSH-managed
+server, first provision a dedicated Task Scheduler folder from an elevated
+Administrator PowerShell. Its protected ACL grants access only to SYSTEM,
+Administrators and the exact local `re3d-deploy` account:
+
+```powershell
+& .\deploy\restricted\provision-restricted-task-folder.ps1
+```
+
+Then return to a PowerShell session running as `re3d-deploy` itself and install
+the passwordless, on-demand task. It runs as that exact local identity with an
+S4U limited token, stores no account password and has no startup trigger or
+automatic restart policy:
+
+```powershell
+& .\deploy\restricted\install-restricted-scheduled-task.ps1
+& .\deploy\restricted\start-restricted-scheduled-task.ps1
+& .\deploy\restricted\get-restricted-scheduled-task-status.ps1 -RequireReady
+```
+
+The task deliberately uses `-SkipWebBuild`; build and verify the frontend
+before installing it. It also cannot use remote shares or fetch missing runtime
+assets under S4U, so Python environments, model files and binaries must already
+exist on local disks. Closing SSH does not stop the scheduled stack. Create an
+SSH tunnel only when browser access is needed:
+
+```powershell
+ssh -N `
+    -L 8080:127.0.0.1:8080 `
+    -L 8025:127.0.0.1:8025 `
+    re3d-aliyun
 ```
 
 The only browser entry point is `http://127.0.0.1:8080`; Mailpit remains at
@@ -132,6 +167,43 @@ Stop the complete stack with:
 & .\deploy\restricted\stop-restricted-stack.ps1
 ```
 
+For the Scheduled Task variant, stop the supervisor first and then converge any
+remaining or stale child-process state with the dedicated command:
+
+```powershell
+& .\deploy\restricted\stop-restricted-scheduled-task.ps1
+```
+
+The same `re3d-deploy` identity can remove only the task registration while
+retaining all data and logs:
+
+```powershell
+& .\deploy\restricted\uninstall-restricted-scheduled-task.ps1
+```
+
+If status reports `unsafe-definition`, normal lifecycle commands deliberately
+refuse the drifted task. After inspecting the task, the same fixed local
+identity can stop and delete only `\Re3D\RestrictedStack` with:
+
+```powershell
+& .\deploy\restricted\uninstall-restricted-scheduled-task.ps1 `
+    -ForceUnsafeDefinition
+```
+
+After the task has been removed, an elevated Administrator can optionally remove
+the empty, ACL-validated scheduler folder:
+
+```powershell
+& .\deploy\restricted\deprovision-restricted-task-folder.ps1
+```
+
+The delegated folder lets `re3d-deploy` create and manage tasks that run only as
+itself; it does not permit passwordless registration as SYSTEM or another user.
+The current scripts accept only the fixed `RestrictedStack` task definition and
+refuse definition or ACL drift during normal operation. The explicit recovery
+switch still requires the exact `re3d-deploy` identity and a valid protected
+folder ACL; it cannot target another task name.
+
 Caddy, Worker and API are stopped in that order, followed by Mailpit. PostgreSQL
 is an installed local dependency and remains running. Mailpit messages and all
 logs remain under the workspace sibling `Re3D-data\_services` directory. Managed process
@@ -139,3 +211,6 @@ state records the PID, executable path and process start time; a mismatched
 identity is reported and is never terminated. Windows process-tree shutdown is
 forceful, so a running Worker job relies on the existing database lease expiry
 and recovery contract. Do not use the stop script as normal job cancellation.
+The on-demand task is a temporary lifecycle layer for restricted acceptance; it
+does not replace the WinSW service isolation, startup recovery and monitoring
+required by the production profile.

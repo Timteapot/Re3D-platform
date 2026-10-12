@@ -67,7 +67,7 @@ if (Test-Path -LiteralPath $pidPath -PathType Leaf) {
                 Write-Host "Mailpit is already running."
                 Write-Host "SMTP: $smtpAddress"
                 Write-Host "Web UI: $uiUrl"
-                exit 0
+                return
             }
         } catch {
             throw "Mailpit process $savedPid exists but its loopback UI is not ready. Inspect $stderrPath before stopping it."
