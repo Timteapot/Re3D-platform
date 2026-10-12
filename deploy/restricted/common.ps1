@@ -43,7 +43,7 @@ function Set-Re3DRestrictedSecretFileAcl {
         )
         [void]$acl.AddAccessRule($rule)
     }
-    Set-Acl -LiteralPath $resolved -AclObject $acl
+    [IO.File]::SetAccessControl($resolved, $acl)
 }
 
 function Assert-Re3DRestrictedSecretFileAcl {
