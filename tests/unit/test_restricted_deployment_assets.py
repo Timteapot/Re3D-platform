@@ -59,6 +59,25 @@ class RestrictedDeploymentAssetTests(unittest.TestCase):
             self.assertNotIn("RandomNumberGenerator]::Fill", content)
             self.assertNotIn("Convert]::ToHexString", content)
 
+    def test_server_initializer_validates_before_mutating_and_keeps_secrets_local(
+        self,
+    ) -> None:
+        initializer = (
+            ROOT / "deploy/restricted/initialize-server-restricted.ps1"
+        ).read_text(encoding="utf-8")
+        validation = initializer.index("Test-Re3DPostgresAdministratorPassword")
+        bootstrap = initializer.index('"bootstrap-restricted.ps1"')
+        self.assertLess(validation, bootstrap)
+        self.assertIn("Read-Host", initializer)
+        self.assertIn("-AsSecureString", initializer)
+        self.assertIn("RandomNumberGenerator]::Create()", initializer)
+        self.assertIn("GetBytes($passwordBytes)", initializer)
+        self.assertIn("Refusing to rotate database credentials", initializer)
+        self.assertIn('"migrate-restricted.ps1"', initializer)
+        self.assertIn('"initialize-restricted-env.ps1"', initializer)
+        self.assertIn('"check-restricted-readiness.ps1"', initializer)
+        self.assertNotIn("D:\\3Dreconstruction", initializer)
+
     def test_restricted_environment_files_receive_protected_acls(self) -> None:
         common = (ROOT / "deploy/restricted/common.ps1").read_text(encoding="utf-8")
         initializer = (

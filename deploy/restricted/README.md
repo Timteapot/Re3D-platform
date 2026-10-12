@@ -26,8 +26,20 @@ First validate the database contract without touching the installed PostgreSQL:
 & .\deploy\postgres\run-restricted-database-acceptance.ps1
 ```
 
-Then initialize the installed local PostgreSQL. Choose different passwords of
-at least 16 characters for the migration and runtime roles:
+For a first-time single-host installation, use the unified initializer. It asks
+only for the PostgreSQL administrator password, validates it before making any
+change, generates separate random migration/runtime passwords, applies the
+migrations, creates protected environment files, starts loopback Mailpit and
+runs the complete readiness check:
+
+```powershell
+& .\deploy\restricted\initialize-server-restricted.ps1
+```
+
+The initializer refuses to run when either restricted environment file already
+exists, so retrying cannot silently rotate the database password away from the
+saved runtime configuration. For manual recovery or component-by-component
+setup, initialize PostgreSQL with different passwords of at least 16 characters:
 
 ```powershell
 & .\deploy\postgres\bootstrap-restricted.ps1
@@ -98,7 +110,7 @@ Stop the complete stack with:
 
 Caddy, Worker and API are stopped in that order, followed by Mailpit. PostgreSQL
 is an installed local dependency and remains running. Mailpit messages and all
-logs remain under `D:\3Dreconstruction\Re3D-data\_services`. Managed process
+logs remain under the workspace sibling `Re3D-data\_services` directory. Managed process
 state records the PID, executable path and process start time; a mismatched
 identity is reported and is never terminated. Windows process-tree shutdown is
 forceful, so a running Worker job relies on the existing database lease expiry
