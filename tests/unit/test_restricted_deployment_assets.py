@@ -380,12 +380,12 @@ class RestrictedDeploymentAssetTests(unittest.TestCase):
         self.assertIn("DiscretionaryAclProtected", common)
         self.assertIn('"S-1-5-18"', common)
         self.assertIn('"S-1-5-32-544"', common)
-        self.assertIn('"batch-logon-right-common.ps1"', common)
+        self.assertNotIn('"batch-logon-right-common.ps1"', common)
 
         self.assertIn("Assert-Re3DRestrictedTaskOwnerIdentity", install)
         self.assertIn('Get-LocalUser -Name "re3d-deploy"', common)
         self.assertIn("Get-Re3DRestrictedTaskLocalUser", install)
-        self.assertIn("Test-Re3DBatchLogonRight", install)
+        self.assertNotIn("Test-Re3DBatchLogonRight", install)
         self.assertIn("$definition.Principal.LogonType = 2", install)
         self.assertIn("$definition.Principal.RunLevel = 0", install)
         self.assertIn("$definition.Settings.MultipleInstances = 2", install)
@@ -456,6 +456,9 @@ class RestrictedDeploymentAssetTests(unittest.TestCase):
         install = (
             restricted / "install-restricted-scheduled-task.ps1"
         ).read_text(encoding="utf-8")
+
+        self.assertIn('"batch-logon-right-common.ps1"', provision)
+        self.assertIn('"batch-logon-right-common.ps1"', deprovision)
 
         # The helper changes one named right through LSA. It must never import a
         # complete local-security-policy template or request removal of all rights.
@@ -549,16 +552,9 @@ class RestrictedDeploymentAssetTests(unittest.TestCase):
         self.assertIn("Managed SeBatchLogonRight remained", deprovision)
         self.assertIn('"was retained for recovery."', deprovision)
 
-        # Task installation fails before scheduler registration if policy drift
-        # removes the required right.
-        self.assertLess(
-            install.index("Test-Re3DBatchLogonRight"),
-            install.index("$folder.RegisterTaskDefinition"),
-        )
-        self.assertIn(
-            "Run provision-restricted-task-folder.ps1 as Administrator",
-            install,
-        )
+        # Non-administrator lifecycle commands do not enumerate LSA policy.
+        # Windows validates the S4U right during task registration itself.
+        self.assertNotIn("Test-Re3DBatchLogonRight", install)
 
 
 if __name__ == "__main__":

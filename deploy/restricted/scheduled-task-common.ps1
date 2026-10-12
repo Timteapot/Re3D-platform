@@ -1,5 +1,4 @@
 . (Join-Path $PSScriptRoot "common.ps1")
-. (Join-Path $PSScriptRoot "batch-logon-right-common.ps1")
 
 function Get-Re3DRestrictedScheduledTaskContext {
     $projectRoot = Get-Re3DRestrictedProjectRoot

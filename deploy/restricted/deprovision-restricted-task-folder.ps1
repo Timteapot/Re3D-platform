@@ -4,6 +4,7 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "scheduled-task-common.ps1")
+. (Join-Path $PSScriptRoot "batch-logon-right-common.ps1")
 
 Assert-Re3DRestrictedTaskAdministrator
 $mutex = Enter-Re3DRestrictedProvisioningMutex
