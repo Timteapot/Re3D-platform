@@ -425,6 +425,11 @@ class RestrictedDeploymentAssetTests(unittest.TestCase):
         self.assertIn("$rootFolder.DeleteFolder", deprovision)
         self.assertNotIn("exit 0", mailpit_start)
         self.assertNotIn("exit 0", mailpit_stop)
+        self.assertIn("Stop-Process -Id $savedPid -Force", mailpit_stop)
+        self.assertLess(
+            mailpit_stop.index("Stop-Process -Id $savedPid\n"),
+            mailpit_stop.index("Stop-Process -Id $savedPid -Force"),
+        )
 
 
 if __name__ == "__main__":

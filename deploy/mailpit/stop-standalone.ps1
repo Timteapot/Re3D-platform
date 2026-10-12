@@ -52,7 +52,11 @@ if ((Get-CanonicalPath -Path $processPath) -ne (Get-CanonicalPath -Path $Executa
 Stop-Process -Id $savedPid
 Wait-Process -Id $savedPid -Timeout 10 -ErrorAction SilentlyContinue
 if (Get-Process -Id $savedPid -ErrorAction SilentlyContinue) {
-    throw "Mailpit process $savedPid did not stop within 10 seconds."
+    Stop-Process -Id $savedPid -Force
+    Wait-Process -Id $savedPid -Timeout 5 -ErrorAction SilentlyContinue
+}
+if (Get-Process -Id $savedPid -ErrorAction SilentlyContinue) {
+    throw "Mailpit process $savedPid did not stop after a verified forced termination."
 }
 Remove-Item -LiteralPath $pidPath
 
