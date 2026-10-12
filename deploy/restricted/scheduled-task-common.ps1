@@ -1,4 +1,5 @@
 . (Join-Path $PSScriptRoot "common.ps1")
+. (Join-Path $PSScriptRoot "batch-logon-right-common.ps1")
 
 function Get-Re3DRestrictedScheduledTaskContext {
     $projectRoot = Get-Re3DRestrictedProjectRoot
@@ -46,6 +47,24 @@ function Get-Re3DRestrictedAccountSid {
     } catch {
         throw "Could not resolve scheduled-task account '$AccountName' to a Windows SID."
     }
+}
+
+function Get-Re3DRestrictedTaskLocalUser {
+    param([Parameter(Mandatory = $true)]$Context)
+
+    $localUser = Get-LocalUser -Name "re3d-deploy" -ErrorAction Stop
+    $expectedSid = Get-Re3DRestrictedAccountSid `
+        -AccountName $Context.run_as_user
+    if ($localUser.SID.Value -cne $expectedSid) {
+        throw (
+            "Local re3d-deploy SID does not match the fixed scheduled-task " +
+            "identity. Refusing an account-name or SID drift."
+        )
+    }
+    if (-not $localUser.Enabled) {
+        throw "The fixed local scheduled-task account 're3d-deploy' is disabled."
+    }
+    return $localUser
 }
 
 function Assert-Re3DRestrictedTaskOwnerIdentity {

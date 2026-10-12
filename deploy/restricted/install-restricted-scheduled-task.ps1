@@ -14,9 +14,12 @@ $webEntry = Join-Path $context.project_root "apps\web\dist\index.html"
 if (-not (Test-Path -LiteralPath $webEntry -PathType Leaf)) {
     throw "Restricted frontend output is missing. Build it before task installation."
 }
-$localUser = Get-LocalUser -Name "re3d-deploy" -ErrorAction Stop
-if (-not $localUser.Enabled) {
-    throw "The fixed local scheduled-task account 're3d-deploy' is disabled."
+$localUser = Get-Re3DRestrictedTaskLocalUser -Context $context
+if (-not (Test-Re3DBatchLogonRight -AccountName $context.run_as_user)) {
+    throw (
+        "The fixed re3d-deploy account lacks SeBatchLogonRight. " +
+        "Run provision-restricted-task-folder.ps1 as Administrator first."
+    )
 }
 
 $service = New-Re3DTaskSchedulerService

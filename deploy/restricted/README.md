@@ -114,8 +114,23 @@ is suitable for a local PowerShell session:
 Processes created by a non-interactive Windows SSH session are tied to that
 session and must not be treated as a durable deployment. For an SSH-managed
 server, first provision a dedicated Task Scheduler folder from an elevated
-Administrator PowerShell. Its protected ACL grants access only to SYSTEM,
-Administrators and the exact local `re3d-deploy` account:
+Administrator PowerShell. The provisioner performs two narrowly scoped
+operations:
+
+- it creates or validates a protected scheduler-folder ACL that grants access
+  only to SYSTEM, Administrators and the exact local `re3d-deploy` account;
+- it grants that account `SeBatchLogonRight` (log on as a batch job), which is
+  required for the task's S4U logon. This is a user right, not membership in
+  Administrators, and the script refuses to proceed if the account is an
+  Administrator or if `SeDenyBatchLogonRight` has any effective assignment.
+
+The right is changed directly with the Windows LSA API; the provisioner does
+not import or replace the machine's security-policy template. If the right was
+already present, it is treated as externally managed. If it was absent, the
+script writes a protected SYSTEM/Administrators-only ownership marker under
+`HKLM\SOFTWARE\Re3D\RestrictedDeployment` before adding exactly that one right,
+then records completion only after the folder is validated. A repeated run can
+recover the intermediate marker after an interrupted attempt:
 
 ```powershell
 & .\deploy\restricted\provision-restricted-task-folder.ps1
@@ -191,7 +206,10 @@ identity can stop and delete only `\Re3D\RestrictedStack` with:
 ```
 
 After the task has been removed, an elevated Administrator can optionally remove
-the empty, ACL-validated scheduler folder:
+the empty, ACL-validated scheduler folder. The same command removes
+`SeBatchLogonRight` only when the protected marker proves that this provisioner
+added it; a pre-existing or externally managed grant is retained. If revocation
+fails, the marker is deliberately retained so a later run can recover:
 
 ```powershell
 & .\deploy\restricted\deprovision-restricted-task-folder.ps1
@@ -199,6 +217,11 @@ the empty, ACL-validated scheduler folder:
 
 The delegated folder lets `re3d-deploy` create and manage tasks that run only as
 itself; it does not permit passwordless registration as SYSTEM or another user.
+The batch-logon right likewise does not grant interactive logon, administrator
+membership or permission to use remote resources. A local/domain policy refresh
+can still remove the allow right or introduce a deny assignment; task
+installation then fails closed and an Administrator must review the effective
+policy rather than bypassing it.
 The current scripts accept only the fixed `RestrictedStack` task definition and
 refuse definition or ACL drift during normal operation. The explicit recovery
 switch still requires the exact `re3d-deploy` identity and a valid protected

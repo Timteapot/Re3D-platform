@@ -349,6 +349,9 @@ class RestrictedDeploymentAssetTests(unittest.TestCase):
         deprovision = (
             restricted / "deprovision-restricted-task-folder.ps1"
         ).read_text(encoding="utf-8")
+        batch_logon = (
+            restricted / "batch-logon-right-common.ps1"
+        ).read_text(encoding="utf-8")
         stack_start = (restricted / "start-restricted-stack.ps1").read_text(
             encoding="utf-8"
         )
@@ -377,9 +380,12 @@ class RestrictedDeploymentAssetTests(unittest.TestCase):
         self.assertIn("DiscretionaryAclProtected", common)
         self.assertIn('"S-1-5-18"', common)
         self.assertIn('"S-1-5-32-544"', common)
+        self.assertIn('"batch-logon-right-common.ps1"', common)
 
         self.assertIn("Assert-Re3DRestrictedTaskOwnerIdentity", install)
-        self.assertIn('Get-LocalUser -Name "re3d-deploy"', install)
+        self.assertIn('Get-LocalUser -Name "re3d-deploy"', common)
+        self.assertIn("Get-Re3DRestrictedTaskLocalUser", install)
+        self.assertIn("Test-Re3DBatchLogonRight", install)
         self.assertIn("$definition.Principal.LogonType = 2", install)
         self.assertIn("$definition.Principal.RunLevel = 0", install)
         self.assertIn("$definition.Settings.MultipleInstances = 2", install)
@@ -423,12 +429,135 @@ class RestrictedDeploymentAssetTests(unittest.TestCase):
         self.assertIn("$folder.GetTasks(1).Count", deprovision)
         self.assertIn("$folder.GetFolders(0).Count", deprovision)
         self.assertIn("$rootFolder.DeleteFolder", deprovision)
+        self.assertIn(
+            'private const string RightName = "SeBatchLogonRight"',
+            batch_logon,
+        )
         self.assertNotIn("exit 0", mailpit_start)
         self.assertNotIn("exit 0", mailpit_stop)
         self.assertIn("Stop-Process -Id $savedPid -Force", mailpit_stop)
         self.assertLess(
             mailpit_stop.index("Stop-Process -Id $savedPid\n"),
             mailpit_stop.index("Stop-Process -Id $savedPid -Force"),
+        )
+
+
+    def test_restricted_task_batch_logon_right_is_precise_and_owned(self) -> None:
+        restricted = ROOT / "deploy" / "restricted"
+        batch_logon = (
+            restricted / "batch-logon-right-common.ps1"
+        ).read_text(encoding="utf-8")
+        provision = (
+            restricted / "provision-restricted-task-folder.ps1"
+        ).read_text(encoding="utf-8")
+        deprovision = (
+            restricted / "deprovision-restricted-task-folder.ps1"
+        ).read_text(encoding="utf-8")
+        install = (
+            restricted / "install-restricted-scheduled-task.ps1"
+        ).read_text(encoding="utf-8")
+
+        # The helper changes one named right through LSA. It must never import a
+        # complete local-security-policy template or request removal of all rights.
+        for api in (
+            "LsaOpenPolicy",
+            "LsaEnumerateAccountRights",
+            "LsaAddAccountRights",
+            "LsaRemoveAccountRights",
+            "LsaNtStatusToWinError",
+        ):
+            self.assertIn(api, batch_logon)
+        self.assertIn(
+            'private const string RightName = "SeBatchLogonRight"',
+            batch_logon,
+        )
+        self.assertIn("PolicyCreateAccount = 0x00000010", batch_logon)
+        self.assertIn("PolicyLookupNames = 0x00000800", batch_logon)
+        self.assertIn("byte allRights", batch_logon)
+        self.assertRegex(
+            batch_logon,
+            r"(?s)LsaRemoveAccountRights\(\s*"
+            r"policy,\s*nativeSid\.Pointer,\s*0,\s*ref right,\s*1\s*\)",
+        )
+        self.assertNotIn("/configure", batch_logon.lower())
+        self.assertIn("/export `", batch_logon)
+        self.assertIn("/mergedpolicy `", batch_logon)
+        self.assertIn("/areas USER_RIGHTS `", batch_logon)
+
+        # Ownership state lives in a protected 64-bit HKLM value. The runtime
+        # account cannot forge the marker used to authorize later revocation.
+        self.assertIn("RegistryView]::Registry64", batch_logon)
+        self.assertIn(
+            'sub_key = "SOFTWARE\\Re3D\\RestrictedDeployment"',
+            batch_logon,
+        )
+        self.assertIn(
+            'value_name = "RestrictedTaskBatchLogonRightV1"',
+            batch_logon,
+        )
+        self.assertIn("SetAccessRuleProtection($true, $false)", batch_logon)
+        self.assertIn("$security.SetOwner($ownerSid)", batch_logon)
+        self.assertIn("$security.GetOwner(", batch_logon)
+        self.assertIn('"S-1-5-18"', batch_logon)
+        self.assertIn('"S-1-5-32-544"', batch_logon)
+        self.assertIn('[ValidateSet("pending-add", "owned")]', batch_logon)
+        self.assertIn(
+            '"Global\\Re3DRestrictedTaskProvisioningV1"',
+            batch_logon,
+        )
+
+        # Provisioning records pending ownership before it grants the right,
+        # promotes that marker only after successful folder validation, and can
+        # roll both changes back after a partial failure.
+        deny_index = provision.index(
+            "Assert-Re3DNoBatchLogonDenyAssignments"
+        )
+        pending_index = provision.index('-State "pending-add"')
+        add_index = provision.index("Add-Re3DBatchLogonRight")
+        owned_index = provision.index('-State "owned"')
+        self.assertLess(deny_index, pending_index)
+        self.assertLess(pending_index, add_index)
+        self.assertLess(add_index, owned_index)
+        self.assertIn('$initialMarker.state -ceq "pending-add"', provision)
+        self.assertIn("$rightAddedThisRun", provision)
+        self.assertIn(
+            "$rollbackRight = $pendingOwnership -or $rightAddedThisRun",
+            provision,
+        )
+        self.assertIn("Remove-Re3DBatchLogonRight", provision)
+        self.assertIn("Remove-Re3DRestrictedBatchLogonMarker", provision)
+        self.assertIn('"pre-existing"', provision)
+
+        # Deprovisioning revokes only when the protected ownership marker is
+        # present. An unmarked/pre-existing grant is explicitly retained, even
+        # when the scheduler folder was already absent.
+        marker_branch = deprovision.index("if ($null -ne $marker)")
+        remove_right = deprovision.index("Remove-Re3DBatchLogonRight")
+        folder_absent = deprovision.index(
+            "Restricted Task Scheduler folder is not provisioned."
+        )
+        self.assertLess(folder_absent, marker_branch)
+        self.assertLess(marker_branch, remove_right)
+        self.assertIn(
+            "Remove-Re3DRestrictedBatchLogonMarker",
+            deprovision,
+        )
+        self.assertIn(
+            "Pre-existing SeBatchLogonRight retained.",
+            deprovision,
+        )
+        self.assertIn("Managed SeBatchLogonRight remained", deprovision)
+        self.assertIn('"was retained for recovery."', deprovision)
+
+        # Task installation fails before scheduler registration if policy drift
+        # removes the required right.
+        self.assertLess(
+            install.index("Test-Re3DBatchLogonRight"),
+            install.index("$folder.RegisterTaskDefinition"),
+        )
+        self.assertIn(
+            "Run provision-restricted-task-folder.ps1 as Administrator",
+            install,
         )
 
 
