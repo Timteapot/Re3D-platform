@@ -77,8 +77,100 @@ class RestrictedDeploymentAssetTests(unittest.TestCase):
         self.assertIn('"initialize-restricted-env.ps1"', initializer)
         self.assertIn('"check-restricted-readiness.ps1"', initializer)
         self.assertIn("[Security.SecureString]$AdminPassword", initializer)
+        self.assertIn("AppendChar($character)", initializer)
+        self.assertIn("MakeReadOnly()", initializer)
+        self.assertNotIn("ConvertTo-SecureString", initializer)
         self.assertIn("exit 1", initializer)
         self.assertNotIn("D:\\3Dreconstruction", initializer)
+
+    def test_postgres_admin_recovery_is_scoped_and_fail_safe(self) -> None:
+        recover = (
+            ROOT / "deploy/postgres/recover-admin-password.ps1"
+        ).read_text(encoding="utf-8")
+        restore = (
+            ROOT / "deploy/postgres/restore-pg-hba.ps1"
+        ).read_text(encoding="utf-8")
+        consumer = (
+            ROOT
+            / "deploy/restricted/initialize-server-from-recovery-envelope.ps1"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "host postgres postgres 127.0.0.1/32 trust",
+            recover,
+        )
+        for forbidden_rule in (
+            "host all all 0.0.0.0/0",
+            "host all all ::/0",
+            "host all all 127.0.0.1/32 trust",
+        ):
+            self.assertNotIn(forbidden_rule, recover)
+        self.assertNotIn("ALTER ROLE", recover)
+        self.assertIn('"\\password postgres"', recover)
+        self.assertIn("RedirectStandardInput = $true", recover)
+        self.assertIn("WaitForExit(30000)", recover)
+        self.assertIn('EnvironmentVariables["PGPASSFILE"]', recover)
+        self.assertIn('Invoke-Re3DPsqlScalar -Sql "SHOW hba_file;"', recover)
+        self.assertIn("pg_hba_file_rules", recover)
+        self.assertIn("[IO.File]::Replace", recover)
+        self.assertIn("Register-Re3DHbaRollback", recover)
+        self.assertIn(
+            '$restoreScript = Join-Path $runDirectory "restore-pg-hba.ps1"',
+            recover,
+        )
+        self.assertIn("restore_script_sha256", recover)
+        self.assertIn("-RestoreScript $restoreScript", recover)
+        self.assertNotIn("-RestoreScript $restoreScriptSource", recover)
+        self.assertNotIn("common.ps1", recover)
+        protected_copy_index = recover.index("-Path $restoreScript `")
+        rollback_registration_index = recover.rindex("Register-Re3DHbaRollback `")
+        self.assertLess(protected_copy_index, rollback_registration_index)
+        self.assertIn("New-ScheduledTaskPrincipal", recover)
+        self.assertIn('-UserId "SYSTEM"', recover)
+        self.assertIn("-StartWhenAvailable", recover)
+        self.assertIn("-RestartCount 3", recover)
+        self.assertIn("postmaster.pid", recover)
+        self.assertIn("original_sddl", recover)
+        self.assertIn("backup_sha256", recover)
+
+        self.assertIn("[IO.File]::Replace", restore)
+        self.assertIn("Get-Re3DSha256", restore)
+        self.assertIn("Assert-Re3DAdminOnlyAcl", restore)
+        self.assertIn("restore_script_sha256", restore)
+        self.assertIn("Protected rollback-helper hash", restore)
+        self.assertNotIn("common.ps1", restore)
+        self.assertIn("Restart-Service -Name $serviceName", restore)
+        self.assertIn("Unregister-ScheduledTask", restore)
+        self.assertIn("[switch]$RequireRollbackTaskRemoval", restore)
+        self.assertIn("-RequireRollbackTaskRemoval", recover)
+        self.assertIn("POSTGRESQL_HBA_RESTORED", restore)
+
+        for content in (recover, consumer):
+            self.assertIn("Add-Type -AssemblyName System.Security", content)
+            self.assertIn("ProtectedData", content)
+            self.assertIn("DataProtectionScope]::LocalMachine", content)
+            self.assertNotIn("RandomNumberGenerator]::Fill", content)
+            self.assertNotIn("Convert]::ToHexString", content)
+            self.assertNotIn("ArgumentList", content)
+            self.assertNotIn("ConvertTo-SecureString", content)
+            self.assertNotIn("Get-Acl", content)
+            self.assertNotIn("Set-Acl", content)
+
+        self.assertIn("ProtectedData]::Unprotect", consumer)
+        self.assertIn("target_sid", consumer)
+        self.assertIn("machine_name", consumer)
+        self.assertIn("expires_at_utc", consumer)
+        self.assertIn("database_host", consumer)
+        self.assertIn('admin_role -cne "postgres"', consumer)
+        self.assertIn("AppendChar($character)", consumer)
+        self.assertIn("MakeReadOnly()", consumer)
+        self.assertIn("[IO.File]::Delete($resolvedEnvelope)", consumer)
+        delete_index = consumer.index("[IO.File]::Delete($resolvedEnvelope)")
+        initialize_index = consumer.index("& $initializer")
+        self.assertLess(delete_index, initialize_index)
+        self.assertIn("-AdminPassword $securePassword", consumer)
+        self.assertIn("$initializerExitCode = $LASTEXITCODE", consumer)
+        self.assertIn("exit $initializerExitCode", consumer)
 
     def test_restricted_environment_files_receive_protected_acls(self) -> None:
         common = (ROOT / "deploy/restricted/common.ps1").read_text(encoding="utf-8")

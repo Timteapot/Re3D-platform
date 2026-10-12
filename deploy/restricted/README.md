@@ -36,6 +36,30 @@ runs the complete readiness check:
 & .\deploy\restricted\initialize-server-restricted.ps1
 ```
 
+If the server's original `postgres` password is unknown, do not put a guessed
+password in a script or environment file. Run the elevated, rollback-protected
+recovery entry point through the cloud provider's SYSTEM/administrator command
+channel, then consume its short-lived DPAPI envelope as `re3d-deploy`:
+
+```powershell
+# Elevated cloud-assistant command
+powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File D:\Re3D-platform\deploy\postgres\recover-admin-password.ps1
+
+# SSH session running as re3d-deploy
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File D:\Re3D-platform\deploy\restricted\initialize-server-from-recovery-envelope.ps1 -EnvelopePath D:\Re3D-data\_recovery\credentials\postgres-admin-password.dpapi
+```
+
+The recovery entry point takes a byte-identical HBA backup, freezes a
+self-contained rollback helper in an administrator-only run directory, and
+installs a SYSTEM watchdog that executes only that hash-checked snapshot before
+opening one exact loopback rule. It changes the password with `psql`'s
+`\password` command, restores the original HBA and verifies the result before
+creating the envelope. The consumer validates its protected ACL,
+machine, Windows SID, database endpoint, role and expiry, then deletes it before
+database initialization. It never persists the administrator password in the
+restricted environment. Detailed failure and recovery behavior is documented in
+[`deploy/postgres/README.md`](../postgres/README.md).
+
 The initializer refuses to run when either restricted environment file already
 exists, so retrying cannot silently rotate the database password away from the
 saved runtime configuration. For manual recovery or component-by-component

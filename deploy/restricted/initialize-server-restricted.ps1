@@ -75,6 +75,22 @@ function New-Re3DGeneratedPassword {
     }
 }
 
+function ConvertTo-Re3DReadOnlySecureString {
+    param([Parameter(Mandatory = $true)][string]$Value)
+
+    $secureValue = New-Object Security.SecureString
+    $characters = $Value.ToCharArray()
+    try {
+        foreach ($character in $characters) {
+            $secureValue.AppendChar($character)
+        }
+        $secureValue.MakeReadOnly()
+        return $secureValue
+    } finally {
+        [Array]::Clear($characters, 0, $characters.Length)
+    }
+}
+
 $administratorPassword = $null
 $candidatePassword = $null
 $migratorPassword = $null
@@ -134,14 +150,10 @@ try {
 
     $plainMigratorPassword = New-Re3DGeneratedPassword
     $plainRuntimePassword = New-Re3DGeneratedPassword
-    $migratorPassword = ConvertTo-SecureString `
-        $plainMigratorPassword `
-        -AsPlainText `
-        -Force
-    $runtimePassword = ConvertTo-SecureString `
-        $plainRuntimePassword `
-        -AsPlainText `
-        -Force
+    $migratorPassword = ConvertTo-Re3DReadOnlySecureString `
+        -Value $plainMigratorPassword
+    $runtimePassword = ConvertTo-Re3DReadOnlySecureString `
+        -Value $plainRuntimePassword
 
     & (Join-Path $postgresRoot "bootstrap-restricted.ps1") `
         -DatabaseHost $DatabaseHost `

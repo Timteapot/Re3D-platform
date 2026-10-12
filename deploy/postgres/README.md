@@ -108,6 +108,54 @@ DATABASE_URL=postgresql+psycopg://re3d_runtime:<URL编码后的密码>@127.0.0.1
 
 两次操作都通过安全输入读取密码；迁移密码不会写入配置。API/Worker 配置仅保存受限运行角色密码。完整顺序见 [`deploy/restricted/README.md`](../restricted/README.md)。
 
+### 忘记服务器 `postgres` 密码时的受控恢复
+
+仓库、受限环境文件和初始化日志都不会保存 PostgreSQL `postgres`
+管理员密码，因此不能从项目数据中找回原密码。确认密码确实不可用后，可在服务器的
+阿里云云助手中以 SYSTEM/管理员权限运行：
+
+```powershell
+powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File D:\Re3D-platform\deploy\postgres\recover-admin-password.ps1
+```
+
+恢复脚本会执行以下受限流程：
+
+1. 精确匹配正在运行的 PostgreSQL Windows 服务、其 `-D` 数据目录、同目录
+   `psql.exe` 和 `postmaster.pid` 中的 5432 端口；
+2. 在 `D:\Re3D-data\_recovery\postgresql` 中保存 `pg_hba.conf` 的原始字节、
+   SHA-256 与 owner/group/DACL，并将备份目录限制为 SYSTEM 和 Administrators；
+3. 先把自包含回滚助手冻结到本次仅管理员可写的恢复目录并校验哈希，再注册只执行
+   该快照的 SYSTEM 回滚计划任务，然后原子插入唯一的
+   `host postgres postgres 127.0.0.1/32 trust` 临时规则；
+4. 确认 PostgreSQL 实际读取的是目标 HBA 且规则无解析错误，通过 `psql` 的
+   `\password postgres` 安全元命令设置随机密码；
+5. 无论成功还是异常都从备份原子恢复 HBA 并重启服务；成功路径还会在原始 HBA
+   下验证新密码和备份哈希。
+
+若恢复进程被终止，默认 5 分钟后启动的 SYSTEM 回滚任务会恢复原 HBA，并配置了
+失败重试。脚本只保留审计/恢复所需的 HBA 备份，不输出或向磁盘写入明文密码。
+新密码只在全部恢复验证完成后写成 LocalMachine DPAPI 加密的一次性信封：
+
+```text
+D:\Re3D-data\_recovery\credentials\postgres-admin-password.dpapi
+```
+
+信封具有 4 小时有效期，并绑定本机名、`re3d-deploy` 的 Windows SID、
+127.0.0.1:5432 和 `postgres` 角色。DPAPI LocalMachine 的保密边界仍包含本机管理员，
+因此文件和父目录同时使用仅 `re3d-deploy`、SYSTEM、Administrators 可访问的无继承
+ACL。
+
+随后通过 SSH 以 `re3d-deploy` 运行一次性消费入口：
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File D:\Re3D-platform\deploy\restricted\initialize-server-from-recovery-envelope.ps1 -EnvelopePath D:\Re3D-data\_recovery\credentials\postgres-admin-password.dpapi
+```
+
+该入口会再次校验路径、ACL、SID、机器、数据库端点、角色和有效期，逐字符构造
+只读 `SecureString`，在任何建库操作前删除信封，并调用统一受限部署初始化器。若信封
+已消费后初始化失败，或信封过期，不应长期保存/复用该凭据；排除失败原因后重新运行
+受控恢复生成新信封。恢复脚本拒绝覆盖已有信封，以避免把未处理状态静默覆盖。
+
 ### 备份与恢复演练
 
 备份目标必须在源码仓库之外，而且脚本拒绝覆盖已有文件：
