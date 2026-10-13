@@ -162,6 +162,7 @@ export default function GlbViewer({
     () => selectGlbPreviewBranches(branches),
     [branches],
   );
+  const previewAvailable = previewBranches.length > 0;
   const [selectedName, setSelectedName] = useState("");
   const [viewerState, setViewerState] = useState<ViewerState>(initialViewerState);
   const [modelRotation, setModelRotation] = useState<ModelRotationDegrees>({
@@ -177,6 +178,8 @@ export default function GlbViewer({
   }, [previewBranches, selectedName]);
 
   useEffect(() => {
+    if (!previewAvailable) return;
+
     const container = containerRef.current;
     if (!container) return;
 
@@ -266,9 +269,9 @@ export default function GlbViewer({
       renderer.dispose();
       renderer.forceContextLoss();
       renderer.domElement.remove();
-      runtimeRef.current = null;
+      if (runtimeRef.current === runtime) runtimeRef.current = null;
     };
-  }, []);
+  }, [previewAvailable]);
 
   useEffect(() => {
     const runtime = runtimeRef.current;
@@ -362,7 +365,7 @@ export default function GlbViewer({
     };
   }, [executionMode, fetchAuthorized, selectedBranch]);
 
-  if (previewBranches.length === 0) {
+  if (!previewAvailable) {
     return <p className="empty-state">结果中没有可通过鉴权接口读取的 GLB 产物。</p>;
   }
 
