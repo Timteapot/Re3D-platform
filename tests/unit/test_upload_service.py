@@ -80,6 +80,64 @@ class UploadServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "max <= 300"):
             UploadSettings(max_images=301)
 
+    def test_job_timeout_configuration_respects_request_contract_bounds(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(UploadSettings.from_environment().job_timeout_seconds, 3600)
+        with patch.dict(
+            "os.environ", {"RE3D_JOB_TIMEOUT_SECONDS": "14400"}, clear=True
+        ):
+            self.assertEqual(UploadSettings.from_environment().job_timeout_seconds, 14400)
+        for value in (60, 604800):
+            with self.subTest(valid_timeout=value):
+                self.assertEqual(UploadSettings(job_timeout_seconds=value).job_timeout_seconds, value)
+        for value in (59, 604801, True, 3600.5):
+            with self.subTest(invalid_timeout=value):
+                with self.assertRaisesRegex(ValueError, "RE3D_JOB_TIMEOUT_SECONDS"):
+                    UploadSettings(job_timeout_seconds=value)
+        for value in ("not-an-integer", "", "59", "604801"):
+            with self.subTest(invalid_environment_timeout=value):
+                with patch.dict(
+                    "os.environ", {"RE3D_JOB_TIMEOUT_SECONDS": value}, clear=True
+                ):
+                    with self.assertRaisesRegex(ValueError, "RE3D_JOB_TIMEOUT_SECONDS"):
+                        UploadSettings.from_environment()
+
+    def test_real_submission_freezes_configured_timeout_across_reconfiguration(self) -> None:
+        with patch.dict(
+            "os.environ", {"RE3D_JOB_TIMEOUT_SECONDS": "14400"}, clear=True
+        ):
+            service = UploadService(
+                self.sessions,
+                self.queue,
+                data_root=self.data_root,
+                settings=UploadSettings.from_environment(),
+            )
+        upload = self._prepare_upload(service, "direct-300-timeout-freeze")
+        job = service.submit(
+            upload_id=upload["upload_id"],
+            user_id=self.user_id,
+            execution_mode="real",
+        )
+        request_path = (
+            self.data_root / "jobs" / str(upload["upload_id"])
+            / "manifests" / "pipeline-request.json"
+        )
+        original_request = request_path.read_bytes()
+        request = json.loads(original_request)
+        self.assertEqual(request["limits"]["timeout_seconds"], 14400)
+        self.assertEqual(request["execution_mode"], "real")
+
+        # An already-submitted input is immutable, even if the API process is
+        # restarted using the legacy one-hour default.
+        self.assertEqual(self.service.settings.job_timeout_seconds, 3600)
+        repeated = self.service.submit(
+            upload_id=upload["upload_id"],
+            user_id=self.user_id,
+            execution_mode="real",
+        )
+        self.assertEqual(repeated["id"], job["id"])
+        self.assertEqual(request_path.read_bytes(), original_request)
+
     def test_idempotent_creation_duplicate_and_size_limit(self) -> None:
         upload, reused = self.service.create(
             user_id=self.user_id,

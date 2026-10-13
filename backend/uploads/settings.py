@@ -14,6 +14,7 @@ class UploadSettings:
     stale_after_hours: int = 24
     cleanup_batch_size: int = 100
     min_free_disk_bytes: int = 0
+    job_timeout_seconds: int = 3600
 
     def __post_init__(self) -> None:
         if not 3 <= self.min_images <= self.max_images <= 300:
@@ -29,6 +30,14 @@ class UploadSettings:
         if self.min_free_disk_bytes != 0 and self.min_free_disk_bytes < 1024**3:
             raise ValueError(
                 "RE3D_MIN_FREE_DISK_BYTES must be zero or at least 1 GiB"
+            )
+        if (
+            not isinstance(self.job_timeout_seconds, int)
+            or isinstance(self.job_timeout_seconds, bool)
+            or not 60 <= self.job_timeout_seconds <= 604800
+        ):
+            raise ValueError(
+                "RE3D_JOB_TIMEOUT_SECONDS must be an integer between 60 and 604800"
             )
 
     @classmethod
@@ -46,6 +55,7 @@ class UploadSettings:
             stale_after_hours=_read_int("UPLOAD_STALE_AFTER_HOURS", 24),
             cleanup_batch_size=_read_int("UPLOAD_CLEANUP_BATCH_SIZE", 100),
             min_free_disk_bytes=_read_int("RE3D_MIN_FREE_DISK_BYTES", 0),
+            job_timeout_seconds=_read_int("RE3D_JOB_TIMEOUT_SECONDS", 3600),
         )
 
 

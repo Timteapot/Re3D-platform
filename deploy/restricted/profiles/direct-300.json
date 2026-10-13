@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "name": "direct-300",
+  "description": "One controlled 300-image experiment with a four-hour execution budget.",
+  "api": {
+    "RE3D_EXECUTION_PROFILE": "gpu-large-300",
+    "RE3D_USER_MAX_PENDING_JOBS": "1",
+    "RE3D_USER_STORAGE_QUOTA_BYTES": "137438953472",
+    "RE3D_JOB_STORAGE_RESERVATION_BYTES": "68719476736",
+    "RE3D_MIN_FREE_DISK_BYTES": "80530636800",
+    "RE3D_JOB_TIMEOUT_SECONDS": "14400",
+    "UPLOAD_MAX_FILE_BYTES": "26214400",
+    "UPLOAD_MAX_TOTAL_BYTES": "1073741824"
+  },
+  "worker": {
+    "RE3D_EXECUTION_PROFILE": "gpu-large-300",
+    "RE3D_JOB_STORAGE_RESERVATION_BYTES": "68719476736",
+    "RE3D_MIN_FREE_DISK_BYTES": "80530636800",
+    "RE3D_RESOURCE_MONITOR_ENABLED": "true",
+    "RE3D_RESOURCE_SAMPLE_INTERVAL_SECONDS": "5",
+    "RE3D_TASK_STORAGE_SAMPLE_INTERVAL_SECONDS": "15"
+  }
+}

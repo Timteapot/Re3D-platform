@@ -1,6 +1,8 @@
 # Environment and secrets
 .env
 .env.*
+# Protected copies created before operational profile changes contain secrets.
+.restricted-profile-backups/
 !.env.example
 !.env.production.example
 !.env.worker.production.example

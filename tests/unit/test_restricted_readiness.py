@@ -48,6 +48,7 @@ class RestrictedReadinessTests(unittest.TestCase):
     def test_api_check_accepts_only_explicit_loopback_dependencies(self) -> None:
         secret = "restricted-secret-that-must-never-be-returned"
         environment = restricted_api_environment(secret=secret)
+        environment["RE3D_JOB_TIMEOUT_SECONDS"] = "14400"
         with (
             patch.dict(os.environ, environment, clear=True),
             patch(
@@ -81,6 +82,7 @@ class RestrictedReadinessTests(unittest.TestCase):
         serialized = json.dumps(report)
         self.assertEqual(report["network_scope"], "loopback-only")
         self.assertFalse(report["authentication"]["cookie_secure"])
+        self.assertEqual(report["uploads"]["job_timeout_seconds"], 14400)
         self.assertNotIn("re3d", report)
         self.assertNotIn(secret, serialized)
         self.assertNotIn("database-secret", serialized)

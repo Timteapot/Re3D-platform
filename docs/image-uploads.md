@@ -64,6 +64,7 @@ UPLOAD_STALE_AFTER_HOURS=24
 UPLOAD_CLEANUP_BATCH_SIZE=100
 RE3D_USER_MAX_PENDING_JOBS=3
 RE3D_USER_MAX_SUBMISSIONS_PER_24H=20
+RE3D_JOB_TIMEOUT_SECONDS=3600
 RE3D_USER_STORAGE_QUOTA_BYTES=34359738368
 RE3D_JOB_STORAGE_RESERVATION_BYTES=17179869184
 TRANSFER_WINDOW_SECONDS=3600
@@ -75,6 +76,15 @@ TRANSFER_LEASE_SECONDS=14400
 目标服务器实验性 `gpu-large-300` 将用户配额和任务预留分别提高到
 128 GiB 与 64 GiB，具体值见 [`worker-execution-profiles.md`](worker-execution-profiles.md)。
 服务会拒绝不合理的配置值。反向代理仍需设置请求体大小、请求速率和连接超时；应用层限制不能替代代理层的早期拒绝。
+
+新提交任务的重建执行预算由 API 环境 `RE3D_JOB_TIMEOUT_SECONDS` 决定，默认
+3600 秒，合法范围为 60–604800 秒。直接 300 图实验使用 14400 秒（4 小时）
+作为暂定预算上限，不是预计完成时间。提交时该值写入不可变
+`pipeline-request.json`；已有任务继续使用原请求中的上限，Worker 恢复时仍
+扣除已使用的运行时间。客户端无法通过上传接口自行扩大该预算，API 就绪
+摘要会显示实际生效的 `uploads.job_timeout_seconds`。当前截止时间约束真实
+管线子进程，后续平台产物哈希核验和自动评估还有独立耗时，因此它不是整台
+服务器或完整任务的严格计费时长上限。
 
 图片接口在 multipart 解析后按用户申请 PostgreSQL 共享的上传并发租约，并按文件实际字节从连续补充的令牌桶预扣额度。超限返回 429 和稳定错误码；它保护后续图片校验与落盘阶段，但不能阻止请求体先到达反向代理和 multipart 解析器。完整配置、错误合同和目标服务器验收边界见 [`transfer-limits.md`](transfer-limits.md)。
 

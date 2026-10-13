@@ -246,6 +246,7 @@ def check_production_readiness(
             "max_file_bytes": uploads.max_file_bytes,
             "max_total_bytes": uploads.max_total_bytes,
             "max_pixels": uploads.max_pixels,
+            "job_timeout_seconds": uploads.job_timeout_seconds,
         }
         response["task_submission"] = {
             "max_pending_jobs": task_submission.max_pending_jobs,
@@ -405,6 +406,7 @@ def check_restricted_readiness(
             "max_file_bytes": uploads.max_file_bytes,
             "max_total_bytes": uploads.max_total_bytes,
             "max_pixels": uploads.max_pixels,
+            "job_timeout_seconds": uploads.job_timeout_seconds,
         }
         response["task_submission"] = {
             "max_pending_jobs": task_submission.max_pending_jobs,

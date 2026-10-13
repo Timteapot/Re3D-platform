@@ -4,7 +4,7 @@ Re3D Platform 是基于 Re3D 三维重建管线的非商业学习与工程实践
 
 ## 当前状态
 
-核心功能闭环、首轮本机真实 GPU 验收和 Windows 单机生产拓扑的非公网验收已经完成。鉴于短期不进行公网发布，当前主线采用 Windows 回环受限部署：独立 `restricted` 环境的稳定上传只创建真实任务，并强制 API、浏览器入口、可信代理、SMTP 和 PostgreSQL 保持在回环边界。2026-10-13 已在目标云服务器完成固定到 `a202d77` 的 Mailpit/API/Worker/Caddy 四服务部署基线验收；这不等于真实任务、重启恢复、300 图或公网生产验收。公开发布仍受备案/域名、边缘防护、生产邮件、监控、压力测试和容量实测校准等条件约束。
+核心功能闭环、首轮本机真实 GPU 验收和 Windows 单机生产拓扑的非公网验收已经完成。鉴于短期不进行公网发布，当前主线采用 Windows 回环受限部署：独立 `restricted` 环境的稳定上传只创建真实任务，并强制 API、浏览器入口、可信代理、SMTP 和 PostgreSQL 保持在回环边界。2026-10-13 已完成目标服务器四服务基线验收、服务账户下网页提交的 11 图真实任务，以及 `29eda46` 部署后详情页不刷新时 Three.js 画布和默认模型自动出现的验收。重启恢复、300 图容量和公网生产验收仍待完成。公开发布仍受备案/域名、边缘防护、生产邮件、监控、压力测试和容量实测校准等条件约束。
 
 - Re3D 活动基线标签：`re3d-pipeline-v1.1.3`
 - Re3D 活动基线提交：`e517a161b4c0895f8be4258fb339272e4f99e1d6`
@@ -20,7 +20,7 @@ Re3D Platform 是基于 Re3D 三维重建管线的非商业学习与工程实践
 
 当前已经可以通过 React 页面注册、登录、恢复会话、上传真实 JPEG/PNG 输入并创建任务。development/test 的默认网页提交进入模拟队列并允许显式 real；production 和 restricted 由服务端强制创建 real 任务。独立的真实 Worker 在 PostgreSQL 租约下监督 Re3D 子进程，处理取消、总超时和租约丢失，并汇总三分支产物和结构健康评估。2026-09-25 已使用 11 张真实图片完成本机 GPU 闭环验收；2026-10-08 又完成同规模真实任务的空间采样和容量报告验收；2026-10-10 在目标 Tesla T4 服务器上完成 `v1.1.2` 三分支空目录真实验收；2026-10-12 使用 `v1.1.3` 完成 Lighthouse 150 图三分支断点续跑验收；2026-10-13 完成目标服务器 restricted 四服务部署基线验收。任务详情页现可通过受所有权保护的稳定任务 API 下载清单内 GLB、OBJ、MTL 和纹理，并可在 Three.js 查看器中切换和交互预览三分支 GLB。任务 API 边界见 [`docs/job-api.md`](docs/job-api.md)，上传边界见 [`docs/image-uploads.md`](docs/image-uploads.md)，下载边界见 [`docs/artifact-downloads.md`](docs/artifact-downloads.md)，查看器边界见 [`docs/glb-viewer.md`](docs/glb-viewer.md)，实测证据见 [`docs/real-gpu-acceptance-2026-09-25.md`](docs/real-gpu-acceptance-2026-09-25.md)、[`docs/storage-capacity-acceptance-2026-10-08.md`](docs/storage-capacity-acceptance-2026-10-08.md)、[`docs/target-server-gpu-acceptance-2026-10-10.md`](docs/target-server-gpu-acceptance-2026-10-10.md)、[`docs/large-300-readiness-2026-10-12.md`](docs/large-300-readiness-2026-10-12.md) 和 [`docs/target-server-restricted-acceptance-2026-10-13.md`](docs/target-server-restricted-acceptance-2026-10-13.md)。
 
-持续真实 Worker 会在领取任务前验证执行档、数据盘预留、NVIDIA GPU、PyTorch CUDA 和固定 MapAnything batch size。平台协议和上传链路现允许最多 300 图，并新增实验性 `gpu-large-300` 执行档：64 GiB 任务预留、75 GiB 数据盘安全线和 128 GiB 单用户配额。该执行档尚未通过真实 300 图验收，受限部署继续使用 `baseline`，边界见 [`docs/worker-execution-profiles.md`](docs/worker-execution-profiles.md)。
+持续真实 Worker 会在领取任务前验证执行档、数据盘预留、NVIDIA GPU、PyTorch CUDA 和固定 MapAnything batch size。平台协议和上传链路现允许最多 300 图，实验性 `gpu-large-300` 使用 64 GiB 任务预留、75 GiB 数据盘安全线和 128 GiB 单用户配额。2026-10-13 已在本机准备直接 300 图的独立配置、4 小时可配置执行预算、5/15 秒资源与目录采样，以及经校验的 Lighthouse 300 图输入集。目标服务器尚未应用该配置，日常本机环境继续使用 `baseline`；边界和操作顺序见 [`docs/direct-300-local-readiness-2026-10-13.md`](docs/direct-300-local-readiness-2026-10-13.md)。
 
 ## 仓库边界
 
@@ -98,10 +98,10 @@ Vite 开发服务器只绑定 `127.0.0.1:5173`，并将 `/api` 代理到本机 F
 
 当前按以下顺序推进，不把“代码已实现”“本机可用”和“公网可用”混为一谈：
 
-1. 通过 SSH 回环隧道在目标服务器提交代表性小图片，完成服务账户下的真实 GPU 全链路验收；
-2. 验证任务执行中的服务/主机重启恢复与 development、restricted、production 数据隔离；
-3. 扩容数据盘或明确清理旧结果后，按 200/250/300 图阶梯复测容量并校准暂定预留值；
-4. 未来重新进入公网阶段时，再补齐备案或合规域名、TLS、生产 SMTP、验证码、边缘防护、管理员二次验证与集中监控。
+1. 下次开机先复核实际磁盘和 GPU 条件，轮换到新的干净平台发布和直接 300 图配置，通过安装后验收；
+2. 操作者选择直接尝试一次 Lighthouse 300 图，通过 SSH 回环网页提交并记录资源、耗时、三分支结果和大 GLB 预览；
+3. 归档测试证据，补齐服务器部署封装与数据库恢复演练，通过恢复验证后再决定释放旧实例；本地 UI 优化可在服务器关闭期间进行；
+4. 服务/主机重启恢复仍待验证；未来重新进入公网阶段时，再补齐备案或合规域名、TLS、生产 SMTP、验证码、边缘防护、管理员二次验证与集中监控。
 
 因此当前版本可用于目标服务器部署工程和内部验收，不应直接向公开互联网开放注册与重建。
 

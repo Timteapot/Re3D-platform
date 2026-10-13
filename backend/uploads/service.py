@@ -599,7 +599,7 @@ class UploadService:
                 "manifests_path": "manifests",
             },
             "limits": {
-                "timeout_seconds": 3600,
+                "timeout_seconds": self.settings.job_timeout_seconds,
                 "max_disk_bytes": self.quota.settings.job_reservation_bytes,
                 "gpu_concurrency": 1,
             },
