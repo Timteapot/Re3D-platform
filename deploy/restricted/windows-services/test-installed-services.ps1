@@ -6,6 +6,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    throw "Installed restricted service acceptance requires PowerShell 7."
+}
 . (Join-Path $PSScriptRoot "common.ps1")
 if (-not (Test-Re3DAdministrator)) { throw "Restricted service acceptance requires elevation." }
 $manifest = Assert-Re3DRestrictedServiceBundle -BundleRoot $BundleRoot -CheckExternalBinaryVersions
@@ -105,18 +108,6 @@ function ConvertTo-Re3DUtcDateTime {
         ).UtcDateTime
     }
 }
-function ConvertTo-Re3DUtcEvidenceTime {
-    param([Parameter(Mandatory = $true)][string]$Value)
-    $parsed = [DateTimeOffset]::Parse(
-        $Value,
-        [Globalization.CultureInfo]::InvariantCulture,
-        [Globalization.DateTimeStyles]::RoundtripKind
-    )
-    if ($parsed.Offset -ne [TimeSpan]::Zero) {
-        throw "Worker runtime evidence timestamp is not UTC."
-    }
-    return $parsed.UtcDateTime
-}
 function Get-Re3DWorkerRuntimeRecords {
     param([Parameter(Mandatory = $true)][string]$LogDirectory)
     $records = [Collections.Generic.List[object]]::new()
@@ -124,7 +115,7 @@ function Get-Re3DWorkerRuntimeRecords {
         foreach ($line in @(Get-Content -LiteralPath $file.FullName -Tail 1000 -ErrorAction Stop)) {
             if ([string]::IsNullOrWhiteSpace($line)) { continue }
             try {
-                $record = $line | ConvertFrom-Json -ErrorAction Stop
+                $record = ConvertFrom-Re3DWorkerRuntimeJsonLine -Line $line
                 if ($null -ne $record.operation) { $records.Add($record) }
             } catch {
                 # WinSW diagnostic lines are expected alongside JSON child output.

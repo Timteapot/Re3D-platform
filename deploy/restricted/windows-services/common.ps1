@@ -313,6 +313,77 @@ function Resolve-Re3DWorkerEvidenceMatch {
     return $null
 }
 
+function ConvertFrom-Re3DWorkerRuntimeJsonLine {
+    param([Parameter(Mandatory = $true)][string]$Line)
+
+    if ($PSVersionTable.PSVersion.Major -lt 7) {
+        throw "Worker runtime evidence parsing requires PowerShell 7."
+    }
+    $document = [Text.Json.JsonDocument]::Parse($Line)
+    try {
+        if ($document.RootElement.ValueKind -ne [Text.Json.JsonValueKind]::Object) {
+            throw "Worker runtime evidence must be a JSON object."
+        }
+        $timestampCount = 0
+        $timestampValue = $null
+        foreach ($property in $document.RootElement.EnumerateObject()) {
+            if ($property.Name.Equals(
+                "emitted_at_utc",
+                [StringComparison]::OrdinalIgnoreCase
+            )) {
+                if ($property.Name -cne "emitted_at_utc") {
+                    throw "Worker runtime evidence timestamp key is not canonical."
+                }
+                $timestampCount++
+                if ($timestampCount -gt 1) {
+                    throw "Worker runtime evidence contains duplicate timestamp keys."
+                }
+                if ($property.Value.ValueKind -ne [Text.Json.JsonValueKind]::String) {
+                    throw "Worker runtime evidence timestamp is not a JSON string."
+                }
+                $timestampValue = $property.Value.GetString()
+            }
+        }
+    } finally {
+        $document.Dispose()
+    }
+
+    $record = $Line | ConvertFrom-Json -ErrorAction Stop
+    if ($timestampCount -eq 1) {
+        $record | Add-Member `
+            -NotePropertyName emitted_at_utc `
+            -NotePropertyValue $timestampValue `
+            -Force
+    }
+    return $record
+}
+
+function ConvertTo-Re3DUtcEvidenceTime {
+    param([Parameter(Mandatory = $true)][string]$Value)
+
+    if ($Value -cnotmatch (
+        '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}' +
+        '(?:\.\d{6})?\+00:00$'
+    )) {
+        throw "Worker runtime evidence timestamp is not canonical UTC ISO-8601."
+    }
+    $parsed = [DateTimeOffset]::MinValue
+    $formats = [string[]]@(
+        "yyyy-MM-dd'T'HH:mm:sszzz",
+        "yyyy-MM-dd'T'HH:mm:ss.ffffffzzz"
+    )
+    if (-not [DateTimeOffset]::TryParseExact(
+        $Value,
+        $formats,
+        [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::None,
+        [ref]$parsed
+    )) {
+        throw "Worker runtime evidence timestamp is invalid."
+    }
+    return $parsed.UtcDateTime
+}
+
 function Get-Re3DRestrictedServiceBundleManifest {
     param([Parameter(Mandatory = $true)][string]$BundleRoot)
 

@@ -442,6 +442,20 @@ class RestrictedWindowsServiceAssetTests(unittest.TestCase):
         self.assertIn("CreationDate", installed_test)
         self.assertIn("process_id", installed_test)
         self.assertIn("emitted_at_utc", installed_test)
+        self.assertIn(
+            "ConvertFrom-Re3DWorkerRuntimeJsonLine -Line $line",
+            installed_test,
+        )
+        common = read_script("common.ps1")
+        self.assertIn("function ConvertFrom-Re3DWorkerRuntimeJsonLine", common)
+        self.assertIn("[Text.Json.JsonDocument]::Parse", common)
+        self.assertIn("RootElement.EnumerateObject()", common)
+        self.assertIn('$timestampCount -gt 1', common)
+        self.assertIn('DateTimeOffset]::TryParseExact', common)
+        self.assertIn(
+            "Installed restricted service acceptance requires PowerShell 7",
+            installed_test,
+        )
         self.assertIn('$record.status -ceq "ready"', installed_test)
         self.assertIn('$record.status -ceq "started"', installed_test)
         self.assertIn("[int]$record.process_id -ne $processId", installed_test)
