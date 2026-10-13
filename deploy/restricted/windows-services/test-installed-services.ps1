@@ -137,10 +137,9 @@ function Wait-Re3DListenerOwnership {
     param(
         [Parameter(Mandatory = $true)]$Service,
         [Parameter(Mandatory = $true)][int]$Port,
-        [Parameter(Mandatory = $true)][string]$ExpectedExecutable,
-        [string]$CommandPattern = ""
+        [Parameter(Mandatory = $true)][string[]]$ExpectedExecutables,
+        [string]$CommandArgumentsPattern = ""
     )
-    $expectedPath = [IO.Path]::GetFullPath($ExpectedExecutable)
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     do {
         $instance = Get-CimInstance Win32_Service -Filter "Name = '$($Service.id)'" -ErrorAction SilentlyContinue
@@ -154,9 +153,10 @@ function Wait-Re3DListenerOwnership {
                     $owner = @(
                         $descendants | Where-Object {
                             [int]$_.ProcessId -eq [int]$listener.OwningProcess -and
-                            -not [string]::IsNullOrWhiteSpace("$($_.ExecutablePath)") -and
-                            [IO.Path]::GetFullPath("$($_.ExecutablePath)") -ieq $expectedPath -and
-                            ([string]::IsNullOrWhiteSpace($CommandPattern) -or "$($_.CommandLine)" -match $CommandPattern)
+                            (Test-Re3DProcessImageAndCommand `
+                                -Process $_ `
+                                -AllowedExecutablePaths $ExpectedExecutables `
+                                -CommandArgumentsPattern $CommandArgumentsPattern)
                         }
                     )
                     if (
@@ -184,10 +184,12 @@ function Wait-Re3DListenerOwnership {
 function Wait-Re3DWorkerRuntimeEvidence {
     param([Parameter(Mandatory = $true)]$WorkerService)
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
-    $workerPython = [IO.Path]::GetFullPath($manifest.external.platform_python)
-    $commandPattern = (
-        '(?i)^\s*"?' + [Regex]::Escape($workerPython) +
-        '"?\s+-m\s+apps\.worker\.main\s+run-real-queued-loop(?:\s|$)'
+    $workerPythonImages = @(
+        $manifest.external.platform_python
+        $manifest.external.platform_python_runtime_image
+    ) | Sort-Object -Unique
+    $commandArgumentsPattern = (
+        '-m\s+apps\.worker\.main\s+run-real-queued-loop\s*$'
     )
     do {
         $serviceInstance = Get-CimInstance Win32_Service -Filter "Name = '$($WorkerService.id)'" -ErrorAction SilentlyContinue
@@ -195,16 +197,14 @@ function Wait-Re3DWorkerRuntimeEvidence {
             $candidates = @(
                 Get-Re3DDescendantProcesses -RootProcessId ([int]$serviceInstance.ProcessId) |
                     Where-Object {
-                        -not [string]::IsNullOrWhiteSpace("$($_.ExecutablePath)") -and
-                        [IO.Path]::GetFullPath("$($_.ExecutablePath)") -ieq $workerPython -and
-                        "$($_.CommandLine)" -match $commandPattern
+                        Test-Re3DProcessImageAndCommand `
+                            -Process $_ `
+                            -AllowedExecutablePaths $workerPythonImages `
+                            -CommandArgumentsPattern $commandArgumentsPattern
                     }
             )
-            if ($candidates.Count -gt 1) {
-                Start-Sleep -Milliseconds 500
-                continue
-            }
             $records = @(Get-Re3DWorkerRuntimeRecords -LogDirectory $WorkerService.log_directory)
+            $evidenceMatches = [Collections.Generic.List[object]]::new()
             foreach ($candidate in $candidates) {
                 $processId = [int]$candidate.ProcessId
                 $processStartedAtUtc = ConvertTo-Re3DUtcDateTime -Value $candidate.CreationDate
@@ -229,21 +229,28 @@ function Wait-Re3DWorkerRuntimeEvidence {
                         Get-Re3DDescendantProcesses -RootProcessId ([int]$currentService.ProcessId) |
                             Where-Object {
                                 [int]$_.ProcessId -eq $processId -and
-                                -not [string]::IsNullOrWhiteSpace("$($_.ExecutablePath)") -and
-                                [IO.Path]::GetFullPath("$($_.ExecutablePath)") -ieq $workerPython -and
-                                "$($_.CommandLine)" -match $commandPattern -and
+                                (Test-Re3DProcessImageAndCommand `
+                                    -Process $_ `
+                                    -AllowedExecutablePaths $workerPythonImages `
+                                    -CommandArgumentsPattern $commandArgumentsPattern) -and
                                 (ConvertTo-Re3DUtcDateTime -Value $_.CreationDate) -eq $processStartedAtUtc
                             }
                     )
                     if ($stillRunning.Count -gt 0) {
-                        return [ordered]@{
+                        $evidenceMatches.Add([pscustomobject][ordered]@{
                             process_id = $processId
                             process_started_at_utc = $processStartedAtUtc.ToString("o")
                             preflight_evidence_at_utc = $preflight.ToString("o")
                             queue_loop_evidence_at_utc = $loop.ToString("o")
-                        }
+                        })
                     }
                 }
+            }
+            $evidenceMatch = Resolve-Re3DWorkerEvidenceMatch `
+                -CandidateProcessIds @($candidates | ForEach-Object { [int]$_.ProcessId }) `
+                -EvidenceMatches $evidenceMatches
+            if ($null -ne $evidenceMatch) {
+                return $evidenceMatch
             }
         }
         Start-Sleep -Milliseconds 500
@@ -284,15 +291,24 @@ Assert-AclRights -Path $manifest.external.mailpit_state_root -Sid $serviceSids.m
 
 $servicesByKey = @{}
 foreach ($service in @($manifest.services)) { $servicesByKey[$service.key] = $service }
-$apiCommandPattern = (
-    '(?i)^\s*"?' + [Regex]::Escape([IO.Path]::GetFullPath($manifest.external.platform_python)) +
-    '"?\s+-m\s+uvicorn\s+apps\.api\.main:create_app(?:\s|$)'
+$pythonProcessImages = @(
+    $manifest.external.platform_python
+    $manifest.external.platform_python_runtime_image
+) | Sort-Object -Unique
+$apiCommandArgumentsPattern = (
+    '-m\s+uvicorn\s+apps\.api\.main:create_app' +
+    '\s+--factory\s+--host\s+127\.0\.0\.1\s+--port\s+8000' +
+    '\s+--workers\s+1\s+--proxy-headers' +
+    '\s+--forwarded-allow-ips\s+(?:"127\.0\.0\.1,::1"|127\.0\.0\.1,::1)' +
+    '\s+--limit-concurrency\s+' + [Regex]::Escape("$($manifest.topology.api_limit_concurrency)") +
+    '\s+--timeout-graceful-shutdown\s+30' +
+    '\s+--no-server-header\s+--no-access-log\s*$'
 )
 $listenerResults = [ordered]@{
-    smtp = Wait-Re3DListenerOwnership -Service $servicesByKey.mailpit -Port 1025 -ExpectedExecutable $manifest.external.mailpit_path
-    mailpit_ui = Wait-Re3DListenerOwnership -Service $servicesByKey.mailpit -Port 8025 -ExpectedExecutable $manifest.external.mailpit_path
-    api = Wait-Re3DListenerOwnership -Service $servicesByKey.api -Port 8000 -ExpectedExecutable $manifest.external.platform_python -CommandPattern $apiCommandPattern
-    web = Wait-Re3DListenerOwnership -Service $servicesByKey.caddy -Port 8080 -ExpectedExecutable $manifest.external.caddy_path
+    smtp = Wait-Re3DListenerOwnership -Service $servicesByKey.mailpit -Port 1025 -ExpectedExecutables $manifest.external.mailpit_path
+    mailpit_ui = Wait-Re3DListenerOwnership -Service $servicesByKey.mailpit -Port 8025 -ExpectedExecutables $manifest.external.mailpit_path
+    api = Wait-Re3DListenerOwnership -Service $servicesByKey.api -Port 8000 -ExpectedExecutables $pythonProcessImages -CommandArgumentsPattern $apiCommandArgumentsPattern
+    web = Wait-Re3DListenerOwnership -Service $servicesByKey.caddy -Port 8080 -ExpectedExecutables $manifest.external.caddy_path
 }
 
 $readiness = Join-Path $manifest.external.project_root "deploy\restricted\check-restricted-readiness.ps1"

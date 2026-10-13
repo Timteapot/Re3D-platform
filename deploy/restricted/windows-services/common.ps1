@@ -125,6 +125,194 @@ function Set-Re3DRestrictedBundleSecretAcl {
     Set-Acl -LiteralPath $resolved -AclObject $acl
 }
 
+function Get-Re3DRestrictedPlatformPythonRuntime {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProjectRoot,
+        [Parameter(Mandatory = $true)][string]$PlatformPython
+    )
+
+    $resolvedProjectRoot = Resolve-Re3DServicePath `
+        -Path $ProjectRoot `
+        -PathType Container
+    $resolvedPlatformPython = Resolve-Re3DServicePath `
+        -Path $PlatformPython `
+        -PathType Leaf
+    $expectedPlatformPython = Resolve-Re3DServicePath `
+        -Path (Get-Re3DRestrictedPython -ProjectRoot $resolvedProjectRoot) `
+        -PathType Leaf
+    if ($resolvedPlatformPython -ine $expectedPlatformPython) {
+        throw "Restricted platform Python must be project_root\.venv\Scripts\python.exe."
+    }
+    $venvScriptsRoot = Split-Path -Parent $resolvedPlatformPython
+    $venvRoot = Split-Path -Parent $venvScriptsRoot
+    $venvConfiguration = Resolve-Re3DServicePath `
+        -Path (Join-Path $venvRoot "pyvenv.cfg") `
+        -PathType Leaf
+    foreach ($boundary in @(
+        $resolvedProjectRoot,
+        $venvRoot,
+        $venvScriptsRoot,
+        $resolvedPlatformPython,
+        $venvConfiguration
+    )) {
+        Assert-Re3DNoBroadWriteAccess -Path $boundary
+    }
+    $venvConfigurationText = Get-Content -LiteralPath $venvConfiguration -Raw
+    $declaredExecutableMatches = [Regex]::Matches(
+        $venvConfigurationText,
+        '(?im)^\s*executable\s*=\s*(.+?)\s*$'
+    )
+    $declaredHomeMatches = [Regex]::Matches(
+        $venvConfigurationText,
+        '(?im)^\s*home\s*=\s*(.+?)\s*$'
+    )
+    if (
+        $declaredExecutableMatches.Count -ne 1 -or
+        $declaredHomeMatches.Count -ne 1 -or
+        -not [IO.Path]::IsPathRooted(
+            $declaredExecutableMatches[0].Groups[1].Value
+        ) -or
+        -not [IO.Path]::IsPathRooted(
+            $declaredHomeMatches[0].Groups[1].Value
+        )
+    ) {
+        throw "Restricted pyvenv.cfg must declare one absolute home and base executable."
+    }
+    $declaredRuntimeImage = Resolve-Re3DServicePath `
+        -Path $declaredExecutableMatches[0].Groups[1].Value `
+        -PathType Leaf
+    $declaredRuntimeHome = Resolve-Re3DServicePath `
+        -Path $declaredHomeMatches[0].Groups[1].Value `
+        -PathType Container
+    if ((Split-Path -Parent $declaredRuntimeImage) -ine $declaredRuntimeHome) {
+        throw "Restricted pyvenv.cfg home does not contain its base executable."
+    }
+    foreach ($boundary in @(
+        $declaredRuntimeHome,
+        $declaredRuntimeImage
+    )) {
+        Assert-Re3DNoBroadWriteAccess -Path $boundary
+    }
+    $probeCode = @'
+import json
+import os
+import sys
+
+print(json.dumps({
+    "executable": os.path.abspath(sys.executable),
+    "base_executable": os.path.abspath(sys._base_executable),
+    "prefix": os.path.abspath(sys.prefix),
+    "base_prefix": os.path.abspath(sys.base_prefix),
+}))
+'@
+    $probeOutput = (& $resolvedPlatformPython -I -c $probeCode 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not inspect the restricted platform Python runtime: $probeOutput"
+    }
+    try {
+        $probe = $probeOutput | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        throw "Restricted platform Python returned invalid runtime metadata."
+    }
+    foreach ($name in @("executable", "base_executable", "prefix", "base_prefix")) {
+        if ([string]::IsNullOrWhiteSpace("$($probe.$name)")) {
+            throw "Restricted platform Python runtime metadata is missing $name."
+        }
+    }
+
+    $reportedExecutable = Resolve-Re3DServicePath `
+        -Path "$($probe.executable)" `
+        -PathType Leaf
+    $runtimeImage = Resolve-Re3DServicePath `
+        -Path "$($probe.base_executable)" `
+        -PathType Leaf
+    $venvPrefix = Resolve-Re3DServicePath `
+        -Path "$($probe.prefix)" `
+        -PathType Container
+    $basePrefix = Resolve-Re3DServicePath `
+        -Path "$($probe.base_prefix)" `
+        -PathType Container
+    if (
+        $reportedExecutable -ine $resolvedPlatformPython -or
+        -not (Test-Re3DServicePathWithin `
+            -Candidate $reportedExecutable `
+            -Root $venvPrefix
+        ) -or
+        $venvPrefix -ieq $basePrefix -or
+        $runtimeImage -ieq $resolvedPlatformPython -or
+        $runtimeImage -ine $declaredRuntimeImage
+    ) {
+        throw "Restricted platform Python must be an active project virtual environment."
+    }
+
+    return [pscustomobject]@{
+        PlatformPython = $resolvedPlatformPython
+        PlatformPythonSha256 = (
+            Get-FileHash -LiteralPath $resolvedPlatformPython -Algorithm SHA256
+        ).Hash
+        ConfigurationPath = $venvConfiguration
+        ConfigurationSha256 = (
+            Get-FileHash -LiteralPath $venvConfiguration -Algorithm SHA256
+        ).Hash
+        RuntimeImage = $runtimeImage
+        RuntimeImageSha256 = (
+            Get-FileHash -LiteralPath $runtimeImage -Algorithm SHA256
+        ).Hash
+    }
+}
+
+function Test-Re3DProcessImageAndCommand {
+    param(
+        [Parameter(Mandatory = $true)]$Process,
+        [Parameter(Mandatory = $true)][string[]]$AllowedExecutablePaths,
+        [string]$CommandArgumentsPattern = ""
+    )
+    if ([string]::IsNullOrWhiteSpace("$($Process.ExecutablePath)")) {
+        return $false
+    }
+    $processImage = [IO.Path]::GetFullPath("$($Process.ExecutablePath)")
+    $allowedImages = @(
+        $AllowedExecutablePaths |
+            ForEach-Object { [IO.Path]::GetFullPath($_) } |
+            Sort-Object -Unique
+    )
+    if ($allowedImages -inotcontains $processImage) {
+        return $false
+    }
+    if ([string]::IsNullOrWhiteSpace($CommandArgumentsPattern)) {
+        return $true
+    }
+    $commandPattern = (
+        '(?i)^\s*(?:"' + [Regex]::Escape($processImage) +
+        '"|' + [Regex]::Escape($processImage) +
+        ')\s+' + $CommandArgumentsPattern
+    )
+    return "$($Process.CommandLine)" -match $commandPattern
+}
+
+function Resolve-Re3DWorkerEvidenceMatch {
+    param(
+        [AllowEmptyCollection()][int[]]$CandidateProcessIds = @(),
+        [object[]]$EvidenceMatches = @()
+    )
+    $candidateIds = @($CandidateProcessIds | Sort-Object -Unique)
+    $matches = @($EvidenceMatches)
+    foreach ($match in $matches) {
+        $processId = [int]$match.process_id
+        if ($processId -le 0 -or $candidateIds -notcontains $processId) {
+            throw "Restricted Worker runtime evidence references a non-candidate process."
+        }
+    }
+    $uniqueMatches = @($matches | Sort-Object -Property process_id -Unique)
+    if ($uniqueMatches.Count -ne $matches.Count -or $uniqueMatches.Count -gt 1) {
+        throw "Restricted Worker runtime evidence matched multiple current processes."
+    }
+    if ($uniqueMatches.Count -eq 1) {
+        return $uniqueMatches[0]
+    }
+    return $null
+}
+
 function Get-Re3DRestrictedServiceBundleManifest {
     param([Parameter(Mandatory = $true)][string]$BundleRoot)
 
@@ -145,7 +333,7 @@ function Assert-Re3DRestrictedServiceBundle {
 
     $root = Resolve-Re3DServicePath -Path $BundleRoot -PathType Container
     $manifest = Get-Re3DRestrictedServiceBundleManifest -BundleRoot $root
-    if ($manifest.schema_version -cne "1.0" -or [IO.Path]::GetFullPath($manifest.runtime_root) -ine $root) {
+    if ($manifest.schema_version -cne "1.1" -or [IO.Path]::GetFullPath($manifest.runtime_root) -ine $root) {
         throw "Unsupported or misplaced restricted service bundle."
     }
     if ($manifest.winsw.version -cne $script:Re3DWinSWVersion) {
@@ -173,6 +361,8 @@ function Assert-Re3DRestrictedServiceBundle {
     }
     foreach ($path in @(
         $manifest.external.platform_python,
+        $manifest.external.platform_python_configuration,
+        $manifest.external.platform_python_runtime_image,
         $manifest.external.powershell_path,
         $manifest.external.caddy_path,
         $manifest.external.mailpit_path,
@@ -181,6 +371,36 @@ function Assert-Re3DRestrictedServiceBundle {
         $manifest.source.web_deployment_file
     )) {
         Resolve-Re3DServicePath -Path $path -PathType Leaf | Out-Null
+    }
+    $platformPythonRuntime = Get-Re3DRestrictedPlatformPythonRuntime `
+        -ProjectRoot $manifest.external.project_root `
+        -PlatformPython $manifest.external.platform_python
+    $manifestPythonImages = @(
+        [IO.Path]::GetFullPath($manifest.external.platform_python)
+        [IO.Path]::GetFullPath($manifest.external.platform_python_runtime_image)
+    ) | Sort-Object -Unique
+    $detectedPythonImages = @(
+        $platformPythonRuntime.PlatformPython
+        $platformPythonRuntime.RuntimeImage
+    ) | Sort-Object -Unique
+    if (
+        $manifestPythonImages.Count -ne 2 -or
+        $detectedPythonImages.Count -ne 2 -or
+        (Compare-Object `
+            -ReferenceObject $detectedPythonImages `
+            -DifferenceObject $manifestPythonImages
+        ) -or
+        $manifest.external.platform_python_sha256 -notmatch '^[0-9A-Fa-f]{64}$' -or
+        $manifest.external.platform_python_configuration_sha256 -notmatch '^[0-9A-Fa-f]{64}$' -or
+        $manifest.external.platform_python_runtime_image_sha256 -notmatch '^[0-9A-Fa-f]{64}$' -or
+        $platformPythonRuntime.PlatformPythonSha256 -ine $manifest.external.platform_python_sha256 -or
+        $platformPythonRuntime.ConfigurationPath -ine (
+            [IO.Path]::GetFullPath($manifest.external.platform_python_configuration)
+        ) -or
+        $platformPythonRuntime.ConfigurationSha256 -ine $manifest.external.platform_python_configuration_sha256 -or
+        $platformPythonRuntime.RuntimeImageSha256 -ine $manifest.external.platform_python_runtime_image_sha256
+    ) {
+        throw "Restricted platform Python runtime drifted after bundle generation."
     }
     foreach ($path in @(
         $manifest.external.api_environment_file,

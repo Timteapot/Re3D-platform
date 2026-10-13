@@ -133,6 +133,95 @@ class RestrictedWindowsServiceAssetTests(unittest.TestCase):
         self.assertIn("worker_temp_root", common)
         self.assertIn("external.data_root", common)
 
+    def test_manifest_pins_venv_and_runtime_python_images(self) -> None:
+        common = read_script("common.ps1")
+        generator = read_script("new-service-bundle.ps1")
+        installer = read_script("install-service-bundle.ps1")
+        installed_test = read_script("test-installed-services.ps1")
+
+        self.assertIn('schema_version = "1.1"', generator)
+        self.assertIn('$manifest.schema_version -cne "1.1"', common)
+        self.assertNotIn('$manifest.schema_version -cne "1.0"', common)
+        self.assertIn("Get-Re3DRestrictedPlatformPythonRuntime", common)
+        self.assertIn("sys._base_executable", common)
+        self.assertIn("pyvenv.cfg", common)
+        self.assertIn("declaredRuntimeImage", common)
+        self.assertIn("platform_python_sha256", generator)
+        self.assertIn("platform_python_configuration_sha256", generator)
+        self.assertIn("platform_python_runtime_image", generator)
+        self.assertIn("platform_python_runtime_image_sha256", generator)
+        self.assertIn("Compare-Object", common)
+        self.assertNotIn("-CaseSensitive", common)
+        self.assertIn("runtime drifted after bundle generation", common)
+
+        helper_start = common.index(
+            "function Get-Re3DRestrictedPlatformPythonRuntime"
+        )
+        acl_check = common.index(
+            "Assert-Re3DNoBroadWriteAccess", helper_start
+        )
+        python_probe = common.index(
+            "$probeOutput = (& $resolvedPlatformPython", helper_start
+        )
+        self.assertLess(acl_check, python_probe)
+        self.assertLess(
+            common.index("$declaredRuntimeImage", helper_start),
+            python_probe,
+        )
+
+        self.assertGreaterEqual(
+            installer.count(
+                "$manifest.external.platform_python_runtime_image"
+            ),
+            2,
+        )
+        self.assertIn(
+            "Split-Path -Parent "
+            "$manifest.external.platform_python_runtime_image",
+            installer,
+        )
+
+        self.assertIn("Test-Re3DProcessImageAndCommand", installed_test)
+        self.assertIn("AllowedExecutablePaths", common)
+        self.assertIn("[Regex]::Escape($processImage)", common)
+        self.assertIn("platform_python_runtime_image", installed_test)
+        self.assertIn("CommandArgumentsPattern", installed_test)
+        self.assertIn("--timeout-graceful-shutdown", installed_test)
+
+    @unittest.skipUnless(
+        os.name == "nt" and shutil.which("pwsh"),
+        "restricted process identity contract requires PowerShell",
+    )
+    def test_python_process_identity_contract_executes(self) -> None:
+        result = subprocess.run(
+            [
+                shutil.which("pwsh") or "pwsh",
+                "-NoLogo",
+                "-NoProfile",
+                "-File",
+                str(
+                    SERVICE_ROOT
+                    / "test-local-python-process-contract.ps1"
+                ),
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            msg=f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+        )
+        self.assertIn(
+            "Restricted Python process identity contract: PASS",
+            result.stdout,
+        )
+
     def test_source_secret_acl_accepts_only_api_and_worker_service_sids(self) -> None:
         restricted_common = (
             ROOT / "deploy" / "restricted" / "common.ps1"
@@ -358,6 +447,12 @@ class RestrictedWindowsServiceAssetTests(unittest.TestCase):
         self.assertIn("[int]$record.process_id -ne $processId", installed_test)
         self.assertIn("$emittedAtUtc -gt [DateTime]::UtcNow.AddSeconds(5)", installed_test)
         self.assertIn("$preflight -le $loop", installed_test)
+        self.assertIn("$evidenceMatches", installed_test)
+        self.assertIn(
+            "runtime evidence matched multiple current processes",
+            read_script("common.ps1"),
+        )
+        self.assertNotIn("if ($candidates.Count -gt 1)", installed_test)
         self.assertIn(
             "(ConvertTo-Re3DUtcDateTime -Value $_.CreationDate) -eq $processStartedAtUtc",
             installed_test,

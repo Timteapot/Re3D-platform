@@ -24,7 +24,10 @@ $resolvedProjectRoot = if ($ProjectRoot) {
     (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
 }
 $workspaceRoot = Split-Path -Parent $resolvedProjectRoot
-$python = Get-Re3DRestrictedPython -ProjectRoot $resolvedProjectRoot
+$pythonRuntime = Get-Re3DRestrictedPlatformPythonRuntime `
+    -ProjectRoot $resolvedProjectRoot `
+    -PlatformPython (Get-Re3DRestrictedPython -ProjectRoot $resolvedProjectRoot)
+$python = $pythonRuntime.PlatformPython
 $powerShell = (Get-Command pwsh.exe -ErrorAction Stop).Source
 $resolvedWinSW = Resolve-Re3DServicePath -Path $WinSWPath -PathType Leaf
 $expectedWinSWSha256 = "05b82d46ad331cc16bdc00de5c6332c1ef818df8ceefcd49c726553209b3a0da"
@@ -185,7 +188,7 @@ foreach ($definition in Get-Re3DRestrictedWindowsServiceDefinitions) {
 }
 
 $manifest = [ordered]@{
-    schema_version = "1.0"
+    schema_version = "1.1"
     created_at_utc = [DateTime]::UtcNow.ToString("o")
     runtime_root = $runtimeRoot
     source = [ordered]@{
@@ -203,6 +206,11 @@ $manifest = [ordered]@{
     external = [ordered]@{
         project_root = $resolvedProjectRoot
         platform_python = $python
+        platform_python_sha256 = $pythonRuntime.PlatformPythonSha256
+        platform_python_configuration = $pythonRuntime.ConfigurationPath
+        platform_python_configuration_sha256 = $pythonRuntime.ConfigurationSha256
+        platform_python_runtime_image = $pythonRuntime.RuntimeImage
+        platform_python_runtime_image_sha256 = $pythonRuntime.RuntimeImageSha256
         powershell_path = $powerShell
         web_root = $resolvedWebRoot
         data_root = $dataRoot

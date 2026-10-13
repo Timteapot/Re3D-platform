@@ -51,6 +51,8 @@ foreach ($boundary in @(
     $manifest.runtime_root,
     $manifest.external.data_root,
     $manifest.external.re3d_root,
+    $manifest.external.platform_python_runtime_image,
+    (Split-Path -Parent $manifest.external.platform_python_runtime_image),
     (Split-Path -Parent $manifest.external.caddy_path),
     (Split-Path -Parent $manifest.external.mailpit_path),
     @($manifest.external.worker_execution_roots)

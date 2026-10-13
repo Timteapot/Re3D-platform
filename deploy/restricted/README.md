@@ -165,6 +165,20 @@ does not broaden that source-secret owner contract. The original WinSW download
 is verified while generating the bundle, then each copied wrapper is verified
 independently, so `C:\Install\WinSW-x64.exe` is not a runtime dependency.
 
+The service manifest schema is `1.1`. It pins both the project virtual
+environment launcher (`.venv\Scripts\python.exe`) and the Windows runtime image
+declared by `.venv\pyvenv.cfg` and reported by `sys._base_executable`, including
+their SHA-256 values. Before invoking Python during bundle validation, the
+validator checks the fixed virtual-environment path, `pyvenv.cfg`, the declared
+base interpreter and their required parent directories for broad write access.
+Installation repeats the no-broad-write check for the actual runtime image and
+its parent. Windows can expose either the virtual-environment launcher or the
+base interpreter in a Python process chain; installed-service acceptance allows
+only those two pinned images and requires the command line to begin with the
+same image reported for that process, followed by the exact API or Worker
+module arguments. Any interpreter, configuration or hash drift requires a new
+bundle. Legacy `1.0` service manifests are rejected rather than inferred.
+
 The install-time API readiness check validates the complete restricted SMTP
 configuration but deliberately defers network connectivity because the new
 Mailpit service is not running yet. The installed-service acceptance below
