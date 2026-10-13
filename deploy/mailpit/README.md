@@ -2,7 +2,7 @@
 
 该目录使用固定版本 Mailpit v1.31.3 为 Windows 开发环境提供本机 SMTP 捕获服务。SMTP 和 Web UI 分别只绑定 `127.0.0.1:1025` 与 `127.0.0.1:8025`，不会监听局域网地址。
 
-Mailpit 只用于开发和验收，不能作为生产邮件服务。当前提供两种互斥运行方式：Docker 容器和 Windows 独立程序。两者都最多保留 500 封邮件，不能同时占用相同端口。
+Mailpit 只用于开发和受限验收，不能作为生产邮件服务。当前提供 Docker 容器和 Windows 独立程序两种运行方式；受限服务器的 WinSW 服务包也可托管同一固定版本的独立程序。上述方式最多保留 500 封邮件，不能同时占用相同端口。服务包的安装与生命周期见 [`../restricted/README.md`](../restricted/README.md)，不与本目录的交互式启动命令并行运行。
 
 ## Docker 方式
 
@@ -54,7 +54,7 @@ cd D:\3Dreconstruction\Re3D-platform
 - 压缩包：`863e9502d4e0f14a78c0f91c5091797b1c7b7b7e3fc7e5eab62e5770ce44b76e`
 - `mailpit.exe`：`ee0b025bc9f61e6856d6032128408ee6fe1627f510c118a4fa0faa7bfdb7cd33`
 
-程序以隐藏窗口启动，并将 SMTP 与 Web UI 分别固定在 `127.0.0.1:1025` 和 `127.0.0.1:8025`，不启用 POP3。PID、日志、数据库和捕获邮件保存在 `D:\3Dreconstruction\Re3D-data\_services\mailpit`，不与重建任务数据混用。停止服务不会删除这些数据：
+程序以隐藏窗口启动，并将 SMTP 与 Web UI 分别固定在 `127.0.0.1:1025` 和 `127.0.0.1:8025`，不启用 POP3。PID、日志、数据库和捕获邮件默认保存在仓库父目录下的 `Re3D-data\_services\mailpit`；本机工作区对应 `D:\3Dreconstruction\Re3D-data\_services\mailpit`，可通过 `-StateRoot` 显式指定其他外部目录。邮件状态不与重建任务数据混用，停止程序不会删除这些数据：
 
 ```powershell
 & .\deploy\mailpit\stop-standalone.ps1

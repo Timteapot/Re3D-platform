@@ -2,7 +2,7 @@
 
 ## 1. 当前实现范围
 
-上传接口在 development、test 和 production 环境注册并接收真实 JPEG/PNG 图片。development/test 提交不带请求体时使用 `execution_mode=simulated`，也可显式提交 `{"execution_mode":"real"}`；production 不带请求体时由服务端强制使用 `real`，显式请求 `simulated` 会被拒绝。客户端不能决定生产任务是否绕过真实 Re3D。
+上传接口在 development、test、restricted 和 production 环境注册并接收真实 JPEG/PNG 图片。development/test 提交不带请求体时使用 `execution_mode=simulated`，也可显式提交 `{"execution_mode":"real"}`；restricted/production 不带请求体时由服务端强制使用 `real`，显式请求 `simulated` 会被拒绝。客户端不能决定受限部署或生产任务是否绕过真实 Re3D。
 
 | 方法 | 路径 | 作用 |
 |---|---|---|
@@ -32,7 +32,7 @@
 1. 锁定上传会话；
 2. 验证至少三张图片以及数据库计数；
 3. 锁定所属用户，并检查非终态任务数、滚动 24 小时提交数和用户存储配额；
-4. 把当前上传实际字节替换为固定任务预留量，避免输入与任务重复计费；
+4. 把当前上传实际字节替换为固定任务预留量，避免输入与任务重复计入配额；
 5. 重新检查目录文件集合、大小和 SHA-256；
 6. 原子写入 `input-manifest.json` 和 `pipeline-request.json`；
 7. 插入带存储预留的 `queued` 任务和 `job_submitted` 审计；
@@ -40,7 +40,7 @@
 
 因此未完成的上传不会被 Worker 领取，数据库也不会出现已经提交但没有队列任务的正常状态。
 
-单张删除只允许发生在 `uploading` 状态。文件先原子移动到任务内 staging 墓碑，再删除数据库元数据；数据库事务失败时文件会移回原位。上传取消会先把数据库状态改为 `cancelled` 并删除图片元数据，但保留总字节数用于目录删除失败时继续计费，然后只删除 `Re3D-data/jobs/<upload_uuid>` 对应目录。已经提交的上传不能使用上传取消接口，必须改走任务取消流程。
+单张删除只允许发生在 `uploading` 状态。文件先原子移动到任务内 staging 墓碑，再删除数据库元数据；数据库事务失败时文件会移回原位。上传取消会先把数据库状态改为 `cancelled` 并删除图片元数据，但保留总字节数用于目录删除失败时继续计入配额，然后只删除 `Re3D-data/jobs/<upload_uuid>` 对应目录。已经提交的上传不能使用上传取消接口，必须改走任务取消流程。
 
 ## 3. 输入安全规则
 
@@ -54,7 +54,7 @@
 - 提交前再次计算哈希，阻止上传完成后文件被替换；
 - manifest 和请求通过既有原子写入与 JSON Schema 校验。
 
-本机 restricted 当前环境变量示例：
+restricted 小任务基线配置示例：
 
 ```dotenv
 UPLOAD_MAX_FILE_BYTES=26214400
@@ -73,7 +73,7 @@ TRANSFER_UPLOAD_MAX_BYTES=2147483648
 TRANSFER_LEASE_SECONDS=14400
 ```
 
-目标服务器实验性 `gpu-large-300` 将用户配额和任务预留分别提高到
+实验性 `gpu-large-300` 预设将用户配额和任务预留分别提高到
 128 GiB 与 64 GiB，具体值见 [`worker-execution-profiles.md`](worker-execution-profiles.md)。
 服务会拒绝不合理的配置值。反向代理仍需设置请求体大小、请求速率和连接超时；应用层限制不能替代代理层的早期拒绝。
 
@@ -90,7 +90,7 @@ TRANSFER_LEASE_SECONDS=14400
 
 生产 `RE3D_MIN_FREE_DISK_BYTES` 同时作为运行时上传安全线。创建会话、写入图片和提交任务前若可用空间不足，API 返回 507 和 `STORAGE_CAPACITY_FLOOR_REACHED`；写入 staging 后跌破安全线时会删除该临时文件，不写入图片元数据。提交任务时还会扣除 `max(0, 任务预留 - 已上传字节)`，确保入队后仍保留安全线。
 
-用户配额是另一条独立边界。未提交上传按 `job_uploads.total_bytes` 实际计费；提交后改由 `reconstruction_jobs.storage_reserved_bytes` 固定预留输入、中间文件和产物空间。超额返回 507 和 `USER_STORAGE_QUOTA_EXCEEDED`，不带 `Retry-After`，因为必须删除未提交数据或等待任务清理。生产必须显式设置两个值，任务预留不得小于 1 GiB 和单次上传总量，也不得大于用户总配额。详细释放规则和估算限制见 [`user-storage-quota.md`](user-storage-quota.md)。
+用户配额是另一条独立边界。未提交上传按 `job_uploads.total_bytes` 实际计量；提交后改由 `reconstruction_jobs.storage_reserved_bytes` 固定预留输入、中间文件和产物空间。超额返回 507 和 `USER_STORAGE_QUOTA_EXCEEDED`，不带 `Retry-After`，因为必须删除未提交数据或等待任务清理。restricted/production 必须显式设置两个值，任务预留不得小于 1 GiB 和单次上传总量，也不得大于用户总配额。详细释放规则和估算限制见 [`user-storage-quota.md`](user-storage-quota.md)。
 
 ## 4. 超时回收
 
@@ -110,8 +110,7 @@ cd D:\3Dreconstruction\Re3D-platform
 - EXIF 隐私元数据清除策略；当前保留原始图片内容；
 - 浏览器刷新后恢复未提交上传会话；
 - Worker 任务空间预留值仍需在目标服务器校准；应用层上传/下载并发和累计字节控制已经实现，入口连接/速率限制及真实吞吐压力验收尚未完成；
-- 上传病毒扫描、隔离进程解码和代理层请求限制；
+- 上传病毒扫描和隔离进程解码；Caddy 单请求体大小限制已实现，入口连接/速率和吞吐验收仍独立于应用层控制；
 - 真实图片质量预检；
-- 任务详情、取消、SSE 进度和结果页面。
 
-这些能力完成前，上传接口只能用于本机开发验证，不能直接开放到公开互联网。
+上传、任务详情、取消、SSE 进度、结果和评估页面已经集成，可用于本机或经 SSH 转发的受限环境。公开入口仍须完成上述安全、容量和网络验收，不能直接将受限配置开放到互联网。

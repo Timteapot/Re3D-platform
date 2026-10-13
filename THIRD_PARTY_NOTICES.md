@@ -32,7 +32,7 @@ Re3D Platform 是仅用于学习、研究和实践真实项目流程的非商业
 |---|---:|---|---|---|
 | React / React DOM | 19.2.0 | 前端组件与浏览器渲染 | MIT | [facebook/react](https://github.com/facebook/react) |
 | React Router DOM | 7.18.4 | 客户端路由和受保护页面 | MIT | [remix-run/react-router](https://github.com/remix-run/react-router) |
-| TanStack Query | 5.89.0 | 后续任务请求缓存与状态管理基础 | MIT | [TanStack/query](https://github.com/TanStack/query) |
+| TanStack Query | 5.89.0 | 任务列表、任务详情和配额请求缓存、轮询与变更同步 | MIT | [TanStack/query](https://github.com/TanStack/query) |
 | three | 0.186.1 | GLB 解析、WebGL 渲染和三维交互控制 | MIT | [上游](https://github.com/mrdoob/three.js)；[随前端分发的许可证](apps/web/public/third-party/three-LICENSE.txt) |
 | Vite | 7.3.6 | 开发服务器和生产构建 | MIT | [vitejs/vite](https://github.com/vitejs/vite) |
 | TypeScript | 5.9.2 | 静态类型检查 | Apache-2.0 | [microsoft/TypeScript](https://github.com/microsoft/TypeScript) |
@@ -40,7 +40,7 @@ Re3D Platform 是仅用于学习、研究和实践真实项目流程的非商业
 | Testing Library | 16.3.0 / 6.8.0 / 14.6.1 | React DOM 与交互测试 | MIT | [testing-library](https://github.com/testing-library) |
 | jsdom | 27.0.0 | 测试用 DOM 环境 | MIT | [jsdom/jsdom](https://github.com/jsdom/jsdom) |
 
-`@vitejs/plugin-react`、类型声明和上述 JavaScript 包的传递依赖仅用于构建或测试，也受各自许可证约束。当前锁文件经 `npm audit` 检查为零个已知漏洞；该结果只代表检查当时的审计数据库状态，必须在后续提交和发布前重新执行。
+`@vitejs/plugin-react`、类型声明和测试工具用于构建或测试；运行依赖及其传递依赖可能进入前端产物，也受各自许可证约束。漏洞状态随审计数据库和依赖版本变化；历史 `npm audit` 结果不是持续安全保证，应在后续发布前重新检查并保存带日期的报告。
 
 ## 本地开发基础设施
 
@@ -48,14 +48,14 @@ Re3D Platform 是仅用于学习、研究和实践真实项目流程的非商业
 |---|---:|---|---|---|
 | Mailpit | 1.31.3 | 本地 SMTP 捕获、邮箱验证和密码重置验收 | MIT | [axllent/mailpit](https://github.com/axllent/mailpit) |
 
-Mailpit 仅通过开发脚本作为独立 Docker 容器运行，不进入平台生产镜像，也不替代生产邮件服务。
+Mailpit 可通过开发脚本运行在 Docker 容器或作为 Windows 独立程序启动；当前受限服务器还由 WinSW 托管独立程序。SMTP 和管理页面只监听回环地址。它不替代正式生产邮件服务，也不进入平台公开生产运行方案。
 
 ## 部署基础设施
 
 | 依赖 | 验收版本 | 用途 | 许可证 | 上游 |
 |---|---:|---|---|---|
 | Caddy | 2.11.4 | 前端静态文件、同源反向代理、TLS 与安全响应头 | Apache-2.0 | [caddyserver/caddy](https://github.com/caddyserver/caddy) |
-| WinSW | 2.12.0 | 将 API、Worker 和 Caddy 前台入口包装为 Windows 服务 | MIT | [winsw/winsw](https://github.com/winsw/winsw) |
+| WinSW | 2.12.0 | 将 API、Worker、Caddy 和受限环境 Mailpit 入口包装为独立 Windows 服务 | MIT | [winsw/winsw](https://github.com/winsw/winsw) |
 | NVIDIA 显示驱动 / `nvidia-smi` | 由目标主机安装 | 只读查询 GPU 利用率、显存和温度 | NVIDIA 软件许可条款 | [NVSMI 官方说明](https://developer.nvidia.com/system-management-interface)；[NVIDIA EULA](https://docs.nvidia.com/cuda/eula/) |
 
 Caddy、WinSW 和 NVIDIA 驱动工具均不提交到本仓库。Windows 非公网验收使用官方标准 Caddy 二进制；服务安装器要求 WinSW 2.12.0。`nvidia-smi` 随目标主机 NVIDIA 驱动提供，Worker 只使用其查询能力，不修改 GPU 状态。真实服务器应从各自官方发行渠道独立取得二进制，并按其许可证保留声明。
@@ -68,4 +68,4 @@ Caddy、WinSW 和 NVIDIA 驱动工具均不提交到本仓库。Windows 非公�
 - 更换依赖版本、部署方式或项目用途时重新检查许可证；
 - 第三方软件按其许可证提供，项目不额外提供适销性或特定用途保证。
 
-最后核对日期：2026-09-30。
+依赖版本与用途的本地核对日期：2026-10-13。版本以 Python requirements 和前端锁文件为依据；本文不是完整传递依赖清单或第三方许可证的替代文本。正式分发时仍需保留实际发行包的许可证和版权声明。

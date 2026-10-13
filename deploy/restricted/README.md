@@ -1,9 +1,27 @@
 # Restricted deployment profile
 
-This profile runs the real Re3D pipeline on one Windows workstation while
+This profile runs the real Re3D pipeline on one Windows host while
 keeping the web application, API, PostgreSQL and Mailpit on loopback. It is for
-local or otherwise physically restricted acceptance work, not for LAN or public
-Internet exposure.
+local acceptance or authenticated SSH-tunnel access, not for direct LAN or public
+Internet exposure. Remote browser access uses a local loopback port forwarded to
+the server's loopback listener; it does not publish the web service.
+
+## Current acceptance scope
+
+The target Windows GPU host passed the four-service baseline acceptance on
+2026-10-13. The later service bundle at platform commit `29eda46` also completed
+a browser-submitted 11-image real reconstruction, three-branch artifact and
+evaluation checks, and automatic Three.js canvas display without refreshing the
+task-detail page. These are restricted-deployment results, not public-production
+or 300-image capacity acceptance. The exact evidence and coverage limitations are
+recorded in
+[`docs/target-server-restricted-acceptance-2026-10-13.md`](../../docs/target-server-restricted-acceptance-2026-10-13.md).
+
+The direct 300-image experiment preset, input validation and offline release
+preparation are available locally; the new preset has not yet been applied to
+the target host. Application order and resource admission requirements are in
+[`docs/direct-300-local-readiness-2026-10-13.md`](../../docs/direct-300-local-readiness-2026-10-13.md).
+The default local `baseline` configuration remains separate from this experiment.
 
 ## Enforced boundary
 
@@ -15,8 +33,11 @@ Internet exposure.
 - PostgreSQL must use database `re3d_platform_restricted` and the non-admin role
   `re3d_restricted_runtime` on loopback.
 - task data must be outside the source checkout and meet the configured free-space
-  floor. Successful input, runtime and artifact retention remains 30 days with
-  scheduled cleanup in dry-run mode.
+  floor. Successful input, runtime and artifact retention thresholds are each
+  30 days. Scheduled maintenance records dry-run results only; it does not
+  automatically delete successful results. Actual deletion requires explicit
+  operator confirmation. Failed and cancelled task files use a separate cleanup
+  policy after its configured grace period.
 
 ## Initialization order
 
@@ -54,9 +75,10 @@ powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File D:\Re3D-platform
 The recovery entry point takes a byte-identical HBA backup, freezes a
 self-contained rollback helper in an administrator-only run directory, and
 installs a SYSTEM watchdog that executes only that hash-checked snapshot before
-opening one exact loopback rule. It changes the password with `psql`'s
-`\password` command, restores the original HBA and verifies the result before
-creating the envelope. The consumer validates its protected ACL,
+opening one exact loopback rule. It validates the PostgreSQL 18 `libpq` library
+before changing HBA, changes the password with `PQchangePassword`, restores the
+original HBA and verifies SCRAM password authentication with
+`PQconnectionUsedPassword` before creating the envelope. The consumer validates its protected ACL,
 machine, Windows SID, database endpoint, role and expiry, then deletes it before
 database initialization. It never persists the administrator password in the
 restricted environment. Detailed failure and recovery behavior is documented in
@@ -79,9 +101,11 @@ Enter the same runtime password used above:
 & .\deploy\restricted\initialize-restricted-env.ps1
 ```
 
-Every script accepts `SecureString` parameters for automation but never prints
-or persists the administrator or migration passwords. Only the runtime password
-and a generated JWT secret are saved in the ignored local environment files.
+Password-taking initialization entry points accept `SecureString` parameters
+for automation and do not print passwords. Administrator and migration passwords
+are not saved in the restricted environment files; the recovery path uses only
+the short-lived encrypted envelope described above. The runtime password and a
+generated JWT secret are saved in the ignored local environment files.
 The initialization scripts refuse to overwrite either environment file. Both
 files receive protected Windows ACLs limited to the creating user,
 Administrators and SYSTEM. Existing files can be hardened and verified with:
@@ -204,13 +228,12 @@ path inside `RE3D_DATA_ROOT`.
     -BundleRoot C:\ProgramData\Re3DRestricted
 ```
 
-The target Windows GPU server completed this four-service baseline acceptance
-at platform commit `a202d77274b7aab0ed6525f0903ef973c0a193b7` on 2026-10-13.
-The evidence and exact limitations are recorded in
-[`docs/target-server-restricted-acceptance-2026-10-13.md`](../../docs/target-server-restricted-acceptance-2026-10-13.md).
-That result verifies the installed loopback service boundary and current Worker
-queue loop; it does not by itself verify a browser-submitted reconstruction,
-server reboot recovery, 300-image capacity or public production readiness.
+The original four-service baseline at platform commit
+`a202d77274b7aab0ed6525f0903ef973c0a193b7` verified the loopback service boundary
+and Worker queue loop. The later `29eda46` result added the real 11-image browser
+workflow described in the current acceptance scope. Server reboot recovery,
+300-image capacity and public production readiness remain separate uncompleted
+acceptance items.
 
 The service bundle records a clean platform commit. Explicit install, start and
 acceptance commands refuse source drift, but an already running WinSW service
@@ -292,8 +315,8 @@ SSH tunnel only when browser access is needed:
 
 ```powershell
 ssh -N `
-    -L 8080:127.0.0.1:8080 `
-    -L 8025:127.0.0.1:8025 `
+    -L 127.0.0.1:8080:127.0.0.1:8080 `
+    -L 127.0.0.1:8025:127.0.0.1:8025 `
     re3d-aliyun
 ```
 

@@ -2,7 +2,9 @@
 
 本目录定义公开部署前的配置检查、生产构建、进程入口和同源反向代理边界。Caddy 在真实域名上负责申请和续期 TLS 证书，但本仓库不会注册域名、开放防火墙或创建真实生产资源。就绪检查只返回非敏感摘要，不输出数据库密码、JWT 密钥或 SMTP 密码。
 
-## 当前支持的首个拓扑
+当前实际部署采用 [`restricted`](../restricted/README.md) 的 Windows 单机、回环监听与 SSH 隧道路线。本目录的 `production` 配置和服务脚本是独立的公开部署工程资产，已经完成部分本机隔离验收，但没有在真实公网目标上完成部署、域名、TLS 和故障恢复验收。受限环境的 11 图重建通过不改变这一边界。
+
+## 首期生产拓扑约束
 
 当前任务请求保存了输入目录等宿主机路径，API 负责写入上传文件，Windows GPU Worker 负责读取同一任务目录。因此首个可验收拓扑必须让 API 和 Worker 使用同一套 Windows 路径语义并访问同一个 `RE3D_DATA_ROOT`。可先同机部署，反向代理只把 API 暴露给互联网，Re3D Worker 和 PostgreSQL 不直接暴露。
 
@@ -48,7 +50,7 @@ Copy-Item .env.production.example .env.production
 
 产物位于 `apps/web/dist`，其中 `deployment.json` 记录源提交、构建时间、脏工作区标记和静态资源数量。不要手工修改构建目录。
 
-以下三个入口均以前台进程运行，便于交给后续 Windows 服务管理器托管；它们本身不创建服务、不会配置自动重启：
+以下三个入口均以前台进程运行，可交给仓库提供的 WinSW 服务层托管；入口本身不创建服务、不会配置自动重启：
 
 ```powershell
 # 仅监听回环地址，公网请求必须经过 Caddy。
@@ -71,7 +73,7 @@ Copy-Item .env.production.example .env.production
 
 `run-caddy.ps1` 拒绝非回环地址上的明文 HTTP。Caddy 为 `/api/*` 和 `/health/*` 提供同源代理、单请求体上限和禁止缓存策略，为带内容哈希的 `/assets/*` 提供不可变缓存，其余页面执行 SPA 回退和重新验证缓存；同时设置 CSP、点击劫持防护、MIME 嗅探防护、来源策略和权限策略。默认 `27MB` 为单张 25 MiB 图片和 multipart 开销预留空间，修改 `UPLOAD_MAX_FILE_BYTES` 时必须同步复核该值。API 已按用户提供数据库共享的传输并发和累计字节边界，但当前 Caddy 配置不提供逐来源连接/带宽整形；真实公网入口仍需云防火墙/CDN/WAF 或经验证的边缘限流。API 自身不对公网监听，Worker 不开启网络端口，PostgreSQL 也不应直接暴露到互联网。
 
-基于 WinSW 的三个独立 Windows 虚拟账户、自动启动、失败重启、日志轮转、最小 ACL、平台/前端发布身份绑定、安装后只读验收和卸载流程见 [`windows-services/README.md`](windows-services/README.md)。仓库已完成无系统改动的服务包生成验收；实际服务器安装、重启和故障恢复仍需单独验收。
+基于 WinSW 的三个独立 Windows 虚拟账户、自动启动、失败重启、日志轮转、最小 ACL、平台/前端发布身份绑定、安装后只读验收和卸载流程见 [`windows-services/README.md`](windows-services/README.md)。仓库已完成无系统改动的生产服务包生成验收；生产服务的实际服务器安装、重启和故障恢复仍需单独验收，不能用受限四服务包的结果替代。
 
 ## 非公网生产拓扑验收
 

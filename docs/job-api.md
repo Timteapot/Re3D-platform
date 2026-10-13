@@ -13,21 +13,21 @@
 | POST | `/api/v1/jobs/{job_id}/cancel` | 请求取消当前用户任务 |
 | GET | `/api/v1/jobs/{job_id}/artifacts/{branch}/{kind}` | 读取经过完整性复核的固定产物 |
 
-这些路由在 development、test 和 production 环境注册。所有用户身份只来自经过校验的 Bearer access token；任务不存在和跨用户访问统一返回 404。
+这些路由在 development、test、restricted 和 production 环境注册。所有用户身份只来自经过校验的 Bearer access token；任务不存在和跨用户访问统一返回 404。
 
 读取、下载和取消已有任务不要求邮箱已验证。development/test 的 `/api/v1/development/simulated-jobs` 创建接口要求邮箱已验证；这与上传提交接口采用同一服务端权限边界。
 
 ## 环境边界
 
-| 接口组 | development/test | production |
-|---|---:|---:|
-| `/api/v1/auth` | 已注册 | 已注册 |
-| `/api/v1/jobs` | 已注册 | 已注册 |
-| `/api/v1/uploads` | 已注册；默认 simulated，可显式 real | 已注册；只允许 real |
-| `/api/v1/development/simulated-jobs` | 已注册 | 不注册 |
-| `/api/v1/development/jobs` 兼容入口 | 已注册但不进入 OpenAPI | 不注册 |
+| 接口组 | development/test | restricted | production |
+|---|---|---|---|
+| `/api/v1/auth` | 已注册 | 已注册 | 已注册 |
+| `/api/v1/jobs` | 已注册 | 已注册 | 已注册 |
+| `/api/v1/uploads` | 默认 simulated，可显式 real | 只允许 real | 只允许 real |
+| `/api/v1/development/simulated-jobs` | 已注册 | 不注册 | 不注册 |
+| `/api/v1/development/jobs` 兼容入口 | 已注册但不进入 OpenAPI | 不注册 | 不注册 |
 
-production 上传提交由服务端强制使用 `execution_mode=real`；客户端不能在生产环境创建模拟任务。稳定上传提交已接入数据库共享的单用户待处理任务数、滚动 24 小时次数限制和存储配额；具体合同见 [`task-submission-policy.md`](task-submission-policy.md) 与 [`user-storage-quota.md`](user-storage-quota.md)。成功任务三层保留期已经固定为 30 天并接入每日受审计 dry-run，普通 API 来源 IP 请求频率限制和单用户传输令牌桶/并发租约也已接入；任务预留值与传输限额实测校准、边缘流量防护、目标服务器周期观察和部署加固仍是公开启用前置条件。
+restricted/production 上传提交由服务端强制使用 `execution_mode=real`；客户端不能在这些环境创建模拟任务。稳定上传提交已接入数据库共享的单用户待处理任务数、滚动 24 小时次数限制和存储配额；具体合同见 [`task-submission-policy.md`](task-submission-policy.md) 与 [`user-storage-quota.md`](user-storage-quota.md)。成功任务三层保留期已经固定为 30 天并接入每日受审计 dry-run，普通 API 来源 IP 请求频率限制和单用户传输令牌桶/并发租约也已接入；任务预留值与传输限额实测校准、边缘流量防护、目标服务器周期观察和部署加固仍是公开启用前置条件。
 
 ## 响应边界
 

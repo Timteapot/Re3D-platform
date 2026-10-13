@@ -16,7 +16,7 @@
 | POST | `/api/v1/auth/password-reset/request` | 使用统一响应申请密码重置邮件 |
 | POST | `/api/v1/auth/password-reset/confirm` | 消费一次性令牌、更新密码并撤销刷新会话 |
 
-认证路由和稳定 `/api/v1/jobs` 任务访问路由在 development、test 和 production 环境均注册。开发模拟任务创建路由仍只在 development/test 注册，但也必须提供合法 Bearer token；客户端不能通过请求体或查询参数声明 `user_id`。
+认证路由和稳定 `/api/v1/jobs` 任务访问路由在 development、test、restricted 和 production 环境均注册。开发模拟任务创建路由只在 development/test 注册，但也必须提供合法 Bearer token；客户端不能通过请求体或查询参数声明 `user_id`。
 
 登录与邮箱验证是两个独立权限层级。未验证用户仍可登录、刷新会话、读取和取消自己的已有任务；创建上传会话、上传图片、提交上传以及调用开发模拟任务创建接口必须通过 `email_verified` 服务端校验，否则统一返回 403。前端禁用入口只是交互提示，不能替代这一 API 权限边界。
 
@@ -95,7 +95,7 @@ JWT 验证允许最多 5 秒的主机时钟偏差，用于容纳 API 与 Postgre
 - 未知用户也进入基于规范化标识符的账户桶并执行 dummy Argon2 校验；
 - 计数保存在 PostgreSQL，可由多个 API 进程共享，服务重启不会清除阻断状态。
 
-客户端 IP 默认取 TCP 对端，不直接相信 `X-Forwarded-For`。只有对端位于 `AUTH_TRUSTED_PROXY_CIDRS` 时，才从代理链右向左跳过可信代理并选择第一个不可信地址。production 必须显式配置可信代理网段，否则应用拒绝启动；不能把 `0.0.0.0/0` 或任意公网范围配置为可信代理。
+客户端 IP 默认取 TCP 对端，不直接相信 `X-Forwarded-For`。只有对端位于 `AUTH_TRUSTED_PROXY_CIDRS` 时，才从代理链右向左跳过可信代理并选择第一个不可信地址。restricted/production 必须显式配置可信代理网段，否则应用拒绝启动；restricted 只接受回环网段。可信列表必须限定为真实受控代理，不得以 `0.0.0.0/0` 信任任意来源。
 
 审计记录覆盖注册、登录、refresh token 轮换/重放和有效 refresh session 的退出。随机伪造或缺失的 refresh Cookie 不写入数据库，避免未认证请求无限制造审计记录。
 
@@ -120,6 +120,7 @@ Refresh Cookie 属性：
 - `Path=/api/v1/auth`：不会发送给任务、静态资源等其他路径；
 - production 强制 `Secure=true`，只能经 HTTPS 发送；
 - development/test 默认允许 `Secure=false`，仅用于 `127.0.0.1` HTTP 联调。
+- restricted 要求 `APP_PUBLIC_BASE_URL` 为 HTTP(S) 回环地址，并令 `Secure` 与地址协议一致；HTTP 回环模式允许 `false`，HTTPS 必须为 `true`。
 
 公开部署仍应校验可信 Origin、配置严格 CORS、全站 HTTPS，并在反向代理层设置安全响应头。SameSite 不能替代全部 CSRF 防护。
 
@@ -210,10 +211,10 @@ Invoke-RestMethod `
 
 ## 9. 尚未完成
 
-- 验证码和审计查询权限；
+- 验证码、管理员二次验证和细分权限；管理员只读审计查询权限已实现；
 - 生产 SMTP 提供商选择、退信处理和邮件送达监控；
 - 管理员停用用户的受保护接口；
 - 多设备会话列表与单独撤销；
 - 生产环境密钥管理和 JWT secret 轮换。
 
-因此当前认证实现可以支持后续前后端联调，但还不是公开互联网部署的完整安全控制集。
+认证实现已支持本机和服务器受限部署的注册、验证、登录与任务访问闭环，但还不是公开互联网部署的完整安全控制集。受限 SMTP、回环入口和 SSH 转发不得直接作为公网配置使用。

@@ -1,8 +1,8 @@
 # 开发 API → PostgreSQL → Worker 闭环
 
-## 1. 本步完成了什么
+## 1. 开发闭环与用途
 
-当前开发环境已经形成第一个可执行的后端闭环：
+模拟闭环用于验证 API、队列、任务目录、产物和评估的集成，不启动 GPU 重建：
 
 ```text
 已登录开发客户端
@@ -15,15 +15,15 @@
   → FastAPI 查询任务终态
 ```
 
-API 进程不执行重建，只负责校验请求、创建任务文件和写队列。Worker 是唯一执行管线并推进运行状态的组件，这一边界后续可以直接替换为真实 Re3D 执行器。
+API 进程不执行重建，只负责校验请求、创建任务文件和写队列。独立 Worker 执行管线并推进运行状态；真实 Re3D 消费者已实现，并与模拟消费者按 execution mode 隔离。真实执行边界见 [`worker.md`](worker.md)。
 
 ## 2. 安全边界
 
-创建模拟任务的路由使用 `/api/v1/development` 前缀，只有 `APP_ENV=development` 或 `APP_ENV=test` 时才注册。任务列表、详情、取消、SSE 和产物下载使用稳定的 `/api/v1/jobs` 前缀，在 development、test 和 production 环境注册。旧 `/api/v1/development/jobs` 仅作为本机迁移兼容路径保留，不进入 OpenAPI，production 环境返回 404。
+创建模拟任务的路由使用 `/api/v1/development` 前缀，只有 `APP_ENV=development` 或 `APP_ENV=test` 时才注册。任务列表、详情、取消、SSE 和产物下载使用稳定的 `/api/v1/jobs` 前缀，在 development、test、restricted 和 production 环境注册。旧 `/api/v1/development/jobs` 仅作为本机迁移兼容路径保留，不进入 OpenAPI，restricted/production 环境返回 404。
 
 所有任务接口都必须使用 Bearer access token，服务端从令牌和数据库取得内部用户 ID，不再接受客户端提交的 `user_id`。上传和任务创建还会在服务端检查邮箱验证状态。稳定路由已经具备生产环境注册边界，单用户存储配额、成功任务三层 30 天保留和普通 API 来源 IP 请求频率限制也已接入；但任务预留值实测校准、目标服务器保留策略验收、边缘流量防护和公网代理加固仍未完成，因此还不能暴露到公开互联网。
 
-旧的 `simulated-jobs` 接口仍生成平台开发字节；新的上传接口会保存并校验真实 JPEG/PNG。两者进入的仍是 simulated Worker：模拟 GLB 是格式合法的空场景，不包含网格、材质或纹理。评估报告因此将整体状态写为 `not_available`、分数写为 `null`，只把文件完整性标为通过，避免伪造质量结论。
+`simulated-jobs` 接口生成平台开发字节；稳定上传接口保存并校验真实 JPEG/PNG。development/test 上传默认提交 simulated，也可显式提交 real；restricted/production 只允许 real。模拟 GLB 是格式合法的空场景，不包含网格、材质或纹理，其评估报告将整体状态写为 `not_available`、分数写为 `null`，只把文件完整性标为通过，不生成真实质量结论。
 
 ## 3. 初始化项目虚拟环境
 
@@ -99,7 +99,7 @@ Invoke-RestMethod http://127.0.0.1:8000/health/live
 
 ## 6. 登录后创建并执行模拟任务
 
-先按 [`authentication.md`](authentication.md) 注册并登录，得到 `$login.access_token`。然后创建任务：
+先按 [`authentication.md`](authentication.md) 注册、完成邮箱验证并登录，得到 `$login.access_token`。然后创建任务：
 
 ```powershell
 $body = @{
@@ -127,7 +127,7 @@ cd D:\3Dreconstruction\Re3D-platform
   .\.venv\Scripts\python.exe -m apps.worker.main run-queued-once
 ```
 
-`run-real-queued-once` 每次最多领取一个真实任务；没有任务时返回 `{"claimed": false, "status": "idle"}`。生产入口使用 `run-real-queued-loop` 持续领取任务，空闲时按 `RE3D_WORKER_POLL_SECONDS` 休眠；WinSW 服务包已提供自动启动、失败退避重启和日志轮转，但仍需在目标服务器完成安装验收。
+上述 `run-queued-once` 每次最多领取一个 simulated 任务；真实任务使用独立的 `run-real-queued-once`。没有可领取任务时返回 `{"claimed": false, "status": "idle"}`。持续真实入口为 `run-real-queued-loop`，空闲时按 `RE3D_WORKER_POLL_SECONDS` 休眠。WinSW 服务包提供服务账户隔离、失败退避重启和日志轮转；公开生产与受限部署的启动模式和安装验收分别由各自部署文档定义，不能互换。
 
 查询结果：
 
@@ -179,7 +179,7 @@ Re3D-data/jobs/<job_uuid>/
 | POST | `/api/v1/uploads/{upload_id}/images` | 上传并校验一张 JPEG/PNG |
 | DELETE | `/api/v1/uploads/{upload_id}/images/{image_id}` | 删除未提交上传中的一张图片 |
 | POST | `/api/v1/uploads/{upload_id}/cancel` | 取消未提交上传并清理任务目录 |
-| POST | `/api/v1/uploads/{upload_id}/submit` | 复核输入并创建队列任务；无请求体时默认 simulated，开发验证可显式提交 `{"execution_mode":"real"}` |
+| POST | `/api/v1/uploads/{upload_id}/submit` | 复核输入并创建队列任务；development/test 默认 simulated，可显式 real；restricted/production 强制 real |
 | GET | `/api/v1/jobs` | 列出当前用户最近的任务 |
 | POST | `/api/v1/development/simulated-jobs` | 以当前登录用户创建幂等模拟任务 |
 | GET | `/api/v1/jobs/{job_id}` | 查询当前用户的任务 |
@@ -195,7 +195,7 @@ Re3D-data/jobs/<job_uuid>/
 不依赖外部服务的测试：
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest discover -v
+.\.venv\Scripts\python.exe -m unittest discover -s tests\unit -v
 ```
 
 真实 PostgreSQL 集成测试：
@@ -210,10 +210,10 @@ Re3D-data/jobs/<job_uuid>/
 
 ## 9. 仍未完成
 
-- 生产邮件服务、验证码，以及受管理员权限保护的审计查询；
+- 生产邮件服务、验证码与管理员二次验证；只读管理员审计 API 已实现；
 - 集中资源指标、阈值告警和 Worker 运行空间估算；
 - 基于真值或人工标注校准真实评估阈值；
-- 成功任务三层保留天数定值和计划执行验收；
+- 成功任务 30 天策略的多轮周期观察、人工双确认删除和恢复演练；每日 dry-run 调度已实现；
 - 实测并校准任务空间预留与已实现的单用户传输限额，增加管理员审计前端、边缘层流量防护和真实域名反向代理验收；单用户存储配额、传输令牌桶/并发租约和普通 API 来源 IP 共享限流已完成。
 
-2026-09-25 已完成 11 图真实 GPU 闭环验收，记录见 [`real-gpu-acceptance-2026-09-25.md`](real-gpu-acceptance-2026-09-25.md)。该结果证明本机平台编排和真实进程控制边界可工作，不代表系统已具备公开部署条件。
+本机 11 图真实 GPU 闭环验收见 [`real-gpu-acceptance-2026-09-25.md`](real-gpu-acceptance-2026-09-25.md)，后续目标服务器受限部署与不刷新详情页的三分支预览验收见 [`target-server-restricted-acceptance-2026-10-13.md`](target-server-restricted-acceptance-2026-10-13.md)。这些结果证明对应小样本闭环可运行，不代表 300 图容量或公开部署条件已经通过。

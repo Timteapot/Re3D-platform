@@ -2,15 +2,15 @@
 
 ## 当前实现范围
 
-当前 Worker 包含相互隔离的模拟消费者和真实消费者。模拟消费者用于日常前后端联调；真实消费者只领取 `execution_mode=real` 的任务，在 PostgreSQL 租约下启动固定 Re3D v1.1.2，并在运行期间监督心跳、取消、总超时和子进程树。该基线将 MapAnything 批量固定为 4，以适配 15 GiB Tesla T4，并使 MVSAnywhere 从本地 DINOv2 缓存确定性加载。
+Worker 包含相互隔离的模拟消费者和真实消费者。模拟消费者用于日常前后端联调；真实消费者只领取 `execution_mode=real` 的任务，在 PostgreSQL 租约下启动固定 `re3d-pipeline-v1.1.3`，并在运行期间监督心跳、取消、请求执行预算和子进程树。该基线将 MapAnything 批量固定为 4，以适配 15 GiB Tesla T4，并使 MVSAnywhere 从本地 DINOv2 缓存确定性加载。
 
 模拟器不会启动 Re3D、不会占用 GPU，也不会把模拟指标解释为真实重建质量。请求和结果都必须包含 `execution_mode: simulated`，避免模拟数据进入真实任务统计。
 
 真实 dry-run 要求 `execution_mode: real`，会调用 Re3D `scripts/run_pipeline.py --dry-run`，但只打印预期命令，不运行 COLMAP、模型或 OpenMVS。它生成预检报告，不生成 `pipeline-result.json`，因此不能被解释为重建成功。
 
-真实队列执行使用独立命令 `run-real-queued-once` 或持续的 `run-real-queued-loop`。没有该显式命令时，模拟 Worker 不会领取 real 任务。开发/测试环境的网页提交默认为 simulated，real 可由开发 API 显式请求；production 上传提交由服务端强制为 real。
+真实队列执行使用独立命令 `run-real-queued-once` 或持续的 `run-real-queued-loop`。没有该显式命令时，模拟 Worker 不会领取 real 任务。开发/测试环境的网页提交默认为 simulated，real 可由开发 API 显式请求；restricted/production 上传提交由服务端强制为 real。
 
-持续真实 Worker 会在进入队列循环前执行运行时预检。`baseline` 用于受限部署和小样本开发；`gpu-large-100`、`gpu-large-150` 用于已规划的阶梯验收；实验性 `gpu-large-300` 要求 64 GiB 任务预留、75 GiB 数据盘安全线、至少 14 GiB 总显存和 12 GiB 启动空闲显存。固定管线的 MapAnything `batch_size=4` 不随执行档改变。详细合同见 [`worker-execution-profiles.md`](worker-execution-profiles.md)。
+持续真实 Worker 会在进入队列循环前执行一次运行时预检；该检查不是每个任务的硬容量隔离。`baseline` 用于受限部署和小样本开发；`gpu-large-100`、`gpu-large-150`、`gpu-large-300` 定义不同规模的实验准入。实验性 `gpu-large-300` 要求 64 GiB 任务预留、75 GiB 数据盘安全线、至少 14 GiB 总显存和 12 GiB 启动空闲显存。固定管线的 MapAnything `batch_size=4` 不随执行档改变。详细合同见 [`worker-execution-profiles.md`](worker-execution-profiles.md)。
 
 ## 模块职责
 
@@ -87,6 +87,8 @@ $env:RE3D_ROOT = "D:\3Dreconstruction\Re3D"
 
 该命令会重新核对数据库任务所有者、attempt、执行模式、输入 manifest、Re3D Git 提交和配置哈希。运行完成后验证 `output/validation.json`，为 A-v4、B-v2、C 的 GLB、OBJ、MTL 和纹理计算大小与 SHA-256，并原子写入 `pipeline-result.json` 和 `evaluation.json`。
 
+API 在上传提交时把 `RE3D_JOB_TIMEOUT_SECONDS` 写入不可变请求；Worker 读取该请求，而不是以新的环境配置覆盖旧任务。恢复任务时扣除自任务开始以来已使用的时间。该预算监督真实管线子进程，产物归档、哈希核验和评估仍有额外耗时，不能用它替代完整任务或实例的计费时长上限。
+
 真实子进程只继承 Windows/PATH、CUDA/NVIDIA 和明确允许的 Re3D 运行变量，不继承 `DATABASE_URL`、JWT、SMTP 密码或测试数据库地址。Windows 使用 `taskkill /T /F` 终止进程树；Linux 迁移后使用独立进程组的 TERM/KILL 两阶段终止。
 
 成功时标准输出只包含一个 JSON 摘要，不输出图片路径、用户信息或内部 traceback。退出码约定：
@@ -144,9 +146,11 @@ $env:RE3D_ROOT = "D:\3Dreconstruction\Re3D"
 
 2026-09-25 已使用 11 张真实图片完成一次从 real 入队到终态的本机 GPU 验收，A-v4、B-v2、C 三分支、产物哈希校验和结构健康评估均通过。验收环境、耗时和限制见 [`real-gpu-acceptance-2026-09-25.md`](real-gpu-acceptance-2026-09-25.md)。这证明当前本机开发闭环可执行，不代表系统已经满足公开互联网部署条件。
 
-## 下一步
+## 生命周期集成与后续验收
 
-经过所有权和产物完整性复核的下载接口、前端 GLB 查看器、任务级资源采样、失败/取消任务整目录清理，以及默认 dry-run 的成功任务分层保留清理已经实现。成功任务保留期已统一为 30 天，每日 dry-run 使用持续 Worker 的隔离账户运行并写入数据库审计；下一步需要在目标服务器观察多轮周期结果，并补充集中监控告警和公开部署所需的认证加固。API 仍只读取数据库投影和受控产物，不直接运行管线。
+经过所有权和产物完整性复核的下载接口、前端 GLB 查看器、任务级资源采样、失败/取消任务整目录清理，以及默认 dry-run 的成功任务分层保留清理已经实现。成功任务保留期为 30 天，每日 dry-run 使用持续 Worker 的隔离账户运行并写入数据库审计；多轮周期观察、人工删除和恢复演练、集中监控告警仍需独立验收。API 只读取数据库投影和受控产物，不直接运行管线。
+
+目标服务器的受限部署已完成真实 11 图任务和详情页不刷新条件下的三分支 GLB 显示验收，范围见 [`target-server-restricted-acceptance-2026-10-13.md`](target-server-restricted-acceptance-2026-10-13.md)。直接 300 图配置和发布包已经准备，但服务器应用及大任务验收尚未完成；小任务通过不能证明大任务容量或公网部署能力。
 
 自动扫描频率、宽限期、数据库审计和手工重试流程见 [`failed-job-storage-cleanup.md`](failed-job-storage-cleanup.md)。
 真实任务私有资源样本、配置和保留语义见 [`resource-monitoring.md`](resource-monitoring.md)。

@@ -14,18 +14,22 @@
 | `storage-usage` | 真实 Worker | 私有容量校准 | `storage-usage.json` |
 | `storage-capacity-report` | 运维工具 | 私有容量决策 | 标准输出 JSON |
 
-Schema 使用 JSON Schema Draft 2020-12，`contract_version` 固定为 `1.0`。首期不允许普通用户改变分支或 Re3D 基线，因此请求 Schema 将三分支、标签、提交和配置哈希固定为常量。
+Schema 位于 `schemas/v1`，使用 JSON Schema Draft 2020-12，`contract_version` 固定为 `1.0`。首期不允许普通用户改变分支或 Re3D 基线，因此请求 Schema 将三分支 `A-v4`、`B-v2`、`C`、标签 `re3d-pipeline-v1.1.3`、提交和配置哈希固定为常量。
 
-请求和结果都包含 `execution_mode`。模拟 Worker 只能处理 `simulated`，后续真实适配器只能处理 `real`，两类产物不得混用。
+请求和结果都包含 `execution_mode`。模拟 Worker 只能处理 `simulated`，真实适配器与真实队列 Worker 只能处理 `real`，两类产物不得混用。restricted/production 稳定上传只提交 `real`；development/test 默认 `simulated` 并允许显式 `real`。模拟产物用于开发和隔离测试，不代表真实重建结果。
+
+请求输入允许 3–300 张图片，这只是契约范围，不表示任何主机都已通过 300 图容量验收。API 将上传检查结果、任务路径和执行预算写入不可变请求；已有任务不会随环境配置调整而重写。`limits.timeout_seconds` 的契约范围为 60–604800 秒，当前 API 默认使用 3600 秒，独立直接 300 图实验预设使用 14400 秒。执行档预检、磁盘准入和实际资源验收仍是 Worker 与部署层的职责。
 
 ## 验证
 
 ```powershell
 python -m pip install -r requirements-dev.txt
-python -m unittest discover -s tests -p "test_*.py" -v
+python -m unittest discover -s tests/unit -p "test_*.py" -v
 ```
 
 示例位于 `examples/v1/valid`。事件和资源采样示例是 JSONL，每一行必须分别独立符合对应 Schema。资源采样和空间摘要是任务私有运维证据，不进入用户 API 或质量评分。
+
+需要验证 PostgreSQL 并发、迁移或完整任务闭环时，使用 [`deploy/postgres/README.md`](../../deploy/postgres/README.md) 中的一次性容器流程，不将契约测试指向开发、受限或生产数据。
 
 ## 版本规则
 

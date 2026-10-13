@@ -2,6 +2,8 @@
 
 本目录把已经验收的 API、Worker 和 Caddy 前台入口转换为可由 Windows Service Control Manager 管理的三个独立服务。它不提交 WinSW 或 Caddy 二进制，也不会在普通验收中注册系统服务。
 
+本目录描述 `production` 三服务方案，不是目标服务器当前采用的 `restricted` 四服务方案。当前真实服务器完成的是受限回环部署和 11 图重建验收；生产虚拟账户、自动启动、真实域名证书和公网恢复能力仍待独立验收。两套方案的服务 ID、环境文件和启动模式不可混用。
+
 ## 固定边界
 
 - WinSW 固定为稳定版 `2.12.0`，使用 XML 配置和 bundled 模式；每个服务持有一份同源包装器副本和同名 XML。
@@ -66,7 +68,7 @@
 & .\deploy\production\windows-services\new-service-bundle.ps1 `
     -OutputRoot C:\ProgramData\Re3DPlatform `
     -WinSWPath C:\Install\WinSW-x64.exe `
-    -CaddyPath C:\Program Files\Caddy\caddy.exe `
+    -CaddyPath 'C:\Program Files\Caddy\caddy.exe' `
     -SiteAddress re3d.example.com
 ```
 
@@ -165,7 +167,7 @@ Get-CimInstance Win32_Service |
 
 ## 尚未完成的真实主机验收
 
-仓库已经验证服务包生成、源提交绑定、XML 结构、秘密隔离和清理，并提供安装后只读验收脚本，但当前开发机没有安装这些服务。目标服务器仍必须完成：
+仓库已经验证生产服务包生成、源提交绑定、XML 结构、秘密隔离和验收临时文件清理，并提供安装后只读验收脚本。当前没有生产三服务的目标主机验收记录；受限部署验收不能替代以下事项：
 
 - 运行安装前主机预检并归档无 blocker 的 JSON 报告；
 - 以管理员权限安装并确认三个 `StartName` 均为预期虚拟账户；

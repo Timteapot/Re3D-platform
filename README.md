@@ -1,115 +1,167 @@
 # Re3D Platform
 
-Re3D Platform 是基于 Re3D 三维重建管线的非商业学习与工程实践项目。平台目标是为公开互联网用户提供注册、登录、多视图图片上传、异步三维重建、三分支结果查看和自动质量评估。
+Re3D Platform 是基于 Re3D 多视图三维重建管线的非商业学习与工程实践项目，提供用户认证、图片上传、异步重建、三分支预览与下载，以及可解释的结构健康评估。当前部署范围为 Windows 本机或通过 SSH 回环转发访问的受限环境；公开互联网部署属于后续路线，尚未开放。
 
 ## 当前状态
 
-核心功能闭环、首轮本机真实 GPU 验收和 Windows 单机生产拓扑的非公网验收已经完成。鉴于短期不进行公网发布，当前主线采用 Windows 回环受限部署：独立 `restricted` 环境的稳定上传只创建真实任务，并强制 API、浏览器入口、可信代理、SMTP 和 PostgreSQL 保持在回环边界。2026-10-13 已完成目标服务器四服务基线验收、服务账户下网页提交的 11 图真实任务，以及 `29eda46` 部署后详情页不刷新时 Three.js 画布和默认模型自动出现的验收。重启恢复、300 图容量和公网生产验收仍待完成。公开发布仍受备案/域名、边缘防护、生产邮件、监控、压力测试和容量实测校准等条件约束。
+状态核对日期：2026-10-13。代码实现、验收证据和目标机部署版本分别记录，不以本机测试通过替代服务器容量或公网安全验收。
 
-- Re3D 活动基线标签：`re3d-pipeline-v1.1.3`
-- Re3D 活动基线提交：`e517a161b4c0895f8be4258fb339272e4f99e1d6`
-- 目标 GPU 兼容参数：Tesla T4（15 GiB）使用 MapAnything `batch_size=4`
-- 离线模型加载：MVSAnywhere 固定从本地 DINOv2 `main` Torch Hub 缓存加载
-- 首个冻结基线：`re3d-pipeline-v1.0.0`，保持不变并保留历史清单
-- 首期固定分支：`A-v4`、`B-v2`、`C`
-- 当前开发环境：Windows
-- 平台代码目录：`D:\3Dreconstruction\Re3D-platform`
-- 运行数据目录：`D:\3Dreconstruction\Re3D-data`
+| 范围 | 已具备能力 | 尚未完成 |
+|---|---|---|
+| 平台闭环 | 认证、邮箱验证、密码重置、上传、排队、进度、取消、评估、预览和下载 | 管理员 UI、验证码、完整失败样本与压力验收 |
+| 受限服务器部署 | 独立服务账户；网页 11 图真实任务；不刷新详情页自动显示 Three.js 画布和模型 | 主机重启与可控故障恢复验收 |
+| 管线容量 | Tesla T4 上 Lighthouse 150 图三分支断点续跑验收 | 300 图实际执行与连续资源观测 |
+| 直接 300 图实验 | `4ccd70e` 功能提交已推送，本机发布包、配置预设和输入校验完成 | 目标机预检、配置应用、服务包轮换及真实任务 |
+| 公网发布 | production 模板、权限拆分和部署工具 | 合规入口、域名/TLS、生产邮件、边缘防护、集中监控和实机验收 |
 
-基线的完整哈希和验证结果见 [`config/pipeline-baseline.json`](config/pipeline-baseline.json)，总体实施计划见 [`PROJECT_PLAN.md`](PROJECT_PLAN.md)，平台直接依赖声明见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。当前完成度和待办以 [`docs/progress.md`](docs/progress.md) 为准，服务间数据流和模块边界以 [`docs/module-integration.md`](docs/module-integration.md) 为准。
+最近已验收的服务器平台版本为 `29eda46`；直接 300 图更新尚未部署。最近功能发布的本机复核为后端 225 项、前端 26 项测试通过及前端生产构建成功。测试数量与版本相关，不代表全部场景已验收。
 
-当前已经可以通过 React 页面注册、登录、恢复会话、上传真实 JPEG/PNG 输入并创建任务。development/test 的默认网页提交进入模拟队列并允许显式 real；production 和 restricted 由服务端强制创建 real 任务。独立的真实 Worker 在 PostgreSQL 租约下监督 Re3D 子进程，处理取消、总超时和租约丢失，并汇总三分支产物和结构健康评估。2026-09-25 已使用 11 张真实图片完成本机 GPU 闭环验收；2026-10-08 又完成同规模真实任务的空间采样和容量报告验收；2026-10-10 在目标 Tesla T4 服务器上完成 `v1.1.2` 三分支空目录真实验收；2026-10-12 使用 `v1.1.3` 完成 Lighthouse 150 图三分支断点续跑验收；2026-10-13 完成目标服务器 restricted 四服务部署基线验收。任务详情页现可通过受所有权保护的稳定任务 API 下载清单内 GLB、OBJ、MTL 和纹理，并可在 Three.js 查看器中切换和交互预览三分支 GLB。任务 API 边界见 [`docs/job-api.md`](docs/job-api.md)，上传边界见 [`docs/image-uploads.md`](docs/image-uploads.md)，下载边界见 [`docs/artifact-downloads.md`](docs/artifact-downloads.md)，查看器边界见 [`docs/glb-viewer.md`](docs/glb-viewer.md)，实测证据见 [`docs/real-gpu-acceptance-2026-09-25.md`](docs/real-gpu-acceptance-2026-09-25.md)、[`docs/storage-capacity-acceptance-2026-10-08.md`](docs/storage-capacity-acceptance-2026-10-08.md)、[`docs/target-server-gpu-acceptance-2026-10-10.md`](docs/target-server-gpu-acceptance-2026-10-10.md)、[`docs/large-300-readiness-2026-10-12.md`](docs/large-300-readiness-2026-10-12.md) 和 [`docs/target-server-restricted-acceptance-2026-10-13.md`](docs/target-server-restricted-acceptance-2026-10-13.md)。
+活动算法基线为 `re3d-pipeline-v1.1.3`，提交 `e517a161b4c0895f8be4258fb339272e4f99e1d6`。首期固定运行 `A-v4`、`B-v2`、`C`；Tesla T4 使用 MapAnything `batch_size=4`，MVSAnywhere 从本地 DINOv2 Torch Hub 缓存加载。完整版本、配置与模型清单身份见 [固定基线](config/pipeline-baseline.json)，历史冻结版本保留而不覆盖。
 
-持续真实 Worker 会在领取任务前验证执行档、数据盘预留、NVIDIA GPU、PyTorch CUDA 和固定 MapAnything batch size。平台协议和上传链路现允许最多 300 图，实验性 `gpu-large-300` 使用 64 GiB 任务预留、75 GiB 数据盘安全线和 128 GiB 单用户配额。2026-10-13 已在本机准备直接 300 图的独立配置、4 小时可配置执行预算、5/15 秒资源与目录采样，以及经校验的 Lighthouse 300 图输入集。目标服务器尚未应用该配置，日常本机环境继续使用 `baseline`；边界和操作顺序见 [`docs/direct-300-local-readiness-2026-10-13.md`](docs/direct-300-local-readiness-2026-10-13.md)。
+## 前后端框架与运行架构
 
-## 仓库边界
-
-本仓库只保存 Web 前端、API、Worker、Re3D 适配器、评估模块、部署配置和测试。Re3D 源码、模型权重、用户上传、运行中间文件和重建产物均不复制到本仓库。
+平台采用浏览器单页应用、独立 HTTP API 和独立 GPU Worker。重建不在浏览器或 API 请求进程内运行，API 与 Worker 通过 PostgreSQL 队列及仓库外任务文件对接。
 
 ```text
-apps/web                 React 前端
-apps/api                 FastAPI API
-apps/worker              GPU 任务执行器
-backend/re3d_adapter     Re3D 运行契约与产物解析
-backend/evaluation       自动评估规则
-backend/monitoring       真实任务私有资源采样
-packages/contracts       共享 Schema 与生成类型
-packages/ui              可选共享 UI 组件
-config                   固定基线和非敏感配置
-deploy                   部署编排与代理配置
-docs                     架构、决策和运维文档
-tests                    集成、端到端与测试夹具
+浏览器 React SPA
+    │ 同源 /api 请求、鉴权 SSE、产物 Blob
+    ▼
+Caddy ── 静态 Web 文件
+    │ 反向代理
+    ▼
+FastAPI / Uvicorn ── PostgreSQL（认证、任务、租约、配额、审计）
+    │                         ▲ 领取 / 心跳 / 状态推进
+    │ 上传与授权读取           │
+    ▼                         │
+仓库外任务文件 ◀──── 独立 Worker
+                              ├─ Re3D：A-v4 / B-v2 / C
+                              ├─ 产物校验与结构健康评估
+                              └─ 资源采样与清理审计
 ```
 
-## 本地准备
+### 前端：React、TypeScript 与 Vite
 
-1. 复制 `.env.example` 为 `.env`，只在本机填写密钥和数据库凭据。
-2. 保证 `RE3D_ROOT` 指向已通过 `doctor.ps1` 检查的 Re3D 基线。
-3. 保证 `RE3D_DATA_ROOT` 位于代码仓库之外。
-4. 成功任务原图、中间文件和产物三层保留期均为 30 天；持续 Worker 每 24 小时执行一次受审计 dry-run，实际删除只能通过人工双确认命令触发。
+前端位于 `apps/web`，由 Vite 构建为静态 HTML/CSS/JavaScript。依赖由 [package.json](apps/web/package.json) 和 [package-lock.json](apps/web/package-lock.json) 固定。
 
-本地邮箱验证与密码重置使用只绑定回环地址的 Mailpit：
+| 组件 | 固定版本 | 项目职责 |
+|---|---|---|
+| React | 19.2.0 | 页面组件、表单交互和模型查看器生命周期 |
+| TypeScript | 5.9.2 | 编译期类型检查、接口响应与状态类型 |
+| Vite | 7.3.6 | 开发服务、模块加载、静态构建和代码分块 |
+| React Router | 7.18.4 | 页面路由、共享布局、受保护工作台与登录返回路径 |
+| TanStack Query | 5.89.0 | 任务/配额缓存、查询轮询、提交/取消操作和缓存更新 |
+| Three.js | 0.186.1 | GLB 解析、WebGL 渲染、轨道控制、取景、光照和模型姿态 |
+| Vitest / Testing Library | 5.0.1 / 16.3.0 | 请求、路由、组件与模型生命周期测试 |
+
+模块分工：
+
+- `main.tsx` 组合 QueryClient、BrowserRouter 和 AuthProvider；`App.tsx` 定义页面路由，`AppShell.tsx` 提供共享导航与布局。
+- `pages/` 实现主页、项目说明、认证/恢复页面、上传工作台和任务详情。
+- `auth/AuthContext.tsx` 管理内存 access token、会话恢复与刷新；refresh token 由后端签发并保存在浏览器的 HttpOnly Cookie 中，服务器保存会话及令牌摘要。access token 不写入 URL 或浏览器持久存储。
+- `api/http.ts` 封装原生 Fetch、相对 `/api` 路径、Bearer 请求头和 Cookie。认证、任务和上传调用由各模块的 API 封装承担；TypeScript 类型当前手工维护，尚无 OpenAPI 自动生成流程。
+- `jobs/events.ts` 通过带认证 Fetch 消费 SSE；详情页更新查询缓存，连接不可用时通过普通查询轮询恢复状态。
+- `jobs/GlbViewer.tsx` 按需加载。GLB 先通过授权 Fetch 取得 Blob，再以临时对象 URL 交给 Three.js；切换分支或卸载组件时释放模型、纹理、渲染器与对象 URL。
+- `styles.css` 为当前样式实现。UI 优化可以独立于后端接口和 GPU 执行开展。
+
+| 页面 | 当前路径 | 作用 |
+|---|---|---|
+| 主页 | `/` | 项目入口与流程概览 |
+| 项目说明 | `/about` | 技术、使用方式和第三方说明 |
+| 注册/登录 | `/auth/register`、`/auth/login` | 用户认证 |
+| 邮箱与密码恢复 | `/auth/verify-email`、`/auth/forgot-password`、`/auth/reset-password` | 一次性令牌操作 |
+| 工作台 | `/workspace` | 图片上传、配额、提交和最近任务 |
+| 任务详情 | `/workspace/jobs/:jobId` | 进度、取消、预览、下载和评估 |
+
+Vite 开发服务仅绑定 `127.0.0.1:5173`，将 `/api` 代理到本机 API。部署使用静态构建和 Caddy SPA 回退，不使用 Vite 开发服务作为部署入口。详细结构见 [前端文档](docs/frontend.md)。
+
+### 后端：FastAPI、PostgreSQL 与独立 Worker
+
+后端使用 Python，API、Worker 和维护命令分进程运行。平台 Python 环境与 Re3D/CUDA 推理环境分离，不复制算法权重或算法运行环境。
+
+| 组件 | 固定版本或已验收基线 | 项目职责 |
+|---|---|---|
+| FastAPI / Pydantic | 0.141.1 / 2.13.5 | HTTP 路由、请求/响应模型校验和 OpenAPI 描述 |
+| Uvicorn | 0.53.0 | ASGI API 服务与 SSE 响应 |
+| SQLAlchemy / psycopg | 2.0.34 / 3.2.3 | 数据模型、事务、数据库连接与并发锁 |
+| Alembic | 1.13.3 | 数据库迁移；当前 head 为 `0016_expand_image_count_300` |
+| PostgreSQL | 已验收环境为 18 | 认证、持久任务队列、资源租约、共享限流和审计 |
+| pwdlib / PyJWT | 0.3.1 / 2.15.0 | Argon2id 密码哈希与短期 JWT access token |
+| Pillow / jsonschema | 12.3.0 / 4.23.0 | 图片实际解码、像素限制与文件契约校验 |
+| Caddy / WinSW / Mailpit | 2.11.4 / 2.12.0 / 1.31.3 | 同源入口、Windows 服务封装和受限认证邮件捕获 |
+
+锁定 Python 依赖见 [API](requirements-api.txt)、[Worker](requirements-worker.txt) 和 [开发/迁移](requirements-dev.txt) 清单；Caddy、WinSW、Mailpit 是外部部署工具。
+
+- `apps/api` 注册认证、上传、稳定任务访问、下载及管理员审计接口。稳定前缀为 `/api/v1/auth`、`/api/v1/uploads`、`/api/v1/jobs` 和 `/api/v1/admin/audit`。
+- `backend/auth` 验证用户身份、邮箱所有权和可撤销会话；业务模块检查任务所有权。认证限流、来源 IP 限流、任务限制、存储配额与传输额度由数据库共享。
+- `backend/uploads` 使用独立上传会话保存半成品。提交时复核图片、哈希与额度，冻结输入/request 清单，再创建 queued 任务。API 不同步运行 GPU 重建。
+- `backend/db` 管理任务状态与 `gpu:0` 租约。Worker 原子领取、续租并持有 fencing token；失效 Worker 不得提交状态或终态。单 GPU 并发固定为 1。
+- `apps/worker` 与 `backend/worker` 消费队列；`backend/re3d_adapter` 检查固定管线、输入和路径，监督取消/超时及真实进程树，归档三分支产物。
+- `backend/evaluation` 生成版本化 `evaluation.json`，当前只评估结构健康，不测量有真值的几何精度，综合分数为 `null`。
+- `backend/monitoring` 保存任务资源与目录空间样本；`apps/maintenance` 提供就绪检查、审计维护、容量汇总和显式清理命令。
+
+数据库保存认证、上传元数据、任务、租约和审计；图片、日志、结果与评估正文位于 `RE3D_DATA_ROOT/jobs/<job_uuid>`。当前使用本地文件系统；对象存储和签名下载 URL 尚未实现。共享 JSON Schema 位于 [packages/contracts](packages/contracts/README.md)，并不自动生成前后端类型。
+
+## 环境与项目约束
+
+| 环境 | 用途与边界 |
+|---|---|
+| `development` / `test` | 支持模拟链路与显式真实任务；开发专用路由只在这两类环境注册 |
+| `restricted` | real-only；API、Web、数据库、SMTP 和可信代理限定回环地址；独立数据库与数据根 |
+| `production` | 真实任务及公网安全配置要求；已有模板和工具，尚未完成公网验收 |
+
+- 仅用于非商业学习与工程实践；第三方代码、模型和数据的许可与署名要求仍需分别遵守。
+- 用户须登录并验证邮箱后上传或提交任务，只能访问自己的任务与产物。
+- JPEG/PNG 默认限制为 3–300 张、单图 25 MiB、总量 1 GiB、单图最多 5000 万像素。支持上限不代表任意 300 图任务已通过容量验收。
+- 每个任务固定 A-v4、B-v2、C；普通用户不能提交任意管线参数、命令或服务器路径。
+- 存储按未提交输入实际字节和已提交任务固定预留量记账，不涉及商业收费。预留是准入机制，不是运行中磁盘硬封顶。
+- 应用层上传/下载令牌桶和并发租约不提供网络 Mbps 整形或边缘抗攻击能力。
+- 失败/取消任务经过宽限期与终态持久化后清理任务目录，保留最小审计。
+- 成功任务输入、运行文件和产物采用 30 天保留策略；自动周期仅受审计 dry-run。实际删除需要独立双确认命令，不能宣称到期自动删除。
+- 密钥、真实 `.env`、数据库、用户文件、模型权重和运行产物不得提交 Git；数据目录位于代码仓库之外。
+
+平台、算法和数据分别维护。当前本机目录为 `D:\3Dreconstruction\Re3D-platform`、`D:\3Dreconstruction\Re3D`、`D:\3Dreconstruction\Re3D-data`；目标机路径由配置和部署清单指定。
+
+## 本机开发与验证
+
+开发使用 Python 3.12 平台虚拟环境、Node.js ≥22.12.0、锁定前端依赖和 PostgreSQL。数据库集成测试使用临时 Docker PostgreSQL，禁止复用开发或受限数据库。
+
+1. 按 [数据库文档](deploy/postgres/README.md) 准备独立数据库与角色。
+2. 按 [开发环境文档](deploy/development/README.md) 初始化私密配置并检查环境；已有配置不得覆盖。
+3. 按 [API/Worker 文档](docs/development-api-worker.md) 启动进程，按 [Mailpit 文档](deploy/mailpit/README.md) 准备认证邮件，按 [前端文档](docs/frontend.md) 安装依赖并启动页面。
 
 ```powershell
-& .\deploy\mailpit\start-local.ps1
-& .\deploy\mailpit\run-acceptance.ps1
+# 平台根目录：单元测试使用临时文件和 SQLite
+.\.venv\Scripts\python.exe -m unittest discover -s tests\unit
+
+# apps/web 目录
+npm test
+npm run build
 ```
 
-邮件界面位于 `http://127.0.0.1:8025`，具体配置和停止方式见 [`deploy/mailpit/README.md`](deploy/mailpit/README.md)。
+`npm run build` 用于构建检查；部署发布须使用 [build-web.ps1](deploy/production/build-web.ps1) 生成绑定干净 Git 提交的 `deployment.json`。Windows 脚本可使用临时进程执行策略，无需修改全局策略。
 
-首次创建包含数据库密码和随机 JWT 密钥的本机 `.env`：
+## 后续计划
 
-```powershell
-& .\deploy\development\initialize-local-env.ps1
-```
+1. **直接 300 图验收**：先核验目标机实际空闲磁盘 ≥139 GiB、总显存 ≥14 GiB、空闲显存 ≥12 GiB，队列/租约空闲；通过后应用预设、重新生成服务包并提交 Lighthouse 300 图任务。实验值为用户 128 GiB、任务预留 64 GiB、数据盘安全线 75 GiB、执行预算 4 小时、资源/目录采样 5/15 秒。结果用于校准容量，不预先承诺耗时或成功。
+2. **可恢复部署封装**：保存版本锁、工具与模型哈希、离线依赖、非秘密模板和受保护备份，补齐 restricted 数据库恢复演练。功能发布包不能替代完整环境封装。
+3. **实例释放前验收**：验证配置重建、数据恢复和新环境真实小任务后，再决定释放旧实例；补充服务/主机重启与故障恢复验收。
+4. **本机 UI 优化**：保持接口和权限合同，优化主页、按钮、动效、布局、加载/错误状态与响应式体验，使用模拟任务和已归档 GLB，不依赖服务器持续开机。
+5. **公网阶段（暂缓）**：另行完成合规入口、真实域名/TLS、生产 SMTP、验证码、管理员二次验证、集中告警、保留策略观察和压力测试。
 
-脚本不会覆盖已有配置，且只输出不含秘密的就绪检查结果。说明见 [`deploy/development/README.md`](deploy/development/README.md)。
+## 文档导航
 
-生产配置模板、按 `api` / `worker` / `all` 区分的无秘密就绪检查、前端生产构建、API/Worker 启动入口、Caddy 同源代理和本机闭环验收见 [`deploy/production/README.md`](deploy/production/README.md)。生产 PostgreSQL 的管理员/迁移/运行权限拆分以及备份恢复流程见 [`deploy/postgres/README.md`](deploy/postgres/README.md)。目标 Windows 主机安装前还应运行 [`test-target-host-prerequisites.ps1`](deploy/production/windows-services/test-target-host-prerequisites.ps1)，生成不含秘密的主机阻断项报告。这些检查用于提前拒绝开发库、管理员数据库账户、不安全 Cookie、非 HTTPS 公共地址、未加密 SMTP、漂移的 Re3D 基线、不兼容工具链和不足的数据盘；检查通过本身不代表允许开放公网。
+| 文档 | 职责 |
+|---|---|
+| [开发进度](docs/progress.md) | 当前完成度、验收层级与阻断项 |
+| [项目计划](PROJECT_PLAN.md) | 有效范围、后续阶段与验收条件 |
+| [模块集成](docs/module-integration.md) | 运行时数据流、模块边界与对接 |
+| [前端](docs/frontend.md) | 前端结构与交互 |
+| [认证](docs/authentication.md)、[任务](docs/job-api.md)、[上传](docs/image-uploads.md) | 当前 API 和业务合同 |
+| [下载](docs/artifact-downloads.md)、[查看器](docs/glb-viewer.md) | 授权产物与三维预览 |
+| [受限部署](deploy/restricted/README.md)、[生产部署](deploy/production/README.md) | 操作与环境要求 |
+| [直接 300 图准备](docs/direct-300-local-readiness-2026-10-13.md) | 输入、配置与应用顺序 |
+| [第三方声明](THIRD_PARTY_NOTICES.md) | 平台依赖及算法声明来源 |
 
-短期本机受限部署使用 [`.env.restricted.example`](.env.restricted.example) 和 [`.env.worker.restricted.example`](.env.worker.restricted.example)。本机已创建独立数据库/最小权限角色、仓库外数据目录和受保护的私密环境文件，并通过全组件就绪检查与 Mailpit 认证邮件验收；安全边界和复现命令见 [`deploy/restricted/README.md`](deploy/restricted/README.md)。`restricted` 不等于 development：它不注册开发任务路由，也不允许模拟重建；同时它也不等于 production，允许回环 HTTP Cookie 和本机无 STARTTLS Mailpit，但拒绝局域网或公网地址。
+带日期的验收记录保存当时版本、输入和结果，不作为持续更新的当前状态说明。状态以进度文档为准，操作以对应模块或部署文档为准。
 
-`.env`、用户数据、模型权重和运行产物不得提交到 Git。
-
-前端首次安装和启动：
-
-```powershell
-cd D:\3Dreconstruction\Re3D-platform\apps\web
-Copy-Item .env.example .env
-npm ci
-npm run dev
-```
-
-Vite 开发服务器只绑定 `127.0.0.1:5173`，并将 `/api` 代理到本机 FastAPI；它不能用作公开部署服务器。
-
-## 已固定的首期规则
-
-- 用户必须登录且验证邮箱后才能提交任务。
-- 每个任务固定运行 A-v4、B-v2、C 三条分支。
-- 原图、中间文件、日志、结果和评估以 `job_uuid` 为单位保存。
-- 失败和取消任务会在状态和脱敏错误信息写入数据库后，由 Worker 周期清理整个任务文件目录；删除尝试和结果保留在数据库中。
-- 稳定上传提交使用数据库共享的单用户待处理任务数和滚动 24 小时次数限制；成功创建和首次取消写入最小审计事件。
-- 单用户存储按未提交图片实际字节和已提交任务固定预留量计费；并发检查由 PostgreSQL 用户行锁串行化，失败任务或成功任务分层清理完成后释放。
-- 单用户上传/下载使用 PostgreSQL 共享的连续字节令牌桶和过期并发租约；上传校验/落盘结束或下载响应结束时释放租约，超限返回稳定 429。
-- 成功任务原图、中间文件和产物统一保留 30 天；持续 Worker 默认每日执行受审计 dry-run，实际删除仍是独立双确认命令；在完成目标服务器周期观察与执行验收前不得开放互联网部署。
-- API 不直接运行 Re3D；独立 Worker 通过任务租约串行占用单张 GPU。
-
-## 下一步
-
-当前按以下顺序推进，已实现本机可用不完全具备公网部署能力：
-
-1. 下次开机先复核实际磁盘和 GPU 条件，轮换到新的干净平台发布和直接 300 图配置，通过安装后验收；
-2. 操作者选择直接尝试一次 Lighthouse 300 图，通过 SSH 回环网页提交并记录资源、耗时、三分支结果和大 GLB 预览；
-3. 归档测试证据，补齐服务器部署封装与数据库恢复演练，通过恢复验证后再决定释放旧实例；本地 UI 优化可在服务器关闭期间进行；
-4. 服务/主机重启恢复仍待验证；未来重新进入公网阶段时，再补齐备案或合规域名、TLS、生产 SMTP、验证码、边缘防护、管理员二次验证与集中监控。
-
-当前版本可用于目标服务器部署工程和内部验收，不应直接向公开互联网开放注册与重建。
-
-数据库队列的设计、初始化和当前边界见 [`docs/database-queue.md`](docs/database-queue.md)。
-失败/取消任务的自动文件清理、审计字段和人工重试命令见 [`docs/failed-job-storage-cleanup.md`](docs/failed-job-storage-cleanup.md)。
-真实任务 CPU、内存、数据盘、GPU 和任务目录空间峰值的私有采样契约见 [`docs/resource-monitoring.md`](docs/resource-monitoring.md)。
-任务空间摘要的只读汇总、P50/P95 和预留值校准方法见 [`docs/storage-capacity-calibration.md`](docs/storage-capacity-calibration.md)。
-管理员审计查询、脱敏边界和首名管理员引导见 [`docs/admin-audit.md`](docs/admin-audit.md)。
-普通 API 来源 IP 限流、可信代理边界和 429 合同见 [`docs/api-rate-limiting.md`](docs/api-rate-limiting.md)。
-单用户存储计费、释放时机、507 合同和当前估算边界见 [`docs/user-storage-quota.md`](docs/user-storage-quota.md)。
-单用户上传/下载并发租约、字节令牌桶、429 合同和代理层边界见 [`docs/transfer-limits.md`](docs/transfer-limits.md)。
+活跃文档维护项目介绍、实现状态、有效计划、使用说明与约束；采用客观的角色和系统描述，不保存对话式交付叙述。计划明确标注未实现或未验收事项，操作说明保留必要的安全提示与确认步骤。

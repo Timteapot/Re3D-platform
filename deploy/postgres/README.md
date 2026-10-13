@@ -1,4 +1,6 @@
-# PostgreSQL 开发与生产数据库
+# PostgreSQL 开发、受限部署与生产数据库
+
+三种环境使用独立数据库和应用身份。开发库供本机开发使用；当前服务器部署采用受限库；生产库的初始化与备份脚本是后续公开部署资产。自动化测试只连接一次性测试数据库，不复用这些持久数据库。
 
 ## 本机开发实例
 
@@ -108,7 +110,7 @@ DATABASE_URL=postgresql+psycopg://re3d_runtime:<URL编码后的密码>@127.0.0.1
 
 两次操作都通过安全输入读取密码；迁移密码不会写入配置。API/Worker 配置仅保存受限运行角色密码。完整顺序见 [`deploy/restricted/README.md`](../restricted/README.md)。
 
-### 忘记服务器 `postgres` 密码时的受控恢复
+### PostgreSQL 管理员密码不可用时的受控恢复
 
 仓库、受限环境文件和初始化日志都不会保存 PostgreSQL `postgres`
 管理员密码，因此不能从项目数据中找回原密码。确认密码确实不可用后，可在服务器的
@@ -159,7 +161,9 @@ powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File D:\Re3D-platform
 已消费后初始化失败，或信封过期，不应长期保存/复用该凭据；排除失败原因后重新运行
 受控恢复生成新信封。恢复脚本拒绝覆盖已有信封，以避免把未处理状态静默覆盖。
 
-### 备份与恢复演练
+## 生产数据库备份与恢复演练
+
+以下脚本固定备份 `re3d_platform`，使用 `re3d_migrator` 身份；它不是当前 `re3d_platform_restricted` 的备份入口。受限服务器封装与释放前，仍需实现或单独验证受限库的备份、隔离恢复和数据完整性流程，不能把生产库备份验收当作受限库已经可恢复的证据。
 
 备份目标必须在源码仓库之外，而且脚本拒绝覆盖已有文件：
 
@@ -177,7 +181,7 @@ powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File D:\Re3D-platform
     -BackupPath E:\Re3D-backups\re3d-platform-2026-09-29.dump
 ```
 
-该命令不会覆盖 `re3d_platform`。正式上线前仍需在真实目标实例生成一次备份，并在隔离环境完成恢复演练，记录恢复时间和恢复点目标。
+该命令不会覆盖 `re3d_platform`。正式上线前仍需在真实目标实例生成一次备份，并在隔离环境完成恢复演练，记录恢复耗时与可恢复的数据时间点。数据库备份不包含任务目录中的原图、中间文件和产物；完整恢复还需要单独备份这些文件及其校验清单。
 
 ## 集成测试
 
