@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 
@@ -286,6 +287,7 @@ def main(argv: list[str] | None = None) -> int:
                             json.dumps(
                                 {
                                     "operation": "worker-runtime-preflight",
+                                    **_worker_runtime_evidence(),
                                     **preflight,
                                 },
                                 ensure_ascii=False,
@@ -382,6 +384,7 @@ def _run_real_worker_loop(
             {
                 "operation": "real-worker-loop",
                 "status": "started",
+                **_worker_runtime_evidence(),
                 "poll_seconds": poll_seconds,
                 "success_retention_dry_run_enabled": success_retention is not None,
                 "success_retention_interval_seconds": (
@@ -440,6 +443,15 @@ def _run_real_worker_loop(
             )
         else:
             time.sleep(poll_seconds)
+
+
+def _worker_runtime_evidence() -> dict[str, int | str]:
+    """Identify a log record as evidence from the currently running worker."""
+
+    return {
+        "process_id": os.getpid(),
+        "emitted_at_utc": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 def _worker_poll_seconds(configured: float | None) -> float:

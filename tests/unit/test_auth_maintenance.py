@@ -86,7 +86,35 @@ class AuthMaintenanceTests(unittest.TestCase):
             json.loads(stdout.getvalue()),
             {"status": "ready", "component": "api"},
         )
-        readiness.assert_called_once_with(component="api")
+        readiness.assert_called_once_with(
+            component="api",
+            check_smtp_connectivity=True,
+        )
+
+    @patch(
+        "apps.maintenance.main.check_restricted_readiness",
+        return_value={"status": "ready", "component": "api"},
+    )
+    def test_restricted_readiness_command_can_defer_smtp_connectivity(
+        self,
+        readiness,
+    ) -> None:
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = maintenance_main(
+                [
+                    "check-restricted-readiness",
+                    "--component",
+                    "api",
+                    "--defer-smtp-connectivity-check",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        readiness.assert_called_once_with(
+            component="api",
+            check_smtp_connectivity=False,
+        )
 
     def test_cleanup_removes_expired_records_but_preserves_active_blocks(self) -> None:
         now = datetime.now(timezone.utc)

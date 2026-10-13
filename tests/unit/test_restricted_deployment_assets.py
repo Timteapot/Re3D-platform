@@ -240,8 +240,8 @@ class RestrictedDeploymentAssetTests(unittest.TestCase):
             ROOT / "deploy/restricted/check-restricted-readiness.ps1"
         ).read_text(encoding="utf-8")
         self.assertIn("SetAccessRuleProtection($true, $false)", common)
-        self.assertIn("[IO.File]::SetAccessControl($resolved, $acl)", common)
-        self.assertNotIn("Set-Acl", common)
+        self.assertIn("Set-Acl -LiteralPath $resolved -AclObject $acl", common)
+        self.assertNotIn("[IO.File]::SetAccessControl", common)
         self.assertIn("$acl.GetOwner", common)
         self.assertIn("Assert-Re3DRestrictedSecretFileAcl", common)
         self.assertIn("Set-Re3DRestrictedSecretFileAcl", initializer)

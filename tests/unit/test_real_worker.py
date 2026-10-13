@@ -10,6 +10,7 @@ import threading
 import time
 import unittest
 import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -57,6 +58,9 @@ class RealWorkerLoopTests(unittest.TestCase):
 
         records = [json.loads(line) for line in stdout.getvalue().splitlines()]
         self.assertEqual(records[0]["operation"], "real-worker-loop")
+        self.assertEqual(records[0]["process_id"], os.getpid())
+        emitted_at = datetime.fromisoformat(records[0]["emitted_at_utc"])
+        self.assertEqual(emitted_at.utcoffset(), timedelta(0))
         self.assertEqual(records[1]["job_id"], "job-1")
         self.assertEqual(len(records), 2)
 

@@ -321,11 +321,16 @@ def check_production_readiness(
 def check_restricted_readiness(
     *,
     component: RestrictedComponent = "all",
+    check_smtp_connectivity: bool = True,
 ) -> dict[str, Any]:
     """Validate the loopback-only, real-pipeline restricted deployment."""
 
     if component not in {"api", "worker", "all"}:
         raise ValueError("restricted component must be api, worker, or all")
+    if not check_smtp_connectivity and component != "api":
+        raise ValueError(
+            "SMTP connectivity may be deferred only for restricted API pre-install checks"
+        )
     environment = os.environ.get("APP_ENV", "").strip().lower()
     if environment != "restricted":
         raise ValueError(
@@ -388,7 +393,14 @@ def check_restricted_readiness(
         }
         response["transfer_limits"] = _transfer_limit_summary(transfer_limits)
         response["public_base_url"] = email.public_base_url
-        response["smtp"] = _check_smtp(email)
+        response["smtp"] = (
+            _check_smtp(email)
+            if check_smtp_connectivity
+            else _summarize_smtp_configuration(
+                email,
+                connectivity_checked=False,
+            )
+        )
         response["uploads"] = {
             "max_file_bytes": uploads.max_file_bytes,
             "max_total_bytes": uploads.max_total_bytes,
@@ -768,10 +780,24 @@ def _check_smtp(email: AuthEmailSettings) -> dict[str, int | str | bool]:
                 raise ValueError("configured SMTP service did not accept NOOP")
     except (OSError, smtplib.SMTPException) as exc:
         raise ValueError("cannot connect to the configured SMTP service") from exc
+    return _summarize_smtp_configuration(
+        email,
+        connectivity_checked=True,
+    )
+
+
+def _summarize_smtp_configuration(
+    email: AuthEmailSettings,
+    *,
+    connectivity_checked: bool,
+) -> dict[str, int | str | bool]:
+    if email.host is None:
+        raise ValueError("SMTP_HOST is required for email readiness checks")
     return {
         "host": email.host,
         "port": email.port,
         "starttls": email.starttls,
+        "connectivity_checked": connectivity_checked,
     }
 
 

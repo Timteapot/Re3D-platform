@@ -61,6 +61,14 @@ def build_parser() -> argparse.ArgumentParser:
         default="all",
         help="Process role to validate (default: all)",
     )
+    restricted.add_argument(
+        "--defer-smtp-connectivity-check",
+        action="store_true",
+        help=(
+            "Validate restricted SMTP configuration without connecting; "
+            "reserved for pre-install service checks"
+        ),
+    )
     role_change = subparsers.add_parser(
         "set-user-role",
         description="Set one user role with explicit confirmation and database audit",
@@ -98,7 +106,12 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "check-production-readiness":
             response = check_production_readiness(component=args.component)
         elif args.command == "check-restricted-readiness":
-            response = check_restricted_readiness(component=args.component)
+            response = check_restricted_readiness(
+                component=args.component,
+                check_smtp_connectivity=(
+                    not args.defer_smtp_connectivity_check
+                ),
+            )
         elif args.command == "cleanup-auth-security":
             database = DatabaseSettings.from_environment(args.database_url)
             engine = create_database_engine(database)

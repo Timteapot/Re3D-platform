@@ -30,7 +30,9 @@ For a first-time single-host installation, use the unified initializer. It asks
 only for the PostgreSQL administrator password, validates it before making any
 change, generates separate random migration/runtime passwords, applies the
 migrations, creates protected environment files, starts loopback Mailpit and
-runs the complete readiness check:
+runs the complete readiness check. On the target server, run this command from
+the non-elevated local `re3d-deploy` session so that the protected source
+environment files retain the owner expected by later elevated bundle generation:
 
 ```powershell
 & .\deploy\restricted\initialize-server-restricted.ps1
@@ -100,22 +102,135 @@ profile:
 
 The command returns only non-secret identities, limits and dependency status.
 
-## Loopback stack orchestration
+## Interactive loopback stack orchestration
 
-The restricted stack does not install Windows services. It uses a pinned Caddy
-v2.11.4 binary, builds the static React application and starts Mailpit, API,
-the real-queue Worker and Caddy as hidden processes. A direct interactive start
-is suitable for a local PowerShell session:
+The basic restricted-stack command does not install Windows services. It uses a
+pinned Caddy v2.11.4 binary, builds the static React application and starts
+Mailpit, API, the real-queue Worker and Caddy as hidden processes. A direct
+interactive start is suitable for a local PowerShell session:
 
 ```powershell
 & .\deploy\restricted\start-restricted-stack.ps1
 ```
 
 Processes created by a non-interactive Windows SSH session are tied to that
-session and must not be treated as a durable deployment. For an SSH-managed
-server, first provision a dedicated Task Scheduler folder from an elevated
-Administrator PowerShell. The provisioner performs two narrowly scoped
-operations:
+session and must not be treated as a durable deployment.
+
+## Durable restricted Windows services
+
+The recommended passwordless lifecycle for an SSH-managed Windows server is a
+four-service WinSW bundle. Mailpit, API, Worker and Caddy run under separate
+Windows virtual service accounts:
+
+- `NT SERVICE\Re3DRestrictedMailpit`;
+- `NT SERVICE\Re3DRestrictedApi`;
+- `NT SERVICE\Re3DRestrictedWorker`;
+- `NT SERVICE\Re3DRestrictedCaddy`.
+
+This separation is intentional. In particular, the Worker service receives
+only the Worker environment and cannot read the API JWT, cookie or SMTP
+secrets. No account password is stored in a WinSW XML or manifest. The services
+are installed with Manual start mode so a server reboot or cloud savings-stop
+resume does not silently begin consuming queued GPU work. WinSW failure recovery
+still applies after an operator explicitly starts the bundle.
+
+Build and verify the frontend first. Then create the commit-bound runtime bundle
+outside the Git checkout. The following example resolves the default pinned
+Caddy and Mailpit locations relative to the current project checkout:
+
+```powershell
+$projectRoot = (Resolve-Path .).Path
+$workspaceRoot = Split-Path -Parent $projectRoot
+
+& .\deploy\production\build-web.ps1 -SkipInstall
+
+& .\deploy\restricted\windows-services\new-service-bundle.ps1 `
+    -OutputRoot C:\ProgramData\Re3DRestricted `
+    -WinSWPath C:\Install\WinSW-x64.exe `
+    -CaddyPath (Join-Path $workspaceRoot 'tools\caddy\v2.11.4\caddy.exe') `
+    -MailpitPath (Join-Path $workspaceRoot 'tools\mailpit\v1.31.3\mailpit.exe')
+
+& .\deploy\restricted\windows-services\test-service-bundle.ps1 `
+    -BundleRoot C:\ProgramData\Re3DRestricted `
+    -CheckExternalBinaryVersions
+```
+
+Bundle generation and installation both run from an elevated Administrator
+PowerShell. The generator copies the API and Worker environment files into
+separate protected locations in the bundle. Installation validates ACL
+boundaries and registers the four services but does not start them. The two
+source environment files must remain owned by the fixed local
+`COMPUTERNAME\re3d-deploy` account created by the initialization flow; elevation
+does not broaden that source-secret owner contract. The original WinSW download
+is verified while generating the bundle, then each copied wrapper is verified
+independently, so `C:\Install\WinSW-x64.exe` is not a runtime dependency.
+
+The install-time API readiness check validates the complete restricted SMTP
+configuration but deliberately defers network connectivity because the new
+Mailpit service is not running yet. The installed-service acceptance below
+performs the real SMTP protocol check after it has verified that ports 1025 and
+8025 belong to the new Mailpit service.
+
+Worker `TEMP`/`TMP` defaults to
+`RE3D_DATA_ROOT\_services\restricted-worker-temp` on the data disk, rather
+than `C:\ProgramData`; `-WorkerTempRoot` may override it only with another
+path inside `RE3D_DATA_ROOT`.
+
+```powershell
+& .\deploy\restricted\windows-services\install-service-bundle.ps1 `
+    -BundleRoot C:\ProgramData\Re3DRestricted
+
+# Required when the older standalone/interactive stack was used previously.
+& .\deploy\mailpit\stop-standalone.ps1
+
+& .\deploy\restricted\windows-services\start-service-bundle.ps1 `
+    -BundleRoot C:\ProgramData\Re3DRestricted
+
+& .\deploy\restricted\windows-services\test-installed-services.ps1 `
+    -BundleRoot C:\ProgramData\Re3DRestricted
+```
+
+The service bundle records a clean platform commit. Explicit install, start and
+acceptance commands refuse source drift, but an already running WinSW service
+does not revalidate Git state during automatic process restart. The services
+still execute code from that checked-out project directory. This is acceptable
+only for the restricted acceptance profile. A public production deployment must
+use the separate production release/service process and an
+administrator-controlled immutable release directory.
+
+Start order is Mailpit, API, Worker and Caddy. Stop and uninstall order is the
+reverse, so the public loopback entry point closes before its dependencies.
+Before stopping the cloud instance, first ensure no reconstruction is active,
+then stop and verify the bundle:
+
+```powershell
+& .\deploy\restricted\windows-services\stop-service-bundle.ps1 `
+    -BundleRoot C:\ProgramData\Re3DRestricted
+
+& .\deploy\restricted\windows-services\get-service-bundle-status.ps1 `
+    -BundleRoot C:\ProgramData\Re3DRestricted
+```
+
+An elevated Administrator can remove only the service registrations with
+`uninstall-service-bundle.ps1`. The bundle, logs, Mailpit state, task data and
+non-secret ACL entries are retained for audit and recovery; the uninstaller
+removes stale service-SID access from the two secret files and never recursively
+deletes those paths.
+
+## Task Scheduler compatibility path
+
+The older S4U Scheduled Task path remains available for compatible local
+Windows hosts, but it is not the recommended server lifecycle. On the current
+target server, repeated minimal S4U registration tests returned
+`E_ACCESSDENIED` from an OpenSSH network-logon session even after the exact
+account received `SeBatchLogonRight`; an InteractiveToken definition could be
+registered but could not be dispatched from that session. Do not weaken the
+identity model to `LocalSystem`, store a user password, or grant administrator
+membership to bypass that host-specific result.
+
+To evaluate the compatibility path, first provision a dedicated Task Scheduler
+folder from an elevated Administrator PowerShell. The provisioner performs two
+narrowly scoped operations:
 
 - it creates or validates a protected scheduler-folder ACL that grants access
   only to SYSTEM, Administrators and the exact local `re3d-deploy` account;
