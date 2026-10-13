@@ -204,6 +204,14 @@ path inside `RE3D_DATA_ROOT`.
     -BundleRoot C:\ProgramData\Re3DRestricted
 ```
 
+The target Windows GPU server completed this four-service baseline acceptance
+at platform commit `a202d77274b7aab0ed6525f0903ef973c0a193b7` on 2026-10-13.
+The evidence and exact limitations are recorded in
+[`docs/target-server-restricted-acceptance-2026-10-13.md`](../../docs/target-server-restricted-acceptance-2026-10-13.md).
+That result verifies the installed loopback service boundary and current Worker
+queue loop; it does not by itself verify a browser-submitted reconstruction,
+server reboot recovery, 300-image capacity or public production readiness.
+
 The service bundle records a clean platform commit. Explicit install, start and
 acceptance commands refuse source drift, but an already running WinSW service
 does not revalidate Git state during automatic process restart. The services
