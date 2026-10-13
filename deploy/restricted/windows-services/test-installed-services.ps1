@@ -330,11 +330,11 @@ $apiPayload = $api.Content | ConvertFrom-Json
 if ($apiPayload.status -cne "ok" -or $apiPayload.environment -cne "restricted" -or [bool]$apiPayload.development_routes_enabled) {
     throw "Restricted API health boundary is invalid."
 }
-$home = Wait-RestrictedRequest -Uri "http://127.0.0.1:8080/"
-if ($home.Content -notmatch '<div id="root"></div>') { throw "Restricted Caddy did not serve the React entry point." }
+$homeResponse = Wait-RestrictedRequest -Uri "http://127.0.0.1:8080/"
+if ($homeResponse.Content -notmatch '<div id="root"></div>') { throw "Restricted Caddy did not serve the React entry point." }
 $proxy = Wait-RestrictedRequest -Uri "http://127.0.0.1:8080/health/live"
 if (($proxy.Content | ConvertFrom-Json).environment -cne "restricted") { throw "Restricted Caddy did not proxy the API." }
-if (-not [string]::IsNullOrWhiteSpace((@($home.Headers["Strict-Transport-Security"]) -join ", "))) {
+if (-not [string]::IsNullOrWhiteSpace((@($homeResponse.Headers["Strict-Transport-Security"]) -join ", "))) {
     throw "Restricted loopback HTTP must not emit HSTS."
 }
 $mailpit = Wait-RestrictedRequest -Uri "http://127.0.0.1:8025/"

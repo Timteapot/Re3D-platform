@@ -476,6 +476,11 @@ class RestrictedWindowsServiceAssetTests(unittest.TestCase):
             'Wait-RestrictedRequest -Uri "http://127.0.0.1:8000/health/live"'
         )
         self.assertLess(ownership_index, api_probe_index)
+        self.assertIn(
+            '$homeResponse = Wait-RestrictedRequest -Uri "http://127.0.0.1:8080/"',
+            installed_test,
+        )
+        self.assertNotRegex(installed_test, re.compile(r"(?im)^\s*\$home\s*="))
 
     def test_status_command_is_read_only_and_covers_all_loopback_ports(self) -> None:
         status = read_script("get-service-bundle-status.ps1")
