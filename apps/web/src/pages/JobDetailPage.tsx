@@ -13,6 +13,7 @@ import {
   type JobDetail,
 } from "../jobs/api";
 import { streamJobEvents } from "../jobs/events";
+import { JobTerminationNotice } from "../jobs/JobTerminationNotice";
 
 const GlbViewer = lazy(() => import("../jobs/GlbViewer"));
 
@@ -248,6 +249,7 @@ export function JobDetailPage() {
         </div>
       ) : null}
       {cancel.error ? <div className="form-notice error">{readableError(cancel.error)}</div> : null}
+      <JobTerminationNotice status={job.status} errorCode={job.error_code} />
 
       <section className="job-overview-grid" aria-label="任务概况">
         <article><span>进度</span><strong>{job.progress}%</strong><progress max={100} value={job.progress}>{job.progress}%</progress></article>

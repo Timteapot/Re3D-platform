@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import unittest
+from unittest.mock import patch
 
 from backend.environment import (
     is_development_environment,
@@ -11,6 +13,22 @@ from backend.environment import (
 
 
 class EnvironmentTests(unittest.TestCase):
+    def test_api_rejects_restricted_experiment_in_other_environments(self) -> None:
+        from apps.api.main import create_app
+
+        for environment in ("production", "development", "test"):
+            with self.subTest(environment=environment), patch.dict(
+                os.environ,
+                {
+                    "APP_ENV": "restricted",
+                    "RE3D_EXECUTION_PROFILE": " GPU-EXPERIMENT-300-20 ",
+                },
+                clear=True,
+            ), patch("apps.api.main.build_services") as build_services:
+                with self.assertRaisesRegex(ValueError, "restricted-only"):
+                    create_app(app_env=environment)
+                build_services.assert_not_called()
+
     def test_normalizes_supported_environment_names(self) -> None:
         self.assertEqual(normalize_environment(" Restricted "), "restricted")
         self.assertTrue(is_development_environment("test"))

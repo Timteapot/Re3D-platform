@@ -27,6 +27,14 @@ from backend.re3d_adapter.paths import TaskLayout
 from backend.re3d_adapter.real import RealPipelineRunner, verify_re3d_installation
 from backend.re3d_adapter.simulation import SimulationRunner
 
+from .disk_guard import (
+    DiskGuard,
+    DiskGuardCancelled,
+    DiskGuardSettings,
+    DiskGuardTrip,
+    read_disk_free_bytes,
+)
+
 
 @dataclass(frozen=True)
 class QueuedSimulationOutcome:
@@ -153,6 +161,8 @@ class QueuedRealWorker:
         heartbeat_seconds: int = 20,
         process_poll_seconds: float = 0.25,
         resource_monitor_settings: ResourceMonitorSettings | None = None,
+        disk_guard_settings: DiskGuardSettings | None = None,
+        disk_free_bytes_reader: Callable[[Path], int] = read_disk_free_bytes,
         installation_verifier: Callable[
             [Path, dict[str, Any]], None
         ] = verify_re3d_installation,
@@ -169,6 +179,10 @@ class QueuedRealWorker:
         self.resource_monitor_settings = (
             resource_monitor_settings or ResourceMonitorSettings.from_environment()
         )
+        self.disk_guard_settings = (
+            disk_guard_settings or DiskGuardSettings.from_environment()
+        )
+        self.disk_free_bytes_reader = disk_free_bytes_reader
         self.installation_verifier = installation_verifier
 
     def run_once(self) -> QueuedJobOutcome:
@@ -183,6 +197,7 @@ class QueuedRealWorker:
         job_id = str(claim.job_id)
         layout: TaskLayout | None = None
         journal: EventJournal | None = None
+        disk_guard: DiskGuard | None = None
         try:
             heartbeat = self.queue.heartbeat(
                 claim,
@@ -235,6 +250,11 @@ class QueuedRealWorker:
                     )
 
             reporter = _RealProgressReporter(self.queue, claim, journal)
+            disk_guard = DiskGuard(
+                self.data_root,
+                settings=self.disk_guard_settings,
+                free_bytes_reader=self.disk_free_bytes_reader,
+            )
             resource_monitor = ResourceMonitor(
                 layout.resolve("runtime/metrics/resource-samples.jsonl"),
                 sampler=ResourceSampler(
@@ -256,38 +276,73 @@ class QueuedRealWorker:
                 interval_seconds=self.heartbeat_seconds,
                 lease_seconds=self.lease_seconds,
             ) as heartbeat_loop:
-                with resource_monitor:
-                    outcome = RealPipelineRunner(
-                        layout,
-                        re3d_root=self.re3d_root,
-                        driver_python=self.driver_python,
-                        installation_verifier=self.installation_verifier,
-                    ).run(
-                        cancel_requested=lambda: heartbeat_loop.cancel_requested,
-                        health_check=heartbeat_loop.raise_if_failed,
-                        on_step=reporter.on_step,
-                        poll_seconds=self.process_poll_seconds,
-                        timeout_seconds=_remaining_timeout_seconds(
-                            database_job["started_at"],
-                            request["limits"]["timeout_seconds"],
-                        ),
-                    )
-                    reporter.finish()
+                def health_check() -> None:
+                    # Ownership and explicit user cancellation take precedence.
                     heartbeat_loop.raise_if_failed()
-                    _advance_to(
-                        self.queue,
-                        claim,
-                        JobStatus.VALIDATING_OUTPUT,
-                        progress=94,
-                    )
-                    _advance_to(
-                        self.queue,
-                        claim,
-                        JobStatus.EVALUATING,
-                        progress=97,
-                    )
-                    RealEvaluator(layout).run()
-                    heartbeat_loop.raise_if_failed()
+                    if heartbeat_loop.cancel_requested:
+                        raise PipelineCancelled("Re3D execution was cancelled")
+                    disk_guard.raise_if_tripped()
+
+                def boundary_check() -> None:
+                    health_check()
+                    disk_guard.check_now()
+                    health_check()
+
+                with disk_guard:
+                    with resource_monitor:
+                        boundary_check()
+                        outcome = RealPipelineRunner(
+                            layout,
+                            re3d_root=self.re3d_root,
+                            driver_python=self.driver_python,
+                            installation_verifier=self.installation_verifier,
+                        ).run(
+                            cancel_requested=lambda: heartbeat_loop.cancel_requested,
+                            health_check=health_check,
+                            on_step=reporter.on_step,
+                            poll_seconds=(
+                                min(self.process_poll_seconds, 0.25)
+                                if self.disk_guard_settings.enabled
+                                else self.process_poll_seconds
+                            ),
+                            timeout_seconds=_remaining_timeout_seconds(
+                                database_job["started_at"],
+                                request["limits"]["timeout_seconds"],
+                            ),
+                        )
+                        boundary_check()
+                        reporter.finish()
+                        _advance_to(
+                            self.queue,
+                            claim,
+                            JobStatus.VALIDATING_OUTPUT,
+                            progress=94,
+                        )
+                        boundary_check()
+                        _advance_to(
+                            self.queue,
+                            claim,
+                            JobStatus.EVALUATING,
+                            progress=97,
+                        )
+                        boundary_check()
+                        RealEvaluator(layout).run()
+                        boundary_check()
+                    # ResourceMonitor exit may perform storage sampling/writes.
+                    boundary_check()
+                    disk_guard.finish()
+                    health_check()
+            # The sampler is stopped and sealed before committing success. Renew
+            # once synchronously so background-heartbeat timing cannot hide a
+            # cancellation or a takeover during final checks.
+            final_heartbeat = self.queue.heartbeat(
+                claim,
+                lease_seconds=self.lease_seconds,
+            )
+            if final_heartbeat.cancel_requested:
+                raise PipelineCancelled("Re3D execution was cancelled")
+            disk_guard.check_now()
+            self.queue.advance(claim, JobStatus.SUCCEEDED, progress=100)
             if journal is not None and not journal.has_terminal_event:
                 journal.append(
                     "job_succeeded",
@@ -299,20 +354,24 @@ class QueuedRealWorker:
                         else "已恢复并验证真实 Re3D 结果。"
                     ),
                 )
-            self.queue.advance(claim, JobStatus.SUCCEEDED, progress=100)
             return QueuedJobOutcome(
                 True,
                 job_id,
                 JobStatus.SUCCEEDED.value,
                 claim.recovered,
             )
+        except DiskGuardCancelled as exc:
+            return self._cancel_for_disk_guard(claim, journal, exc.trip)
         except PipelineCancelled:
-            self._append_cancelled(journal)
+            # The transaction remains fenced by the original claim, even when a
+            # user cancellation and lease expiry are observed concurrently.
+            self.queue.heartbeat(claim, lease_seconds=self.lease_seconds)
             self.queue.advance(
                 claim,
                 JobStatus.CANCELLED,
                 error_code="USER_CANCELLED",
             )
+            self._append_cancelled(journal)
             return QueuedJobOutcome(
                 True,
                 job_id,
@@ -322,7 +381,9 @@ class QueuedRealWorker:
         except LeaseLostError:
             raise
         except PipelineTimedOut as exc:
-            cancelled = self._honor_pending_cancellation(claim, journal)
+            cancelled = self._honor_cancellation_or_disk_guard(
+                claim, journal, disk_guard
+            )
             if cancelled is not None:
                 return cancelled
             self._append_failure(
@@ -334,7 +395,9 @@ class QueuedRealWorker:
             self._mark_failed(claim, error_code="REAL_PIPELINE_TIMEOUT")
             raise AdapterError(f"queued real pipeline timed out for job {job_id}") from exc
         except (AdapterError, SchedulerError, OSError, ValueError) as exc:
-            cancelled = self._honor_pending_cancellation(claim, journal)
+            cancelled = self._honor_cancellation_or_disk_guard(
+                claim, journal, disk_guard
+            )
             if cancelled is not None:
                 return cancelled
             current = self.queue.get_job(claim.job_id)["status"]
@@ -352,6 +415,45 @@ class QueuedRealWorker:
             self._mark_failed(claim, error_code=error_code)
             raise AdapterError(f"queued real pipeline failed for job {job_id}") from exc
 
+    def _honor_cancellation_or_disk_guard(
+        self,
+        claim: JobClaim,
+        journal: EventJournal | None,
+        disk_guard: DiskGuard | None,
+    ) -> QueuedJobOutcome | None:
+        cancelled = self._honor_pending_cancellation(claim, journal)
+        if cancelled is not None:
+            return cancelled
+        if disk_guard is not None and disk_guard.trip is not None:
+            return self._cancel_for_disk_guard(claim, journal, disk_guard.trip)
+        return None
+
+    def _cancel_for_disk_guard(
+        self,
+        claim: JobClaim,
+        journal: EventJournal | None,
+        trip: DiskGuardTrip,
+    ) -> QueuedJobOutcome:
+        heartbeat = self.queue.heartbeat(claim, lease_seconds=self.lease_seconds)
+        user_cancelled = heartbeat.cancel_requested
+        self.queue.advance(
+            claim,
+            JobStatus.CANCELLED,
+            error_code="USER_CANCELLED" if user_cancelled else trip.code,
+        )
+        if user_cancelled:
+            self._append_cancelled(journal)
+        elif journal is not None and not journal.has_terminal_event:
+            journal.append(
+                "job_cancelled",
+                message_code=trip.code,
+                safe_message=trip.safe_message,
+                metrics=trip.metrics(),
+            )
+        return QueuedJobOutcome(
+            True, str(claim.job_id), JobStatus.CANCELLED.value, claim.recovered
+        )
+
     def _honor_pending_cancellation(
         self,
         claim: JobClaim,
@@ -364,12 +466,12 @@ class QueuedRealWorker:
         )
         if not heartbeat.cancel_requested:
             return None
-        self._append_cancelled(journal)
         self.queue.advance(
             claim,
             JobStatus.CANCELLED,
             error_code="USER_CANCELLED",
         )
+        self._append_cancelled(journal)
         return QueuedJobOutcome(
             True,
             str(claim.job_id),

@@ -148,6 +148,9 @@ class RestrictedReadinessTests(unittest.TestCase):
             "SUCCESS_RUNTIME_RETENTION_DAYS": "30",
             "SUCCESS_ARTIFACT_RETENTION_DAYS": "30",
             "SUCCESS_RETENTION_DRY_RUN_ENABLED": "true",
+            "RE3D_MIN_FREE_DISK_BYTES": str(20 * 1024**3),
+            "RE3D_LOW_DISK_GUARD_ENABLED": "true",
+            "RE3D_LOW_DISK_GUARD_INTERVAL_SECONDS": "1",
         }
         with (
             patch.dict(os.environ, environment, clear=True),
@@ -193,6 +196,11 @@ class RestrictedReadinessTests(unittest.TestCase):
         )
         self.assertNotIn("authentication", report)
         self.assertNotIn("smtp", report)
+        self.assertTrue(report["disk_guard"]["enabled"])
+        self.assertEqual(report["disk_guard"]["minimum_free_bytes"], 20 * 1024**3)
+        self.assertEqual(report["disk_guard"]["interval_seconds"], 1)
+        self.assertEqual(report["disk_guard"]["probe_failure_policy"], "cancel")
+        self.assertTrue(report["disk_guard"]["independent_of_resource_monitor"])
 
     def test_api_check_rejects_non_loopback_bind(self) -> None:
         with patch.dict(

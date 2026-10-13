@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "name": "direct-300-restricted-20",
+  "description": "One restricted 300-image experiment with a 20 GiB disk floor and automatic low-disk cancellation.",
+  "api": {
+    "RE3D_EXECUTION_PROFILE": "gpu-experiment-300-20",
+    "RE3D_USER_MAX_PENDING_JOBS": "1",
+    "RE3D_USER_STORAGE_QUOTA_BYTES": "137438953472",
+    "RE3D_JOB_STORAGE_RESERVATION_BYTES": "68719476736",
+    "RE3D_MIN_FREE_DISK_BYTES": "21474836480",
+    "RE3D_JOB_TIMEOUT_SECONDS": "14400",
+    "UPLOAD_MAX_FILE_BYTES": "26214400",
+    "UPLOAD_MAX_TOTAL_BYTES": "1073741824",
+    "RE3D_LOW_DISK_GUARD_ENABLED": "true",
+    "RE3D_LOW_DISK_GUARD_INTERVAL_SECONDS": "1"
+  },
+  "worker": {
+    "RE3D_EXECUTION_PROFILE": "gpu-experiment-300-20",
+    "RE3D_JOB_STORAGE_RESERVATION_BYTES": "68719476736",
+    "RE3D_MIN_FREE_DISK_BYTES": "21474836480",
+    "RE3D_RESOURCE_MONITOR_ENABLED": "true",
+    "RE3D_RESOURCE_SAMPLE_INTERVAL_SECONDS": "5",
+    "RE3D_TASK_STORAGE_SAMPLE_INTERVAL_SECONDS": "15",
+    "RE3D_LOW_DISK_GUARD_ENABLED": "true",
+    "RE3D_LOW_DISK_GUARD_INTERVAL_SECONDS": "1"
+  }
+}

@@ -106,6 +106,12 @@ def create_app(
     environment = normalize_environment(
         app_env or os.environ.get("APP_ENV") or "production"
     )
+    if (
+        os.environ.get("RE3D_EXECUTION_PROFILE", "").strip().lower()
+        == "gpu-experiment-300-20"
+        and environment != RESTRICTED_ENVIRONMENT
+    ):
+        raise ValueError("gpu-experiment-300-20 is restricted-only")
     if environment == RESTRICTED_ENVIRONMENT and not is_loopback_host(
         os.environ.get("API_HOST")
     ):

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from backend.monitoring.resources import NvidiaSmiReader
+from backend.worker.disk_guard import DiskGuardSettings
 
 
 GIBIBYTE = 1024**3
@@ -62,14 +63,37 @@ class WorkerExecutionProfile:
                 minimum_gpu_memory_bytes=14 * GIBIBYTE,
                 minimum_free_gpu_memory_bytes=12 * GIBIBYTE,
             ),
+            "gpu-experiment-300-20": cls(
+                name="gpu-experiment-300-20",
+                target_image_count=300,
+                minimum_job_reservation_bytes=64 * GIBIBYTE,
+                minimum_free_disk_bytes=20 * GIBIBYTE,
+                minimum_gpu_memory_bytes=14 * GIBIBYTE,
+                minimum_free_gpu_memory_bytes=12 * GIBIBYTE,
+            ),
         }
         try:
             profile = profiles[name]
         except KeyError as exc:
             raise ValueError(
                 "RE3D_EXECUTION_PROFILE must be baseline, gpu-large-100, "
-                "gpu-large-150, or gpu-large-300"
+                "gpu-large-150, gpu-large-300, or gpu-experiment-300-20"
             ) from exc
+
+        if profile.name == "gpu-experiment-300-20":
+            if os.environ.get("APP_ENV", "").strip().lower() != "restricted":
+                raise ValueError(
+                    "gpu-experiment-300-20 requires APP_ENV=restricted"
+                )
+            guard = DiskGuardSettings.from_environment()
+            if not guard.enabled:
+                raise ValueError(
+                    "gpu-experiment-300-20 requires RE3D_LOW_DISK_GUARD_ENABLED=true"
+                )
+            if not 1 <= guard.interval_seconds <= 5:
+                raise ValueError(
+                    "gpu-experiment-300-20 requires a disk guard interval of 1 to 5 seconds"
+                )
 
         reservation = _environment_integer(
             "RE3D_JOB_STORAGE_RESERVATION_BYTES",

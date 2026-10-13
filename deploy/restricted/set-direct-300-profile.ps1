@@ -3,6 +3,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$ProjectRoot,
     [string]$BundleRoot = "C:\ProgramData\Re3DRestricted",
+    [ValidateSet('direct-300', 'direct-300-restricted-20')]
+    [string]$ProfileName = 'direct-300',
     [switch]$Apply
 )
 
@@ -70,8 +72,8 @@ function Get-EnvironmentPlan {
                 continue
             }
             $safeOld = if ($key -ceq 'RE3D_EXECUTION_PROFILE') {
-                if ($old -cin @('baseline', 'gpu-large-100', 'gpu-large-150', 'gpu-large-300')) { $old } else { '<nonstandard>' }
-            } elseif ($key -ceq 'RE3D_RESOURCE_MONITOR_ENABLED') {
+                if ($old -cin @('baseline', 'gpu-large-100', 'gpu-large-150', 'gpu-large-300', 'gpu-experiment-300-20')) { $old } else { '<nonstandard>' }
+            } elseif ($key -cin @('RE3D_RESOURCE_MONITOR_ENABLED', 'RE3D_LOW_DISK_GUARD_ENABLED')) {
                 if ($old -cin @('true', 'false')) { $old } else { '<nonstandard>' }
             } else {
                 if ($old -match '^\d{1,18}$') { $old } else { '<nonstandard>' }
@@ -155,7 +157,9 @@ try {
     $project = (Resolve-Path -LiteralPath $ProjectRoot -ErrorAction Stop).Path.TrimEnd('\', '/')
     if ($project -eq [IO.Path]::GetPathRoot($project).TrimEnd('\', '/')) { throw "ProjectRoot cannot be a drive root." }
     $bundle = [IO.Path]::GetFullPath($BundleRoot)
-    $profilePath = Join-Path $PSScriptRoot 'profiles\direct-300.json'
+    # The ValidateSet restricts selection to reviewed, non-secret assets. The
+    # existing direct-300 contract remains the default and is not weakened.
+    $profilePath = Join-Path $PSScriptRoot ('profiles\' + $ProfileName + '.json')
     $profile = Get-Content -LiteralPath $profilePath -Raw | ConvertFrom-Json -AsHashtable
     $expected = @{
         api = [ordered]@{
@@ -177,7 +181,15 @@ try {
             RE3D_TASK_STORAGE_SAMPLE_INTERVAL_SECONDS = '15'
         }
     }
-    if ($profile.schema_version -ne 1 -or $profile.name -cne 'direct-300') { throw "Unexpected profile format." }
+    if ($ProfileName -ceq 'direct-300-restricted-20') {
+        foreach ($role in @('api', 'worker')) {
+            $expected[$role]['RE3D_EXECUTION_PROFILE'] = 'gpu-experiment-300-20'
+            $expected[$role]['RE3D_MIN_FREE_DISK_BYTES'] = '21474836480'
+            $expected[$role]['RE3D_LOW_DISK_GUARD_ENABLED'] = 'true'
+            $expected[$role]['RE3D_LOW_DISK_GUARD_INTERVAL_SECONDS'] = '1'
+        }
+    }
+    if ($profile.schema_version -ne 1 -or $profile.name -cne $ProfileName) { throw "Unexpected profile format." }
     foreach ($role in @('api', 'worker')) {
         if ($profile[$role].Count -ne $expected[$role].Count) { throw "Unexpected profile keys." }
         foreach ($key in $expected[$role].Keys) {
@@ -217,7 +229,7 @@ try {
         } else {
             [void][IO.Directory]::CreateDirectory($backupParent)
         }
-        $backupDirectory = Join-Path $backupParent ('direct-300-' + [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffffffZ') + '-' + [Guid]::NewGuid().ToString('N'))
+        $backupDirectory = Join-Path $backupParent ($ProfileName + '-' + [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffffffZ') + '-' + [Guid]::NewGuid().ToString('N'))
         [void][IO.Directory]::CreateDirectory($backupDirectory)
         Protect-BackupDirectory -Path $backupDirectory
         foreach ($plan in $plans) {
@@ -247,7 +259,7 @@ try {
         }
     }
     [ordered]@{
-        profile = 'direct-300'
+        profile = $ProfileName
         mode = if ($Apply) { 'apply' } else { 'dry-run' }
         changed = $hasChanges
         applied = [bool]($Apply -and $hasChanges)

@@ -14,6 +14,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "deploy/restricted/set-direct-300-profile.ps1"
 PROFILE = ROOT / "deploy/restricted/profiles/direct-300.json"
+EXPERIMENT_PROFILE = ROOT / "deploy/restricted/profiles/direct-300-restricted-20.json"
 PWSH = shutil.which("pwsh") or shutil.which("pwsh.exe")
 if not PWSH:
     bundled = (
@@ -29,6 +30,63 @@ def ps_literal(value: str | Path) -> str:
 
 
 class Direct300ProfileAssetTests(unittest.TestCase):
+    def test_restricted_experiment_is_explicit_and_has_a_guard_contract(self) -> None:
+        profile = json.loads(EXPERIMENT_PROFILE.read_text(encoding="utf-8"))
+        self.assertEqual(profile["schema_version"], 1)
+        self.assertEqual(profile["name"], "direct-300-restricted-20")
+        for role in ("api", "worker"):
+            self.assertEqual(profile[role]["RE3D_EXECUTION_PROFILE"], "gpu-experiment-300-20")
+            self.assertEqual(profile[role]["RE3D_JOB_STORAGE_RESERVATION_BYTES"], str(64 * 2**30))
+            self.assertEqual(profile[role]["RE3D_MIN_FREE_DISK_BYTES"], str(20 * 2**30))
+            self.assertEqual(profile[role]["RE3D_LOW_DISK_GUARD_ENABLED"], "true")
+            self.assertEqual(profile[role]["RE3D_LOW_DISK_GUARD_INTERVAL_SECONDS"], "1")
+        self.assertEqual(profile["api"]["RE3D_USER_STORAGE_QUOTA_BYTES"], str(128 * 2**30))
+        self.assertEqual(profile["api"]["RE3D_JOB_TIMEOUT_SECONDS"], "14400")
+        self.assertEqual(profile["api"]["RE3D_USER_MAX_PENDING_JOBS"], "1")
+        self.assertEqual(profile["worker"]["RE3D_RESOURCE_SAMPLE_INTERVAL_SECONDS"], "5")
+        self.assertEqual(profile["worker"]["RE3D_TASK_STORAGE_SAMPLE_INTERVAL_SECONDS"], "15")
+
+    def test_experiment_is_accepted_by_actual_settings_only_in_restricted(self) -> None:
+        from backend.jobs.policy import TaskSubmissionSettings
+        from backend.monitoring import ResourceMonitorSettings
+        from backend.uploads import StorageQuotaSettings, UploadSettings
+        from backend.worker.disk_guard import DiskGuardSettings
+        from backend.worker.preflight import WorkerExecutionProfile
+
+        profile = json.loads(EXPERIMENT_PROFILE.read_text(encoding="utf-8"))
+        with patch.dict(
+            os.environ,
+            {**profile["api"], "APP_ENV": "restricted", "RE3D_USER_MAX_SUBMISSIONS_PER_24H": "20"},
+            clear=True,
+        ):
+            uploads = UploadSettings.from_environment()
+            quota = StorageQuotaSettings.from_environment(environment="restricted")
+            submission = TaskSubmissionSettings.from_environment(environment="restricted")
+            api_profile = WorkerExecutionProfile.from_environment()
+        self.assertEqual(uploads.job_timeout_seconds, 14400)
+        self.assertEqual(uploads.min_free_disk_bytes, 20 * 2**30)
+        self.assertEqual(uploads.max_images, 300)
+        self.assertEqual(quota.job_reservation_bytes, 64 * 2**30)
+        self.assertEqual(quota.quota_bytes, 128 * 2**30)
+        self.assertEqual(submission.max_pending_jobs, 1)
+        with patch.dict(os.environ, {**profile["worker"], "APP_ENV": "restricted"}, clear=True):
+            worker_profile = WorkerExecutionProfile.from_environment()
+            guard = DiskGuardSettings.from_environment()
+            monitor = ResourceMonitorSettings.from_environment()
+        self.assertEqual(api_profile, worker_profile)
+        self.assertEqual(worker_profile.mapanything_batch_size, 4)
+        self.assertEqual(worker_profile.minimum_gpu_memory_bytes, 14 * 2**30)
+        self.assertEqual(worker_profile.minimum_free_gpu_memory_bytes, 12 * 2**30)
+        self.assertTrue(guard.enabled)
+        self.assertEqual(guard.minimum_free_bytes, 20 * 2**30)
+        self.assertEqual(guard.interval_seconds, 1)
+        self.assertTrue(monitor.enabled)
+        self.assertEqual(monitor.interval_seconds, 5)
+        self.assertEqual(monitor.task_storage_interval_seconds, 15)
+        with patch.dict(os.environ, {**profile["api"], "APP_ENV": "production"}, clear=True):
+            with self.assertRaisesRegex(ValueError, "APP_ENV=restricted"):
+                WorkerExecutionProfile.from_environment()
+
     def test_reviewed_limits_are_shared_between_api_and_worker(self) -> None:
         profile = json.loads(PROFILE.read_text(encoding="utf-8"))
         self.assertEqual(profile["schema_version"], 1)
@@ -112,6 +170,8 @@ class Direct300ProfilePowerShellTests(unittest.TestCase):
         apply: bool = False,
         service_status: str | None = None,
         fail_verification: bool = False,
+        profile_name: str | None = None,
+        script: Path = SCRIPT,
     ) -> subprocess.CompletedProcess[str]:
         mock = "function global:Get-Service { param([object]$ErrorAction) @() }\n"
         if service_status:
@@ -133,8 +193,9 @@ class Direct300ProfilePowerShellTests(unittest.TestCase):
         command = (
             "$ErrorActionPreference='Stop';\n"
             + mock
-            + f"& {ps_literal(SCRIPT)} -ProjectRoot {ps_literal(self.project)} "
+            + f"& {ps_literal(script)} -ProjectRoot {ps_literal(self.project)} "
             + f"-BundleRoot {ps_literal(self.bundle)}"
+            + (f" -ProfileName {ps_literal(profile_name)}" if profile_name else "")
             + (" -Apply" if apply else "")
         )
         return subprocess.run(
@@ -179,6 +240,88 @@ class Direct300ProfilePowerShellTests(unittest.TestCase):
         self.assertNotIn(self.marker, result.stdout + result.stderr)
         self.assertNotIn("UNMANAGED_MULTILINE", result.stdout)
         self.assertFalse((self.project / ".restricted-profile-backups").exists())
+
+    def test_experiment_dry_run_requires_explicit_selection_and_preserves_inputs(self) -> None:
+        result = self.run_profile(profile_name="direct-300-restricted-20")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["profile"], "direct-300-restricted-20")
+        self.assertFalse(report["applied"])
+        for environment in report["environments"]:
+            settings = {change["key"]: change["new"] for change in environment["changes"]}
+            self.assertEqual(settings["RE3D_MIN_FREE_DISK_BYTES"], str(20 * 2**30))
+            self.assertEqual(settings["RE3D_LOW_DISK_GUARD_ENABLED"], "true")
+            self.assertEqual(settings["RE3D_LOW_DISK_GUARD_INTERVAL_SECONDS"], "1")
+        self.assertEqual(self.api.read_bytes(), self.api_bytes)
+        self.assertEqual(self.worker.read_bytes(), self.worker_bytes)
+        self.assertNotIn(self.marker, result.stdout + result.stderr)
+        default = self.run_profile()
+        self.assertEqual(default.returncode, 0, default.stderr)
+        default_report = json.loads(default.stdout)
+        self.assertEqual(default_report["profile"], "direct-300")
+        for environment in default_report["environments"]:
+            settings = {change["key"]: change["new"] for change in environment["changes"]}
+            self.assertEqual(settings["RE3D_MIN_FREE_DISK_BYTES"], str(75 * 2**30))
+
+    def test_experiment_apply_changes_both_envs_without_changing_secret_or_acl(self) -> None:
+        from backend.worker.disk_guard import DiskGuardSettings
+        from backend.worker.preflight import WorkerExecutionProfile
+        from dotenv import dotenv_values
+
+        security = {path: self.get_security(path)["sddl"] for path in (self.api, self.worker)}
+        result = self.run_profile(apply=True, profile_name="direct-300-restricted-20")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["profile"], "direct-300-restricted-20")
+        self.assertTrue(report["applied"])
+        self.assertNotIn(self.marker, result.stdout + result.stderr)
+        for path in (self.api, self.worker):
+            self.assertIn(self.marker.encode(), path.read_bytes())
+            self.assertEqual(self.get_security(path)["sddl"], security[path])
+            with patch.dict(os.environ, dotenv_values(path), clear=True):
+                self.assertEqual(WorkerExecutionProfile.from_environment().name, "gpu-experiment-300-20")
+                guard = DiskGuardSettings.from_environment()
+            self.assertTrue(guard.enabled)
+            self.assertEqual(guard.minimum_free_bytes, 20 * 2**30)
+            self.assertEqual(guard.interval_seconds, 1)
+        self.assertIn(b"RE3D_EXECUTION_PROFILE=gpu-experiment-300-20 # keep comment\r\n", self.api.read_bytes())
+        self.assertIn(b'UNMANAGED_MULTILINE="first line\r\nRE3D_JOB_TIMEOUT_SECONDS=123\r\nlast line"\r\n', self.api.read_bytes())
+        backup = Path(report["backup_directory"])
+        self.assertTrue(backup.name.startswith("direct-300-restricted-20-"))
+        self.assertEqual((backup / self.api.name).read_bytes(), self.api_bytes)
+        self.assertEqual((backup / self.worker.name).read_bytes(), self.worker_bytes)
+        self.assertTrue(self.get_security(backup)["protected"])
+        second = self.run_profile(apply=True, profile_name="direct-300-restricted-20")
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertFalse(json.loads(second.stdout)["changed"])
+
+    def test_experiment_rejects_production_before_any_write(self) -> None:
+        original = self.api_bytes.replace(b"APP_ENV=restricted", b"APP_ENV=production")
+        self.api.write_bytes(original)
+        result = self.run_profile(apply=True, profile_name="direct-300-restricted-20")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.api.read_bytes(), original)
+        self.assertEqual(self.worker.read_bytes(), self.worker_bytes)
+        self.assertFalse((self.project / ".restricted-profile-backups").exists())
+        self.assertNotIn(self.marker, result.stdout + result.stderr)
+
+    def test_unreviewed_profile_name_or_modified_guard_asset_is_rejected(self) -> None:
+        result = self.run_profile(apply=True, profile_name="unreviewed")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.api.read_bytes(), self.api_bytes)
+        profiles = Path(self.temporary.name) / "tools" / "profiles"
+        profiles.mkdir(parents=True)
+        script = profiles.parent / SCRIPT.name
+        shutil.copyfile(SCRIPT, script)
+        payload = json.loads(EXPERIMENT_PROFILE.read_text(encoding="utf-8"))
+        payload["worker"]["RE3D_LOW_DISK_GUARD_ENABLED"] = "false"
+        (profiles / EXPERIMENT_PROFILE.name).write_text(json.dumps(payload), encoding="utf-8")
+        result = self.run_profile(apply=True, profile_name="direct-300-restricted-20", script=script)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.api.read_bytes(), self.api_bytes)
+        self.assertEqual(self.worker.read_bytes(), self.worker_bytes)
+        self.assertFalse((self.project / ".restricted-profile-backups").exists())
+        self.assertNotIn(self.marker, result.stdout + result.stderr)
 
     def test_apply_preserves_secrets_multiline_bytes_and_source_security(self) -> None:
         from backend.monitoring import ResourceMonitorSettings

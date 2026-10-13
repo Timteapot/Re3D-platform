@@ -4,8 +4,10 @@
 
 当前实验方案为直接尝试一次 Lighthouse 300 图任务，本轮不安排先行
 200/250 图重建。本机代码、运行参数、输入集及操作入口已准备完成；
-功能提交 `4ccd70e` 已推送，对应源码和前端发布包已校验。目标服务器尚未
-应用新配置或提交 300 图任务。这里的配置是实验预算，不是容量通过声明。
+早期功能提交 `4ccd70e` 和文档发布 `48357e4` 已推送。随后目标机预检记录
+107.23 GiB 空闲，未通过原 139 GiB 门槛，未更改运行服务包。当前方案新增
+restricted 专用 64/20 GiB 实验档及运行期低磁盘取消，须绑定新发布后部署。
+目标服务器尚未应用该新档或提交 300 图任务；配置仍是实验预算，不是容量通过声明。
 
 功能发布包不包含完整推理环境、驱动、模型、数据库或私密配置；不能替代
 新服务器环境封装。后续文档修改不自动更新已生成的发布包，部署发布仍需
@@ -18,18 +20,20 @@ MapAnything `batch_size=4`。平台不新增 API、请求字段或数据库迁�
 ## 实验配置
 
 独立的非秘密配置保存于
-[`deploy/restricted/profiles/direct-300.json`](../deploy/restricted/profiles/direct-300.json)。
+[`deploy/restricted/profiles/direct-300-restricted-20.json`](../deploy/restricted/profiles/direct-300-restricted-20.json)。
+标准 `direct-300.json` 和 `gpu-large-300` 的 64/75 GiB、139 GiB 门槛保留不变。
 日常本机 `baseline` 环境文件不切换到服务器的大任务执行档。
 
 | 参数 | 直接 300 图实验值 | 作用 |
 |---|---:|---|
-| Worker 执行档 | `gpu-large-300` | 启动前检查目标 GPU、CUDA、磁盘和固定 batch size |
+| Worker 执行档 | `gpu-experiment-300-20` | restricted 专用，保留 GPU、CUDA 和 batch size 检查 |
 | API 重建执行预算 | 14400 秒（4 小时） | 写入新任务的不可变请求；超时监督真实管线子进程 |
 | 每用户非终态任务上限 | 1 | 防止重复提交多个待运行的大任务 |
 | 单用户存储配额 | 128 GiB | 可容纳现有两次小任务 32 GiB 预留加本轮 64 GiB |
 | 每新任务预留 | 64 GiB | API 和 Worker 使用一致的准入与记账参数 |
-| 数据盘安全线 | 75 GiB | 保留现有磁盘安全余量要求 |
-| Worker 启动所需实际空闲空间 | 139 GiB | 75 GiB 安全线加 64 GiB 新任务预留 |
+| 数据盘安全线 | 20 GiB | 本轮显式降低的受限实验阈值，不是生产默认 |
+| Worker 启动所需实际空闲空间 | 84 GiB | 20 GiB 安全线加 64 GiB 新任务预留 |
+| 独立低磁盘保护 | 启用，每 1 秒 | 空闲 ≤20 GiB 或探测失败自动取消 |
 | 最低总显存 / 启动时最低空闲显存 | 14 / 12 GiB | 通过大任务预检后才领取队列任务 |
 | CPU、内存、GPU 资源采样 | 每 5 秒 | 用于本轮资源峰值观测 |
 | 任务目录采样 | 每 15 秒 | 用于空间增长、最终值和观测峰值汇总 |
@@ -40,7 +44,9 @@ MapAnything `batch_size=4`。平台不新增 API、请求字段或数据库迁�
 提交时值被冻结到 `pipeline-request.json.limits.timeout_seconds`；修改配置
 不会重写已有任务。真实 Worker 恢复任务时扣除已消耗的时间。4 小时约束
 管线子进程，平台后续产物核验与自动评估还有额外耗时，它不是整机计费时长
-的严格上限。64 GiB 预留当前也不是运行中强制磁盘封顶，应持续检查实际空间。
+的严格上限。64 GiB 预留也不是运行中强制磁盘封顶。低盘保护独立于资源采样，
+在进程监督和产物/评估边界取消；检测与终止存在延迟，不能保证空闲量从不低于
+20 GiB。保护语义见 [`low-disk-guard.md`](low-disk-guard.md)。
 
 ## 300 图输入
 
@@ -67,9 +73,9 @@ JPEG，不上传目录内的 JSON 或 Markdown 文件。
 
 ## 下次服务器开机后的应用顺序
 
-1. 恢复 SSH，先只读检查磁盘实际空闲、GPU、队列和租约。此前约 110 GiB
-   空闲是历史记录，不能作为当前值；达不到 139 GiB 时先扩容或处理已备份
-   的旧数据，配置工具不会降低安全线或删除结果。
+1. 恢复 SSH，只读检查磁盘、GPU、队列和租约，当前受限档要求实际空闲
+   ≥84 GiB，且留出发布文件和上传输入的余量。此前 107.23 GiB 是预检快照，
+   应重新读取；资源不足时不自动删数据或绕过检查。
 2. 轮换旧服务包时先在旧源码和旧 Web 仍匹配清单的状态下完成卸载与归档，
    然后更新到测试通过的干净平台提交并准备对应前端产物。
 3. 在目标机 PowerShell 7 预览参数，再应用到已有 API/Worker 私密环境文件：
@@ -77,11 +83,11 @@ JPEG，不上传目录内的 JSON 或 Markdown 文件。
    ```powershell
    pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File `
      D:\Re3D-platform\deploy\restricted\set-direct-300-profile.ps1 `
-     -ProjectRoot D:\Re3D-platform
+     -ProjectRoot D:\Re3D-platform -ProfileName direct-300-restricted-20
 
    pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File `
      D:\Re3D-platform\deploy\restricted\set-direct-300-profile.ps1 `
-     -ProjectRoot D:\Re3D-platform -Apply
+     -ProjectRoot D:\Re3D-platform -ProfileName direct-300-restricted-20 -Apply
    ```
 
    默认 dry-run 只输出白名单运营参数；Apply 先验证两个文件、检查服务停止、
@@ -93,7 +99,8 @@ JPEG，不上传目录内的 JSON 或 Markdown 文件。
    当前包固定环境和构建哈希，修改源码或配置后须重新生成，不能只更新源码
    或复制单个配置文件到运行包。
 5. 验证 API 摘要 `uploads.job_timeout_seconds=14400`、配额 128 GiB、任务预留
-   64 GiB；验证 Worker 为 `gpu-large-300` 且采样 5/15 秒，队列和租约空闲。
+   64 GiB、安全线 20 GiB；Worker 为 `gpu-experiment-300-20`，采样 5/15 秒，
+   `disk_guard.enabled=true`、阈值 20 GiB、检查 1 秒，队列和租约空闲。
 6. 通过 SSH 回环网页提交这一组 300 图，立即记录新任务 UUID 并开始只读监控。
    保持详情页打开，在终态后验收三分支、12 个标准产物、评估、租约释放和
    大 GLB 的自动显示与交互。
@@ -102,8 +109,9 @@ JPEG，不上传目录内的 JSON 或 Markdown 文件。
 
 必须记录输入注册数量、各阶段耗时、CPU/主机内存/显存/磁盘观测峰值、
 `storage-usage.json`、产物大小/hash 与自动评估。显存不足、连续资源错误或
-磁盘逼近安全线时，应通过现有取消机制停止任务并保存失败证据。运行中
-监控不会根据 64 GiB 预留自动中止任务。
+磁盘下降异常时，应提前通过现有取消接口停止并保存证据。低盘保护会在
+20 GiB 触发自动取消；仍不按 64 GiB 预留硬中止。失败/取消文件会按原宽限期
+清理，应立即保存最小诊断文件至任务目录之外。
 
 直接 300 图会少一次阶梯缓冲；成功或失败都应据本轮证据决定下一步参数，
 不预先承诺完成耗时或容量上界。完成后转移并验证结果，再停止服务和连接，

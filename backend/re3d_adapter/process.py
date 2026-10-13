@@ -83,23 +83,25 @@ def run_managed_process(
     )
     reader.start()
 
+    def check_supervision() -> None:
+        health_check()
+        if cancel_requested():
+            raise PipelineCancelled("Re3D execution was cancelled")
+        if time.monotonic() - started >= timeout_seconds:
+            raise PipelineTimedOut("Re3D execution timed out")
+
     try:
         with log_path.open("a", encoding="utf-8", newline="\n") as log:
             log.write("\n--- managed Re3D process started ---\n")
             log.flush()
             while True:
-                _drain_output(line_queue, log, on_line)
-                health_check()
-                if cancel_requested():
-                    _terminate_process_tree(process, termination_grace_seconds)
-                    raise PipelineCancelled("Re3D execution was cancelled")
-                if time.monotonic() - started >= timeout_seconds:
-                    _terminate_process_tree(process, termination_grace_seconds)
-                    raise PipelineTimedOut("Re3D execution timed out")
+                _drain_output(line_queue, log, on_line, check_supervision)
+                check_supervision()
                 return_code = process.poll()
                 if return_code is not None:
                     reader.join(timeout=max(1.0, termination_grace_seconds))
-                    _drain_output(line_queue, log, on_line)
+                    _drain_output(line_queue, log, on_line, check_supervision)
+                    check_supervision()
                     log.write(
                         f"--- managed Re3D process exited: {return_code} ---\n"
                     )
@@ -121,7 +123,10 @@ def _drain_output(
     lines: queue.Queue[str],
     log,
     on_line: Callable[[str], None],
+    health_check: Callable[[], None] = lambda: None,
 ) -> None:
+    health_check()
+    drained = 0
     while True:
         try:
             line = lines.get_nowait()
@@ -130,6 +135,11 @@ def _drain_output(
         log.write(line)
         log.flush()
         on_line(line.rstrip("\r\n"))
+        drained += 1
+        if drained % 64 == 0:
+            # A continuous stdout producer must not starve lease, cancellation,
+            # timeout or low-disk supervision, including during the final drain.
+            health_check()
 
 
 def _terminate_process_tree(

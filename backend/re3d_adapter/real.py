@@ -378,14 +378,18 @@ class RealPipelineRunner:
         poll_seconds: float = 0.25,
         timeout_seconds: int | None = None,
     ) -> RealPipelineOutcome:
+        health_check()
         self.layout.ensure_worker_directories()
         request = load_json_contract(self.layout.request_path, "pipeline-request")
         self._validate_request(request)
+        health_check()
         validate_task_input(self.layout, request)
+        health_check()
 
         if self.layout.result_path.exists():
             result = load_json_contract(self.layout.result_path, "pipeline-result")
-            self._validate_existing_result(request, result)
+            self._validate_existing_result(request, result, health_check=health_check)
+            health_check()
             return RealPipelineOutcome(self.layout.result_path, result, reused=True)
 
         effective_timeout = request["limits"]["timeout_seconds"]
@@ -396,6 +400,7 @@ class RealPipelineRunner:
         if not self.driver_python.is_file():
             raise IntegrityError("Re3D driver Python does not exist")
         self.installation_verifier(self.re3d_root, request["pipeline"])
+        health_check()
 
         started_at = utc_now()
         process = run_managed_process(
@@ -409,6 +414,9 @@ class RealPipelineRunner:
             poll_seconds=poll_seconds,
             env=build_re3d_environment(),
         )
+        # The process can exit between the supervisor's last health check and
+        # poll(). Never treat exit code zero alone as a healthy completion.
+        health_check()
         if process.return_code != 0:
             raise AdapterError(
                 f"Re3D pipeline failed with exit code {process.return_code}"
@@ -419,9 +427,13 @@ class RealPipelineRunner:
             started_at=started_at,
             finished_at=utc_now(),
             duration_seconds=process.duration_seconds,
+            health_check=health_check,
         )
+        health_check()
         validate_contract("pipeline-result", result)
+        health_check()
         atomic_write_json(self.layout.result_path, result)
+        health_check()
         return RealPipelineOutcome(self.layout.result_path, result, reused=False)
 
     @staticmethod
@@ -447,7 +459,10 @@ class RealPipelineRunner:
         self,
         request: dict[str, Any],
         result: dict[str, Any],
+        *,
+        health_check: Callable[[], None] = lambda: None,
     ) -> None:
+        health_check()
         if (
             result["job_id"] != request["job_id"]
             or result["request_id"] != request["request_id"]
@@ -478,6 +493,7 @@ class RealPipelineRunner:
         )
         _required_non_negative_number(result, "duration_seconds")
         for branch, branch_result in result["branches"].items():
+            health_check()
             _required_positive_int(branch_result["metrics"], "vertices")
             _required_positive_int(branch_result["metrics"], "faces")
             if branch in {"A-v4", "B-v2"}:
@@ -490,6 +506,7 @@ class RealPipelineRunner:
                 branch_result["artifacts"],
             )
             for artifact in branch_result["artifacts"]:
+                health_check()
                 path = self.layout.resolve(artifact["path"])
                 if path.is_symlink() or not path.is_file():
                     raise IntegrityError(f"persisted {branch} artifact is missing")
@@ -497,6 +514,7 @@ class RealPipelineRunner:
                     raise IntegrityError(f"persisted {branch} artifact size changed")
                 if sha256_file(path) != artifact["sha256"]:
                     raise IntegrityError(f"persisted {branch} artifact hash changed")
+                health_check()
 
     @staticmethod
     def _validate_existing_artifact_contract(
@@ -534,11 +552,14 @@ class RealPipelineRunner:
         started_at: str,
         finished_at: str,
         duration_seconds: float,
+        health_check: Callable[[], None] = lambda: None,
     ) -> dict[str, Any]:
+        health_check()
         validation_source = self.layout.resolve("output/validation.json")
         validation = _read_json_object(validation_source, "Re3D output validation")
         _validate_output_report(validation)
         atomic_write_json(self.layout.output_validation_path, validation)
+        health_check()
 
         sfm = _read_json_object(
             self.layout.resolve(
@@ -556,6 +577,7 @@ class RealPipelineRunner:
 
         branch_results: dict[str, Any] = {}
         for branch in request["branches"]:
+            health_check()
             branch_validation = validation["branches"][branch]
             metrics: dict[str, int | float | bool] = {
                 "vertices": _required_positive_int(
@@ -580,7 +602,7 @@ class RealPipelineRunner:
             branch_results[branch] = {
                 "status": "succeeded",
                 "duration_seconds": 0,
-                "artifacts": self._collect_artifacts(branch),
+                "artifacts": self._collect_artifacts(branch, health_check=health_check),
                 "metrics": metrics,
             }
 
@@ -613,7 +635,13 @@ class RealPipelineRunner:
             },
         }
 
-    def _collect_artifacts(self, branch: str) -> list[dict[str, Any]]:
+    def _collect_artifacts(
+        self,
+        branch: str,
+        *,
+        health_check: Callable[[], None] = lambda: None,
+    ) -> list[dict[str, Any]]:
+        health_check()
         root = self.layout.resolve(f"output/{branch}")
         texture_candidates = [
             path
@@ -636,6 +664,7 @@ class RealPipelineRunner:
         )
         artifacts: list[dict[str, Any]] = []
         for path, kind, content_type in specs:
+            health_check()
             if path.is_symlink() or not path.is_file() or path.stat().st_size <= 0:
                 raise IntegrityError(f"{branch} normalized {kind} artifact is invalid")
             relative = path.relative_to(self.layout.root).as_posix()
@@ -648,6 +677,7 @@ class RealPipelineRunner:
                     "content_type": content_type,
                 }
             )
+            health_check()
         return artifacts
 
 

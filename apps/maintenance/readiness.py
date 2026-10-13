@@ -35,6 +35,7 @@ from backend.re3d_adapter.real import verify_re3d_installation
 from backend.re3d_adapter.settings import Re3DSettings, WorkerSettings
 from backend.uploads import StorageQuotaSettings, UploadSettings
 from backend.worker import check_worker_runtime_preflight
+from backend.worker.disk_guard import DiskGuardSettings
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -146,6 +147,7 @@ def check_local_readiness() -> dict[str, Any]:
             ),
             "nvidia_smi_configured": resource_monitor.nvidia_smi_path is not None,
         },
+        "disk_guard": _disk_guard_summary(),
         "task_submission": {
             "max_pending_jobs": task_submission.max_pending_jobs,
             "max_submissions_per_24h": (
@@ -313,6 +315,7 @@ def check_production_readiness(
             ),
             "nvidia_smi_configured": resource_monitor.nvidia_smi_path is not None,
         }
+        response["disk_guard"] = _disk_guard_summary()
         response["re3d"] = _check_re3d_installation()
         response["worker_runtime_preflight"] = _check_worker_runtime_preflight()
 
@@ -473,10 +476,22 @@ def check_restricted_readiness(
             ),
             "nvidia_smi_configured": resource_monitor.nvidia_smi_path is not None,
         }
+        response["disk_guard"] = _disk_guard_summary()
         response["re3d"] = _check_re3d_installation()
         response["worker_runtime_preflight"] = _check_worker_runtime_preflight()
 
     return response
+
+
+def _disk_guard_summary() -> dict[str, Any]:
+    settings = DiskGuardSettings.from_environment()
+    return {
+        "enabled": settings.enabled,
+        "minimum_free_bytes": settings.minimum_free_bytes,
+        "interval_seconds": settings.interval_seconds,
+        "probe_failure_policy": "cancel",
+        "independent_of_resource_monitor": True,
+    }
 
 
 def _transfer_limit_summary(
