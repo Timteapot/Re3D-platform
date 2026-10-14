@@ -5,6 +5,7 @@ import argparse
 from contextlib import contextmanager
 import ctypes
 from copy import deepcopy
+import hashlib
 import json
 import math
 import os
@@ -33,7 +34,7 @@ STAGE_NAMES = (
     '25-a-reconstruct','26-a-texture','26-a-normalize','30-b-mvsanywhere','31-b-scale-calibration','32-b-crossview-v2',
     '33-b-export-dmap','33a-b-validate-dmap','33b-b-stage-openmvs','34-b-fuse','34a-b-verify-handoff',
     '35-b-reconstruct','36-b-texture','36-b-normalize','90-validate')
-MODEL_MANIFEST_SHA = '3a046f35752ce22300fbdaec3386ddb9f9b0c0decf7e1f2d1d10994f488ec78e'
+MODEL_MANIFEST_LF_SHA = '51f0aed037b1c3944c94c81153d0b1d1c8b0b52dca7ef8f5cf93638ce45a70ae'
 LONG_CODES = frozenset({
     'LONG_BUDGET_INVALID','LONG_BUDGET_EXHAUSTED','LONG_OBSERVATION_STALE','LONG_STAGE_OR_IO_FAILED',
     'LONG_STAGE_DIRECTORY_INVALID','LONG_STAGE_DIRECTORY_REPARSE','LONG_FORENSIC_TREE_NOT_STOPPED',
@@ -64,6 +65,26 @@ def bounded_private_report(path, value, timeout=5):
     threading.Thread(target=writer, daemon=True, name='long-private-report').start()
     if not finished.wait(timeout) or not outcome or not outcome[0]:
         raise SupervisionError('LONG_REPORT_PERSISTENCE_FAILED')
+
+
+def verify_model_checksum_manifest(path):
+    """Pin the frozen Git blob, allowing only Git's CRLF checkout conversion.
+
+    This checks the checksum manifest, not the bytes of every model weight.
+    Whitespace, JSON formatting, BOMs and lone CR characters stay significant.
+    No other runtime or tool hash uses this normalization.
+    """
+    raw = path.read_bytes()
+    raw_sha = hashlib.sha256(raw).hexdigest()
+    lf_sha = hashlib.sha256(raw.replace(b'\r\n', b'\n')).hexdigest()
+    if lf_sha != MODEL_MANIFEST_LF_SHA:
+        raise SupervisionError('HIGH_PROFILE_FROZEN_IDENTITY_CHANGED')
+    return {
+        'model_checksum_manifest_sha256': raw_sha,
+        'model_checksum_manifest_lf_sha256': lf_sha,
+        'model_checksum_manifest_hash_normalization': 'crlf_to_lf_only',
+        'model_weights_full_rehash_performed': False,
+    }
 
 
 def verify_tool_manifest(root):
@@ -192,8 +213,7 @@ def execute_long_test(args, profile, tool_root):
     verify_git_identity(args.pipeline_root, BASE_COMMIT)
     if file_sha(args.pipeline_root / 'configs/pipeline.json') != BASE_CONFIG_SHA:
         raise SupervisionError('HIGH_PROFILE_FROZEN_IDENTITY_CHANGED')
-    if file_sha(args.pipeline_root / 'models/checksums.json') != MODEL_MANIFEST_SHA:
-        raise SupervisionError('HIGH_PROFILE_FROZEN_IDENTITY_CHANGED')
+    model_manifest_identity = verify_model_checksum_manifest(args.pipeline_root / 'models/checksums.json')
     source_id = profile['source_job_id']
     initial_queue = read_queue_state(args.platform_root)
     validate_isolation({'host':read_windows_state(),'queue':initial_queue}, source_id,
@@ -269,7 +289,7 @@ def execute_long_test(args, profile, tool_root):
         plan.environment['HF_HUB_OFFLINE']='1'; plan.environment['TRANSFORMERS_OFFLINE']='1'
         bounded_private_report(target/'reports/executed-plan.json', {'schema_version':'1.0','tool_manifest_sha256':tool_sha,
             'profile_sha256':file_sha(profile_path),'config_sha256':file_sha(config_path),'pipeline_commit':BASE_COMMIT,
-            'model_checksum_manifest_sha256':MODEL_MANIFEST_SHA,'model_weights_full_rehash_performed':False,
+            **model_manifest_identity,
             'runtime':versions,'runtime_gpu':runtime_gpu,'stages':[row.observation() for row in plan.stages],'mode':args.mode})
         snapshots = SnapshotStore(target/'checkpoints',restored.database_path,verified.image_names,health_check=health,
             free_bytes_reader=lambda:shutil.disk_usage(target).free,interval_seconds=600,min_free_bytes=protections['disk_floor_bytes'],timeout_seconds=120)

@@ -98,6 +98,45 @@ class LongRunnerTests(unittest.TestCase):
             self.compare(baseline, candidate)
         self.assertEqual(caught.exception.code, "LONG_CANDIDATE_ADMISSION_REQUIRED")
 
+    def test_model_manifest_lf_and_crlf_preserve_raw_and_normalized_identity(self):
+        lf = b'{\n  "model.pt": "0123456789abcdef"\n}\n'
+        expected = hashlib.sha256(lf).hexdigest()
+        path = self.base / "checksums.json"
+        for raw in (lf, lf.replace(b"\n", b"\r\n")):
+            path.write_bytes(raw)
+            with self.subTest(raw_sha=hashlib.sha256(raw).hexdigest()), \
+                    patch.object(module, "MODEL_MANIFEST_LF_SHA", expected):
+                self.assertEqual(module.verify_model_checksum_manifest(path), {
+                    "model_checksum_manifest_sha256": hashlib.sha256(raw).hexdigest(),
+                    "model_checksum_manifest_lf_sha256": expected,
+                    "model_checksum_manifest_hash_normalization": "crlf_to_lf_only",
+                    "model_weights_full_rehash_performed": False,
+                })
+
+    def test_model_manifest_content_or_other_byte_changes_are_rejected(self):
+        lf = b'{\n  "model.pt": "0123456789abcdef"\n}\n'
+        expected = hashlib.sha256(lf).hexdigest()
+        path = self.base / "checksums.json"
+        changed = (
+            lf.replace(b"abcdef", b"abcdee"),
+            lf.replace(b"  ", b" "),
+            b"\xef\xbb\xbf" + lf,
+            lf.replace(b"\n", b"\r"),
+            lf + b"\n",
+            lf.rstrip(b"\n"),
+        )
+        for raw in changed:
+            path.write_bytes(raw)
+            with self.subTest(raw_sha=hashlib.sha256(raw).hexdigest()), \
+                    patch.object(module, "MODEL_MANIFEST_LF_SHA", expected), \
+                    self.assertRaises(SupervisionError) as caught:
+                module.verify_model_checksum_manifest(path)
+            self.assertEqual(caught.exception.code, "HIGH_PROFILE_FROZEN_IDENTITY_CHANGED")
+
+    def test_model_manifest_expected_identity_is_frozen_lf_blob(self):
+        self.assertEqual(module.MODEL_MANIFEST_LF_SHA,
+                         "51f0aed037b1c3944c94c81153d0b1d1c8b0b52dca7ef8f5cf93638ce45a70ae")
+
     def invoke_cli_without_runtime(self, arguments):
         profile_path = self.write_json("profile.json", self.profile)
         stdout = io.StringIO()
