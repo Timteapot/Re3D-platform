@@ -5,9 +5,11 @@ import base64
 import ctypes
 from datetime import datetime, timezone
 import json
+import ntpath
 import os
 from pathlib import Path
 import subprocess
+import sys
 import threading
 import time
 from typing import Callable
@@ -33,7 +35,7 @@ def read_windows_state() -> dict:
     _require(os.name == "nt", "EXPERIMENT_TARGET_WINDOWS_REQUIRED")
     script = r"""$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue'
 $services=@(Get-Service Re3DRestrictedApi,Re3DRestrictedCaddy,Re3DRestrictedMailpit,Re3DRestrictedWorker | ForEach-Object {@{name=$_.Name;status=$_.Status.ToString()}})
-$processes=@(Get-CimInstance Win32_Process | ForEach-Object {@{pid=$_.ProcessId;parent_pid=$_.ParentProcessId;reconstruction=($_.Name-in @('DensifyPointCloud.exe','ReconstructMesh.exe','TextureMesh.exe','InterfaceCOLMAP.exe')-or ($_.Name-in @('python.exe','pythonw.exe')-and $_.CommandLine-match '(run_pipeline\.py|run_colmap_shared\.py|run_profiled_colmap\.py|run_long_experiment\.py|run_checkpoint_experiment\.py|run_mapanything_batched\.py|run_mvsanywhere\.py)'))}})
+$processes=@(Get-CimInstance Win32_Process | ForEach-Object {@{pid=$_.ProcessId;parent_pid=$_.ParentProcessId;creation_time=if($_.CreationDate){$_.CreationDate.ToUniversalTime().ToString('o')}else{$null};reconstruction=($_.Name-in @('DensifyPointCloud.exe','ReconstructMesh.exe','TextureMesh.exe','InterfaceCOLMAP.exe')-or ($_.Name-in @('python.exe','pythonw.exe')-and $_.CommandLine-match '(run_pipeline\.py|run_colmap_shared\.py|run_profiled_colmap\.py|run_long_experiment\.py|run_checkpoint_experiment\.py|run_mapanything_batched\.py|run_mvsanywhere\.py)'))}})
 @{services=$services;processes=$processes}|ConvertTo-Json -Compress -Depth 4"""
     encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
     try:
@@ -49,6 +51,93 @@ $processes=@(Get-CimInstance Win32_Process | ForEach-Object {@{pid=$_.ProcessId;
         raise
     except Exception:
         raise ExperimentGateError("EXPERIMENT_HOST_GATE_PROBE_FAILED") from None
+
+
+def _windows_argv(command_line: str) -> list[str]:
+    """Parse only inside the private ownership probe; never serialize argv."""
+    _require(isinstance(command_line, str) and bool(command_line), "EXPERIMENT_LAUNCHER_OWNERSHIP_UNVERIFIED")
+    api = ctypes.WinDLL("shell32", use_last_error=True)
+    api.CommandLineToArgvW.argtypes = [ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_int)]
+    api.CommandLineToArgvW.restype = ctypes.POINTER(ctypes.c_wchar_p)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel.LocalFree.restype = ctypes.c_void_p
+    count = ctypes.c_int()
+    value = api.CommandLineToArgvW(command_line, ctypes.byref(count))
+    _require(bool(value), "EXPERIMENT_LAUNCHER_OWNERSHIP_UNVERIFIED")
+    try:
+        return [value[index] for index in range(count.value)]
+    finally:
+        kernel.LocalFree(ctypes.cast(value, ctypes.c_void_p))
+
+
+def _verified_launcher_instances(rows: list[dict], platform_root: Path, *, current_pid: int,
+                                 parent_pid: int, executable: str, base_executable: str,
+                                 argv_reader: Callable[[str], list[str]] = _windows_argv) -> dict[int, str]:
+    """A direct, exact Windows venv redirector is the only extra owned root."""
+    code = "EXPERIMENT_LAUNCHER_OWNERSHIP_UNVERIFIED"
+    _require(isinstance(rows, list) and all(isinstance(row, dict) for row in rows), code)
+    by_pid = {row.get("pid"): row for row in rows}
+    _require(len(by_pid) == len(rows) and current_pid in by_pid, code)
+    current = by_pid[current_pid]
+    creation = current.get("creation_time")
+    _require(isinstance(creation, str) and bool(creation) and current.get("parent_pid") == parent_pid, code)
+    instances = {current_pid: creation}
+    expected = str(platform_root / ".venv" / "Scripts" / "python.exe")
+    def canonical(path):
+        _require(isinstance(path, str) and ntpath.isabs(path), code)
+        return ntpath.normcase(ntpath.normpath(path))
+    if canonical(executable) != canonical(expected):
+        return instances  # Not the platform venv entry: no ancestor exemption.
+    actual = canonical(current.get("executable"))
+    if actual == canonical(expected):
+        return instances  # No redirector; the current process is the entry.
+    _require(actual == canonical(base_executable) and canonical(base_executable) != canonical(expected), code)
+    _require(parent_pid in by_pid and parent_pid != current_pid, code)
+    parent = by_pid[parent_pid]
+    parent_creation = parent.get("creation_time")
+    _require(canonical(parent.get("executable")) == canonical(expected)
+             and isinstance(parent_creation, str) and bool(parent_creation), code)
+    try:
+        parent_started, current_started = datetime.fromisoformat(parent_creation), datetime.fromisoformat(creation)
+        _require(parent_started.tzinfo is not None and current_started.tzinfo is not None
+                 and parent_started <= current_started, code)
+        own_argv = argv_reader(current.get("command_line"))
+        parent_argv = argv_reader(parent.get("command_line"))
+        _require(len(own_argv) > 1 and own_argv[1:] == parent_argv[1:], code)
+    except ExperimentGateError:
+        raise
+    except Exception:
+        raise ExperimentGateError(code) from None
+    instances[parent_pid] = parent_creation
+    return instances
+
+
+def read_current_launcher_ownership(platform_root: Path) -> dict[int, str]:
+    """Read self/direct parent identity once; keep raw CIM command lines private."""
+    _require(os.name == "nt", "EXPERIMENT_TARGET_WINDOWS_REQUIRED")
+    current_pid, parent_pid = os.getpid(), os.getppid()
+    script = (
+        "$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';"
+        f"$rows=@(Get-CimInstance Win32_Process -Filter 'ProcessId={current_pid} OR ProcessId={parent_pid}' "
+        "|ForEach-Object {@{pid=$_.ProcessId;parent_pid=$_.ParentProcessId;executable=$_.ExecutablePath;"
+        "command_line=$_.CommandLine;creation_time=if($_.CreationDate){$_.CreationDate.ToUniversalTime().ToString('o')}else{$null}}});"
+        "ConvertTo-Json -InputObject $rows -Compress -Depth 3"
+    )
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    try:
+        result = subprocess.run(
+            ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-OutputFormat", "Text", "-EncodedCommand", encoded],
+            capture_output=True, encoding="utf-8", errors="replace", timeout=8, check=False,
+        )
+        _require(result.returncode == 0, "EXPERIMENT_LAUNCHER_OWNERSHIP_UNVERIFIED")
+        return _verified_launcher_instances(json.loads(result.stdout), platform_root,
+            current_pid=current_pid, parent_pid=parent_pid, executable=sys.executable,
+            base_executable=getattr(sys, "_base_executable", sys.executable))
+    except ExperimentGateError:
+        raise
+    except Exception:
+        raise ExperimentGateError("EXPERIMENT_LAUNCHER_OWNERSHIP_UNVERIFIED") from None
 
 
 def read_queue_state(platform_root: Path) -> dict:
@@ -87,7 +176,9 @@ def read_queue_state(platform_root: Path) -> dict:
 
 
 def validate_isolation(state: dict, source_job_id: str, *, allow_expired_source_job: bool,
-                       owned_pids: set[int] | None = None, now: datetime | None = None) -> dict:
+                       owned_pids: set[int] | None = None, now: datetime | None = None,
+                       owned_process_instances: dict[int, str] | None = None,
+                       launcher_pids: set[int] | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     host, queue = state["host"], state["queue"]
     services = {row["name"]: row["status"] for row in host["services"]}
@@ -95,8 +186,18 @@ def validate_isolation(state: dict, source_job_id: str, *, allow_expired_source_
              "EXPERIMENT_PLATFORM_SERVICES_NOT_STOPPED")
     rows = host["processes"]
     owned = set(owned_pids or ())
+    launchers = set(launcher_pids or ())
+    _require(launchers <= set(owned_process_instances or {}) and launchers <= owned,
+             "EXPERIMENT_LAUNCHER_OWNERSHIP_UNVERIFIED")
+    by_pid = {row["pid"]: row for row in rows}
+    _require(not owned_process_instances or len(by_pid) == len(rows), "EXPERIMENT_LAUNCHER_INSTANCE_CHANGED")
+    for pid, creation in (owned_process_instances or {}).items():
+        _require(pid in owned and pid in by_pid and by_pid[pid].get("creation_time") == creation,
+                 "EXPERIMENT_LAUNCHER_INSTANCE_CHANGED")
     while True:
-        added = {row["pid"] for row in rows if row["parent_pid"] in owned} - owned
+        # The verified redirector is an owned leaf, not a blanket grant to
+        # siblings of the current supervisor or additional launcher children.
+        added = {row["pid"] for row in rows if row["parent_pid"] in owned - launchers} - owned
         if not added:
             break
         owned.update(added)
@@ -129,7 +230,9 @@ def validate_isolation(state: dict, source_job_id: str, *, allow_expired_source_
 class IsolationGuard:
     """Fail closed if stopped-service/queue isolation changes or becomes stale."""
     def __init__(self, reader: Callable[[], dict], source_job_id: str, *, allow_expired_source_job: bool,
-                 interval_seconds: float = 3, stale_seconds: float = 15, static_owned_pids: set[int] | None = None):
+                 interval_seconds: float = 3, stale_seconds: float = 15, static_owned_pids: set[int] | None = None,
+                 static_owned_process_instances: dict[int, str] | None = None,
+                 static_launcher_pids: set[int] | None = None):
         self.reader = reader
         self.source_job_id = source_job_id
         self.allow_expired = allow_expired_source_job
@@ -137,6 +240,12 @@ class IsolationGuard:
         self.stale_seconds = stale_seconds
         self.owned_pids: set[int] = set()
         self.static_owned_pids = frozenset(static_owned_pids or ())
+        self.static_owned_process_instances = dict(static_owned_process_instances or {})
+        self.static_launcher_pids = frozenset(static_launcher_pids or ())
+        _require(set(self.static_owned_process_instances) <= self.static_owned_pids,
+                 "EXPERIMENT_LAUNCHER_OWNERSHIP_UNVERIFIED")
+        _require(self.static_launcher_pids <= set(self.static_owned_process_instances),
+                 "EXPERIMENT_LAUNCHER_OWNERSHIP_UNVERIFIED")
         self.ownership_generation = 0
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
@@ -176,7 +285,9 @@ class IsolationGuard:
                     if generation != self.ownership_generation:
                         continue  # Discard a snapshot spanning start/stop, never clear a trip.
                     owned = set(self.owned_pids) | set(self.static_owned_pids)
-                summary = validate_isolation(state, self.source_job_id, allow_expired_source_job=self.allow_expired, owned_pids=owned)
+                summary = validate_isolation(state, self.source_job_id, allow_expired_source_job=self.allow_expired,
+                    owned_pids=owned, owned_process_instances=self.static_owned_process_instances,
+                    launcher_pids=set(self.static_launcher_pids))
                 self.last_summary = summary
                 self.last_checked = time.monotonic()
                 self.ready_event.set()

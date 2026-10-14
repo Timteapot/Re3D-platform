@@ -19,7 +19,7 @@ from backend.experiments.checkpoint import verify_checkpoint, restore_checkpoint
 from backend.experiments.evidence import EvidenceSink
 from backend.experiments.high_profile import BASE_COMMIT, BASE_CONFIG_SHA, build_pipeline_overlay, file_sha, validate_profile
 from backend.experiments.preflight import (IsolationGuard, read_queue_state, read_runtime_versions,
-    read_windows_state, require_admin, validate_isolation, verify_git_identity)
+    read_windows_state, read_current_launcher_ownership, require_admin, validate_isolation, verify_git_identity)
 from backend.experiments.resources import ExperimentResourceMonitor, ResourceLimits
 from backend.experiments.runner import PLATFORM_BASE, create_private_root, read_json, write_exclusive
 from backend.experiments.snapshot_store import SnapshotStore
@@ -215,9 +215,12 @@ def execute_long_test(args, profile, tool_root):
         raise SupervisionError('HIGH_PROFILE_FROZEN_IDENTITY_CHANGED')
     model_manifest_identity = verify_model_checksum_manifest(args.pipeline_root / 'models/checksums.json')
     source_id = profile['source_job_id']
+    owner_instances = read_current_launcher_ownership(args.platform_root)
+    launcher_pids = set(owner_instances) - {os.getpid()}
     initial_queue = read_queue_state(args.platform_root)
     validate_isolation({'host':read_windows_state(),'queue':initial_queue}, source_id,
-        allow_expired_source_job=args.allow_expired_source_job, owned_pids={os.getpid()})
+        allow_expired_source_job=args.allow_expired_source_job, owned_pids=set(owner_instances),
+        owned_process_instances=owner_instances,launcher_pids=launcher_pids)
     target = Path(profile['target_experiment']['root'])
     if target.exists() or not target.parent.is_dir() or target.parent.name != '_experiments':
         raise SupervisionError('HIGH_PROFILE_TARGET_NOT_NEW_OR_IS_JOB')
@@ -264,7 +267,8 @@ def execute_long_test(args, profile, tool_root):
             directory_interval_seconds=protections['directory_sample_seconds'])
         monitor = ExperimentResourceMonitor(experiment_root=target,sample_path=target/'reports/resource-samples.jsonl',limits=limits)
         isolation = IsolationGuard(lambda:{'host':read_windows_state(),'queue':read_queue_state(args.platform_root)},source_id,
-            allow_expired_source_job=args.allow_expired_source_job,static_owned_pids={os.getpid()},stale_seconds=20)
+            allow_expired_source_job=args.allow_expired_source_job,static_owned_pids=set(owner_instances),
+            static_owned_process_instances=owner_instances,static_launcher_pids=launcher_pids,stale_seconds=20)
         monitor.start(); isolation.start()
         def health():
             budget.check(); monitor.check_health(); evidence.check_health(); isolation.check_health()

@@ -142,7 +142,7 @@ class LongRunnerTests(unittest.TestCase):
         stdout = io.StringIO()
         prohibited = (
             "execute_long_test", "read_windows_state", "read_queue_state", "require_admin",
-            "read_runtime_versions", "runtime_gpu_check", "verify_git_identity", "verify_tool_manifest",
+            "read_runtime_versions", "runtime_gpu_check", "verify_git_identity", "verify_tool_manifest", "read_current_launcher_ownership",
             "HostResourceReader", "NvidiaSmiReader", "create_private_root", "verify_checkpoint",
             "restore_checkpoint", "ExperimentResourceMonitor", "SnapshotStore", "EvidenceSink",
             "exclusive_long_test",
@@ -459,7 +459,7 @@ class LongRunnerTests(unittest.TestCase):
         profile_path = self.write_json("bootstrap-profile.json", self.profile)
         stdout = io.StringIO()
         with ExitStack() as stack:
-            for name in ("execute_long_test", "require_admin", "read_windows_state", "read_queue_state",
+            for name in ("execute_long_test", "require_admin", "read_windows_state", "read_queue_state", "read_current_launcher_ownership",
                          "HostResourceReader", "NvidiaSmiReader", "runtime_gpu_check", "exclusive_long_test"):
                 mock = stack.enter_context(patch.object(module, name, side_effect=AssertionError("default prepare must remain offline")))
                 stack.callback(mock.assert_not_called)
