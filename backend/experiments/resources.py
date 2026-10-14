@@ -152,9 +152,10 @@ class ExperimentResourceMonitor:
         self.sample_path = output
         self.limits = limits
         self.host_reader = host_reader or HostResourceReader()
-        self.gpu_reader = gpu_reader or NvidiaSmiReader(
+        # A CPU-only run must not construct or probe a GPU dependency.
+        self.gpu_reader = (gpu_reader or NvidiaSmiReader(
             resource_key=f"gpu:{limits.gpu_index}", executable=nvidia_smi_path
-        )
+        )) if limits.gpu_required else None
         self.directory_reader = directory_reader or ExperimentDirectoryReader(root)
         self.monotonic = monotonic
         intervals = (
@@ -167,7 +168,7 @@ class ExperimentResourceMonitor:
                 len(_test_intervals) != 3
                 or not all(_number(value) and 0 < value <= 0.1 for value in _test_intervals)
                 or host_reader is None
-                or gpu_reader is None
+                or (limits.gpu_required and gpu_reader is None)
                 or directory_reader is None
             ):
                 raise ValueError("test intervals require three short intervals and injected readers")
@@ -235,6 +236,8 @@ class ExperimentResourceMonitor:
             ("directory", self._probe_directory, self._directory_interval),
             ("writer", self._write_sample, self._resource_interval),
         ):
+            if name == "gpu" and not self.limits.gpu_required:
+                continue
             thread = threading.Thread(
                 target=self._loop,
                 args=(name, target, interval),
@@ -400,6 +403,8 @@ class ExperimentResourceMonitor:
             self._set_trip("LOW_RAM_AUTO_STOPPED", {"available_bytes": available, "minimum_available_bytes": self.limits.minimum_available_ram_bytes})
 
     def _probe_gpu(self) -> None:
+        if not self.limits.gpu_required:
+            return
         try:
             raw, error = self.gpu_reader.read()
             if error is not None or raw.get("status") != "available":

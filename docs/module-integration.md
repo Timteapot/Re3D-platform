@@ -40,6 +40,16 @@ Re3D v1.1.3 A-v4 / B-v2 / C（Tesla T4：MapAnything batch size 4；DINOv2 离�
 
 ## 2. 已实现模块的职责
 
+### 本机 CPU 与服务器交接
+
+这是独立实验数据交接，不是跨主机平台 Worker 或旧网页任务恢复接口。`hybrid_checkpoint.py` 用原静态输入清单绑定下载的最新一致性数据库，复核图像、相机、特征和既有图像对记录，再建立全新 `_experiments` 副本；不会改写原断点清单。
+
+`scripts/run_hybrid_experiment.py` 默认仅准备。显式 CPU 执行由 `cpu_runner.py` 监督冻结管线的单个 `01-colmap` 阶段，`run_cpu_sfm_stage.py` 检查实际 CPU 提取/匹配和 Mapper 参数，复用 Windows Job、主机 RAM/磁盘保护、周期断点与 C 盘终态证据。CPU 档不构造 GPU 探针，也不检查或修改 PostgreSQL 队列。候选为提取/匹配 8 或 12 线程、Mapper/BA 16 线程；它与 40 逻辑 CPU/T4 服务器档分离。
+
+`hybrid_handoff.py` 只接受通过完整 SfM 门禁的 CPU 结果。导出数据库、二进制/文本模型、实际参数、指标、配置与 SHA 清单；服务器导入重新验证输入和模型，在新实验目录保留导入前数据库与来源指标，仅重绑两项模型路径。导入返回 `02-extract-cameras`，但不调用 GPU、后续 OpenMVS、服务或任务接口；后续计算仍需单独接线和授权。C 分支及网格/贴图阶段也有 CPU 工作，不能把服务器剩余过程称为纯 GPU 运算。
+
+新工具与源码 SHA 独立封装，避免平台包初始化、未固定模块或缓存字节码绕过工具源身份。导出/导入是文件一致性和格式门禁，不认证几何精度。操作前提与命令见 [本机 CPU 与服务器交接](hybrid-cpu-sfm.md)。
+
 ### 独立长测监督器
 
 `backend/experiments` 是受限容量实验旁路，不改变现有 API、数据库任务状态机、Worker 租约或浏览器会话。新实验只恢复经过 SHA 和 SQLite 完整性验证的原图、预处理输入、掩码及 SfM 数据库；不复制旧阶段成功标记，不直接恢复旧网页任务。

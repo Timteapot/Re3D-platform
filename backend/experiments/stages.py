@@ -299,22 +299,32 @@ def _camera_models(binary: Path, text: Path, health) -> dict:
     return cameras
 
 
-def gate_sfm(experiment_root: Path, image_names: tuple[str, ...], health_check=lambda: None) -> dict:
+def gate_sfm(experiment_root: Path, image_names: tuple[str, ...], health_check=lambda: None, *,
+             expected_sfm_threads: int = 12, expected_mapper_threads: int = 32,
+             expected_python_version: str = "3.12.14",
+             expected_binary_model_path: Path | None = None,
+             expected_text_model_path: Path | None = None) -> dict:
+    # Independent CPU handoffs have their own explicit runtime/thread contract.
+    # Defaults deliberately retain the existing target-server admission gate.
+    require(type(expected_sfm_threads) is int and expected_sfm_threads > 0
+            and type(expected_mapper_threads) is int and expected_mapper_threads > 0
+            and isinstance(expected_python_version, str) and expected_python_version,
+            "EXPERIMENT_SFM_EXPECTED_RUNTIME_INVALID")
     folder = experiment_root / "work/shared/colmap"
     metrics = _json(folder / "reconstruction_metrics.json", experiment_root)
     options = _json(experiment_root / "reports/sfm-actual-options.json", experiment_root)
     require(options.get("status") == "succeeded" and options.get("sfm_stage_complete") is True
             and options.get("runtime_versions", {}).get("pycolmap") == "3.13.0"
-            and options.get("runtime_versions", {}).get("python") == "3.12.14"
+            and options.get("runtime_versions", {}).get("python") == expected_python_version
             and options.get("runtime_versions", {}).get("pycolmap_has_cuda") is False,
             "EXPERIMENT_SFM_ACTUAL_EXECUTION_EVIDENCE_MISSING")
     extraction, matching = options.get("actual_extraction", {}), options.get("actual_matching", {})
-    require(extraction == {"num_threads": 12, "max_image_size": 1600, "max_num_features": 6000, "device": "cpu"}
-            and matching == {"num_threads": 12, "guided_matching": True, "device": "cpu"},
+    require(extraction == {"num_threads": expected_sfm_threads, "max_image_size": 1600, "max_num_features": 6000, "device": "cpu"}
+            and matching == {"num_threads": expected_sfm_threads, "guided_matching": True, "device": "cpu"},
             "EXPERIMENT_SFM_ACTUAL_THREAD_MISMATCH")
     mapper = options.get("actual_mapper_options")
     require(isinstance(mapper, list) and 1 <= len(mapper) <= 2
-            and all(row.get("num_threads") == 32 and row.get("mapper_num_threads") == 32
+            and all(row.get("num_threads") == expected_mapper_threads and row.get("mapper_num_threads") == expected_mapper_threads
                     and row.get("phase") == ("initial" if index == 0 else "deferred_retry")
                     for index, row in enumerate(mapper)), "EXPERIMENT_SFM_ACTUAL_MAPPER_MISMATCH")
     require(len(image_names) == len(set(image_names)) == 300, "EXPERIMENT_SFM_EXPECTED_IMAGES_INVALID")
@@ -375,8 +385,8 @@ def gate_sfm(experiment_root: Path, image_names: tuple[str, ...], health_check=l
             and math.isclose(metrics["mean_reprojection_error_px"], reprojection, rel_tol=1e-6, abs_tol=1e-9),
             "EXPERIMENT_SFM_REPROJECTION_MISMATCH")
     require(isinstance(metrics.get("binary_model"),str) and isinstance(metrics.get("text_model"),str)
-            and Path(metrics.get("binary_model", "")) == binary
-            and Path(metrics.get("text_model", "")) == text,
+            and Path(metrics.get("binary_model", "")) == (expected_binary_model_path or binary)
+            and Path(metrics.get("text_model", "")) == (expected_text_model_path or text),
             "EXPERIMENT_SFM_MODEL_PATH_MISMATCH")
     return {"database_images": 300, "registered_images": len(binary_rows), "points3D": points,
             "observations": observations, "mean_reprojection_error_px": reprojection,

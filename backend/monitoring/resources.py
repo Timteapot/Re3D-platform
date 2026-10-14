@@ -16,11 +16,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from backend.re3d_adapter.contracts import validate_contract
-from backend.re3d_adapter.io import atomic_write_json
-from backend.re3d_adapter.paths import TaskLayout
-
-
 LOGGER = logging.getLogger(__name__)
 GPU_RESOURCE_PATTERN = re.compile(r"^gpu:(\d+)$")
 MEBIBYTE = 1024 * 1024
@@ -312,6 +307,10 @@ class ResourceSampler:
         task_storage_reader: TaskStorageReader | None = None,
         branches: tuple[str, ...] = DEFAULT_BRANCHES,
     ) -> None:
+        # Standalone host readers need only the standard library. Load platform
+        # task contracts only when the worker-specific sampler is constructed.
+        from backend.re3d_adapter.paths import TaskLayout
+
         self.data_root = data_root.expanduser().resolve()
         self.job_id = str(uuid.UUID(job_id))
         self.attempt = attempt
@@ -337,6 +336,8 @@ class ResourceSampler:
         self._storage_errors: set[str] = set()
 
     def sample(self, *, include_task_storage: bool = True) -> dict[str, Any]:
+        from backend.re3d_adapter.contracts import validate_contract
+
         host, errors = self.host_reader.read(self.data_root)
         gpu, gpu_error = self.gpu_reader.read()
         if gpu_error is not None:
@@ -378,6 +379,8 @@ class ResourceSampler:
         resource_sample_interval_seconds: int,
         task_storage_interval_seconds: int,
     ) -> dict[str, Any]:
+        from backend.re3d_adapter.contracts import validate_contract
+
         final_storage, final_errors = self._read_task_storage()
         self._storage_errors.update(final_errors)
         status = (
@@ -533,6 +536,8 @@ class ResourceMonitor:
         if self.summary_path is None:
             return
         try:
+            from backend.re3d_adapter.io import atomic_write_json
+
             summary = self.sampler.storage_summary(
                 resource_sample_count=self._resource_sample_count,
                 resource_sample_interval_seconds=self.settings.interval_seconds,

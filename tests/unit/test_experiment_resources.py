@@ -307,12 +307,18 @@ class ExperimentResourceTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 monitor.set_phase(phase)
 
-    def test_optional_gpu_unavailable_is_safe_telemetry(self):
+    def test_cpu_only_never_constructs_or_probes_gpu(self):
         self.gpu.error = RuntimeError("not installed")
-        monitor = self.monitor(limits=ResourceLimits(gpu_required=False))
-        monitor.start()
-        monitor.finish()
-        self.assertIn("GPU_SAMPLE_UNAVAILABLE", monitor.summary()["errors"])
+        with patch("backend.experiments.resources.NvidiaSmiReader", side_effect=AssertionError("GPU forbidden")):
+            monitor = self.monitor(limits=ResourceLimits(gpu_required=False), gpu_reader=None)
+            monitor.start()
+            monitor._probe_gpu()
+            monitor.finish()
+        self.assertNotIn("gpu", monitor._threads)
+        self.assertEqual(self.gpu.calls, 0)
+        self.assertIsNone(monitor.gpu_reader)
+        self.assertEqual(monitor.summary()["guard_checks"]["gpu"], 0)
+        self.assertEqual(monitor.summary()["errors"], [])
         self.assertIsNone(monitor.summary()["trip"])
 
     def test_finish_reports_a_sticky_guard_trip(self):

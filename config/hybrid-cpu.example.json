@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "profile_kind": "local_cpu_sfm_candidate",
+  "autorun": false,
+  "source_job_id": "6a90b5e9-0c99-41aa-881b-c196ebb96750",
+  "pipeline": {
+    "commit": "e517a161b4c0895f8be4258fb339272e4f99e1d6",
+    "config_sha256": "9f8cbc83cb67b8313f624913686fbdc453e7572a18603d015bc198a9a92b8883",
+    "colmap_script_sha256": "a7918cce6dcd64fee5949e9f0e4d5091c72f97cefb70208be79dfbdc6c2ada41"
+  },
+  "source_checkpoint": {
+    "original_root": "D:/3Dreconstruction/Re3D-data/checkpoints/6a90b5e9-20261013/unpacked",
+    "original_manifest_sha256": "d82b0aee8bd6921f4ec6d87aa1b479c1e18bae4bddfdf9ba60e08ca80e686a6d",
+    "original_database_sha256": "ab4e22c3c1080b4d7a0c5ebe6a34b5cc7e810402c7a703212d405016ac6d0c89",
+    "snapshot_root": "D:/3Dreconstruction/Re3D-data/checkpoints/hybrid-lighthouse300-20261014t131500z/snapshot-20261014T125719807150Z-f9b4a44fa18142dcbc6c421f9bb363c3",
+    "snapshot_manifest_sha256": "56613561a9a0ca619a23982da6202e52d9fb70de34d3e5d2058a9a632f22cbfa",
+    "snapshot_database_sha256": "fb0f3a3af43b32e6efec360fdfea33e0f488dfc9b1234a315b90bbbe3e0174b3",
+    "expected_complete_pair_records": 26842
+  },
+  "cpu": {
+    "sfm_threads": 12,
+    "mapper_ba_threads": 16
+  },
+  "target_hardware": {
+    "logical_cpus": 32,
+    "host_ram_bytes": 34141495296
+  },
+  "runtime": {
+    "mapanything_python": "D:/3Dreconstruction/environments/feedforward-mvs/mapanything/python.exe",
+    "python_version": "3.12.14",
+    "pycolmap_version": "3.13.0",
+    "pycolmap_has_cuda": false
+  },
+  "target_experiment": {
+    "scene": "lighthouse300-local-cpu12-v1",
+    "root": "D:/3Dreconstruction/Re3D-data/_experiments/lighthouse300-local-cpu12-v1"
+  },
+  "protection": {
+    "reservation_bytes": 8589934592,
+    "disk_floor_bytes": 21474836480,
+    "available_ram_floor_bytes": 8589934592,
+    "host_guard_seconds": 1,
+    "resource_sample_seconds": 5,
+    "directory_sample_seconds": 15,
+    "snapshot_interval_seconds": 600,
+    "snapshot_retained": 2,
+    "overall_timeout_seconds": 14400
+  }
+}
