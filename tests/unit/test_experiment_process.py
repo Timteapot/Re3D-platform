@@ -167,6 +167,51 @@ class ContainedProcessTests(unittest.TestCase):
             pid = int((self.base / (role + ".pid")).read_text())
             self.assertFalse(_alive(pid, self.retained_handles.get(pid)), role)
 
+    def assert_supervisor_ready(self, supervisor, stdout_path, stderr_path):
+        deadline = time.monotonic() + 10
+        while not self.ready() and supervisor.poll() is None and time.monotonic() < deadline:
+            time.sleep(.02)
+        if not self.ready():
+            def output_tail(path):
+                with path.open("rb") as stream:
+                    stream.seek(0, os.SEEK_END)
+                    stream.seek(max(0, stream.tell() - 4096))
+                    return stream.read().decode("utf-8", errors="replace")
+
+            self.fail(
+                "Supervisor process tree did not become ready "
+                f"(exit code={supervisor.poll()}).\n"
+                f"stdout:\n{output_tail(stdout_path)}\n"
+                f"stderr:\n{output_tail(stderr_path)}"
+            )
+
+    def test_supervisor_startup_failure_reports_exit_code_and_output(self):
+        runner = self.base / "broken_supervisor.py"
+        runner.write_text(
+            "print('supervisor stdout fixture', flush=True)\n"
+            "import __re3d_missing_supervisor_dependency__\n",
+            encoding="utf-8",
+        )
+        stdout_path, stderr_path = self.base / "stdout.log", self.base / "stderr.log"
+        with stdout_path.open("wb", buffering=0) as stdout, stderr_path.open("wb", buffering=0) as stderr:
+            supervisor = subprocess.Popen(
+                [getattr(sys, "_base_executable", sys.executable), "-u", str(runner)],
+                stdout=stdout, stderr=stderr,
+                env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+            )
+            try:
+                with self.assertRaises(AssertionError) as failure:
+                    self.assert_supervisor_ready(supervisor, stdout_path, stderr_path)
+                message = str(failure.exception)
+                self.assertIn("exit code=1", message)
+                self.assertIn("supervisor stdout fixture", message)
+                self.assertIn("ModuleNotFoundError", message)
+                self.assertIn("__re3d_missing_supervisor_dependency__", message)
+            finally:
+                if supervisor.poll() is None:
+                    supervisor.kill()
+                supervisor.wait(timeout=5)
+
     def test_success_output_environment_and_pid(self):
         lines, pids, checks, stopped = [], [], [], []
         result = self.run_process(
@@ -579,37 +624,42 @@ class ContainedProcessTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "native Windows Job Object contract")
     def test_supervisor_process_death_kills_contained_tree(self):
+        repository = Path(__file__).resolve().parents[2]
+        import_paths = list(dict.fromkeys(
+            [str(repository), *(str(Path(entry or repository).resolve()) for entry in sys.path)]
+        ))
         runner = self.base / "supervisor.py"
         runner.write_text(
+            # The real base interpreter does not discover the parent's venv.
+            # Share this fixture's resolved imports without installing globally.
+            f"import sys\nsys.path[:] = {import_paths!r}\n"
             "from pathlib import Path\nfrom backend.experiments.process import run_contained_process\n"
             f"run_contained_process({self.command('silent')!r}, cwd=Path({str(self.base)!r}), "
             f"log_path=Path({str(self.base / 'private.log')!r}), timeout_seconds=120)\n",
             encoding="utf-8",
         )
-        repository = Path(__file__).resolve().parents[2]
-        supervisor = subprocess.Popen(
-            # Kill the real interpreter, not a venv redirector whose own
-            # lifetime policy could otherwise confound KILL_ON_JOB_CLOSE.
-            [getattr(sys, "_base_executable", sys.executable), str(runner)], cwd=repository,
-            env={**os.environ, "PYTHONPATH": str(repository)},
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        try:
-            deadline = time.monotonic() + 10
-            while not self.ready() and supervisor.poll() is None and time.monotonic() < deadline:
-                time.sleep(.02)
-            self.assertTrue(self.ready())
-            supervisor.kill()  # Own test supervisor only, never a broad PID/name kill.
-            supervisor.wait(timeout=5)
-            deadline = time.monotonic() + 5
-            while any(_alive(int((self.base / (role + ".pid")).read_text()))
-                      for role in ("parent", "child", "grand")) and time.monotonic() < deadline:
-                time.sleep(.02)
-            self.assert_tree_dead()
-        finally:
-            if supervisor.poll() is None:
-                supervisor.kill()
+        stdout_path, stderr_path = self.base / "supervisor.stdout.log", self.base / "supervisor.stderr.log"
+        with stdout_path.open("wb", buffering=0) as stdout, stderr_path.open("wb", buffering=0) as stderr:
+            supervisor = subprocess.Popen(
+                # Kill the real interpreter, not a venv redirector whose own
+                # lifetime policy could otherwise confound KILL_ON_JOB_CLOSE.
+                [getattr(sys, "_base_executable", sys.executable), "-u", str(runner)], cwd=repository,
+                env={**os.environ, "PYTHONPATH": str(repository), "PYTHONIOENCODING": "utf-8"},
+                stdout=stdout, stderr=stderr,
+            )
+            try:
+                self.assert_supervisor_ready(supervisor, stdout_path, stderr_path)
+                supervisor.kill()  # Own test supervisor only, never a broad PID/name kill.
                 supervisor.wait(timeout=5)
+                deadline = time.monotonic() + 5
+                while any(_alive(int((self.base / (role + ".pid")).read_text()))
+                          for role in ("parent", "child", "grand")) and time.monotonic() < deadline:
+                    time.sleep(.02)
+                self.assert_tree_dead()
+            finally:
+                if supervisor.poll() is None:
+                    supervisor.kill()
+                    supervisor.wait(timeout=5)
 
 
 if __name__ == "__main__":

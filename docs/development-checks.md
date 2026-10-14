@@ -50,6 +50,8 @@ pwsh -NoProfile -File scripts/check.ps1 -Component backend -Install -PythonPath 
 
 - pytest 兼容现有 unittest 类，也收集使用 fixture/parametrize 的函数测试，避免旧 unittest discover 入口漏收集。
 - 默认门禁验证模拟链路、契约、平台逻辑、Windows 进程监督与前端行为。阶段规划单元测试使用合成外部配置；它验证平台编排合同，不证明真实算法脚本或 GPU 已运行。
+- Windows 监督进程死亡测试使用真实基础解释器，避免虚拟环境启动器影响 Job Object 句柄生命周期；合成监督脚本显式复用父测试进程的导入路径，不要求基础 Python 全局安装项目依赖。
+- 监督进程的 stdout/stderr 写入测试临时文件；进程树未就绪时，失败信息包含退出码和各输出最后 4 KiB，随 pytest 失败日志保留。
 - 本机冻结算法规划检查需要兄弟 `Re3D` 仓库。要显式执行这项检查，可单独运行以下命令；它不会执行真实重建：
 
 ```powershell
