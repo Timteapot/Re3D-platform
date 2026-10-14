@@ -4,7 +4,12 @@ import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 
 export default defineConfig(({ mode }) => {
-  const environment = loadEnv(mode, process.cwd(), "");
+  // CPU checks run without local Vite environment files. Normal development and
+  // release builds keep the existing environment and proxy configuration.
+  const isPlatformCheck = process.env.RE3D_PLATFORM_CHECK === "1";
+  const environment: Record<string, string> = isPlatformCheck
+    ? {}
+    : loadEnv(mode, process.cwd(), "");
   const apiTarget = environment.VITE_API_PROXY_TARGET || "http://127.0.0.1:8000";
 
   if (!/^https?:\/\/[^/]+(?::\d+)?$/.test(apiTarget)) {
@@ -12,6 +17,7 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
+    envDir: isPlatformCheck ? false : undefined,
     plugins: [react()],
     server: {
       port: 5173,

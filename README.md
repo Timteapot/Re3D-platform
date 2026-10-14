@@ -132,13 +132,17 @@ Vite 开发服务仅绑定 `127.0.0.1:5173`，将 `/api` 代理到本机 API。�
 3. 按 [API/Worker 文档](docs/development-api-worker.md) 启动进程，按 [Mailpit 文档](deploy/mailpit/README.md) 准备认证邮件，按 [前端文档](docs/frontend.md) 安装依赖并启动页面。
 
 ```powershell
-# 平台根目录：单元测试使用临时文件和 SQLite
-.\.venv\Scripts\python.exe -m unittest discover -s tests\unit
+# 平台根目录：默认检查后端、前端测试和构建
+pwsh -NoProfile -File scripts/check.ps1
 
-# apps/web 目录
-npm test
-npm run build
+# 首次恢复开发依赖后执行同一门禁
+pwsh -NoProfile -File scripts/check.ps1 -Install
+
+# 临时 PostgreSQL 集成测试与迁移往返
+pwsh -NoProfile -File scripts/check.ps1 -Component postgres
 ```
+
+检查使用 PowerShell 7。后端统一由 pytest 收集 unittest 类和函数测试；前端构建已包含 TypeScript 检查。按组件检查、环境隔离与 GitHub Actions 两个 job 的执行边界见 [开发检查与 CI](docs/development-checks.md)。仓库工作约定见 [AGENTS.md](AGENTS.md)。
 
 `npm run build` 用于构建检查；部署发布须使用 [build-web.ps1](deploy/production/build-web.ps1) 生成绑定干净 Git 提交的 `deployment.json`。Windows 脚本可使用临时进程执行策略，无需修改全局策略。
 
@@ -158,6 +162,7 @@ npm run build
 | [项目计划](PROJECT_PLAN.md) | 有效范围、后续阶段与验收条件 |
 | [模块集成](docs/module-integration.md) | 运行时数据流、模块边界与对接 |
 | [前端](docs/frontend.md) | 前端结构与交互 |
+| [开发检查与 CI](docs/development-checks.md) | 统一本地门禁、测试边界和 GitHub Actions |
 | [认证](docs/authentication.md)、[任务](docs/job-api.md)、[上传](docs/image-uploads.md) | 当前 API 和业务合同 |
 | [下载](docs/artifact-downloads.md)、[查看器](docs/glb-viewer.md) | 授权产物与三维预览 |
 | [受限部署](deploy/restricted/README.md)、[生产部署](deploy/production/README.md) | 操作与环境要求 |

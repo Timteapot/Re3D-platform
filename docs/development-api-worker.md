@@ -192,19 +192,21 @@ Re3D-data/jobs/<job_uuid>/
 
 ## 8. 测试方式
 
-不依赖外部服务的测试：
+不依赖外部服务的后端检查使用统一入口，包含 Python 依赖完整性、单元测试和 SQLite API/Worker 集成测试；pytest 同时收集 unittest 类和函数测试：
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s tests\unit -v
+pwsh -NoProfile -File scripts/check.ps1 -Component backend
 ```
 
 真实 PostgreSQL 集成测试：
 
 ```powershell
-& .\deploy\postgres\run-integration-tests.ps1
+pwsh -NoProfile -File scripts/check.ps1 -Component postgres
 ```
 
 后一个脚本只使用随机临时 Docker PostgreSQL 18。测试数据库必须以 `_test` 结尾；代码会拒绝 `re3d_platform_dev`。脚本不挂载数据卷，结束后删除容器，因此不会清理或回滚开发数据。
+
+完整默认检查、首次安装和 CI 执行范围见 [开发检查与 CI](development-checks.md)。
 
 真实图片工作流的请求示例、安全限制和目录结构见 [`image-uploads.md`](image-uploads.md)。
 

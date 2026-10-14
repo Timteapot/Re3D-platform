@@ -5,10 +5,12 @@ import json
 from pathlib import Path
 import sqlite3
 import struct
+import sys
 from types import SimpleNamespace
 
 import pytest
 
+from backend.experiments import high_profile, stages as stage_module
 from backend.experiments.high_profile import build_pipeline_overlay
 from backend.experiments.long_runner import STAGE_NAMES
 from backend.experiments.preflight import ExperimentGateError
@@ -16,9 +18,6 @@ from backend.experiments.stages import (
     LABELS, StageSpec, build_stage_plan, gate_outputs, gate_sfm, gate_stage, prepared_dimensions,
 )
 
-WORKSPACE = Path(__file__).resolve().parents[3]
-PIPELINE = WORKSPACE / "Re3D"
-PROFILE_PATH = WORKSPACE / "Re3D-data/experiments/lighthouse300-high-cpu-v1/performance-profile.json"
 WRAPPER_PATH = Path(__file__).resolve().parents[2] / "scripts/run_profiled_colmap.py"
 
 
@@ -27,19 +26,127 @@ def write_json(path, value):
     path.write_text(json.dumps(value), encoding="utf-8")
 
 
-def test_frozen_plan_has_real_final_validation_and_no_creation(tmp_path, monkeypatch):
-    profile = json.loads(PROFILE_PATH.read_bytes())
+# Synthetic external Pipeline interface. The platform planner and all admission
+# functions remain real; the separate frozen Re3D checkout is opt-in integration.
+PLANNER_STAGE_NAMES = (
+    "01-colmap", "02-extract-cameras", "03-prepare-openmvs-input", "10-c-interface",
+    "11-c-densify", "12-c-reconstruct", "13-c-texture", "13-c-normalize",
+    "20-a-mapanything", "21-a-scale-calibration", "22-a-crossview-v4", "23-a-export-dmap",
+    "23a-a-validate-dmap", "23b-a-stage-openmvs", "24-a-fuse", "24a-a-verify-handoff",
+    "25-a-reconstruct", "26-a-texture", "26-a-normalize", "30-b-mvsanywhere",
+    "31-b-scale-calibration", "32-b-crossview-v2", "33-b-export-dmap", "33a-b-validate-dmap",
+    "33b-b-stage-openmvs", "34-b-fuse", "34a-b-verify-handoff", "35-b-reconstruct",
+    "36-b-texture", "36-b-normalize",
+)
+PLANNER_SOURCE = '''
+import json
+from pathlib import Path
+
+class Pipeline:
+    def __init__(self, *, scene, images, branches, config_path, paths_path,
+                 dry_run, work_dir, output_dir, log_dir):
+        assert dry_run and branches == {"a", "b", "c"}
+        self.config = json.loads(Path(config_path).read_bytes())
+        paths = json.loads(Path(paths_path).read_bytes())
+        self.map_python = paths["map_python"]
+        self.base_env = {}
+        self.work = Path(work_dir)
+        self.outputs = Path(output_dir)
+        self.root = Path(paths_path).parents[1]
+
+    def script(self, name):
+        return self.root / "scripts" / name
+
+    def run(self):
+        self.prepare()
+        capped = {"11-c-densify", "12-c-reconstruct", "13-c-texture",
+                  "24-a-fuse", "25-a-reconstruct", "26-a-texture",
+                  "34-b-fuse", "35-b-reconstruct", "36-b-texture"}
+        for name in STAGES:
+            command = [self.map_python, self.script("fixture_stage.py")]
+            if name == "01-colmap":
+                command = [self.map_python, self.script("run_colmap_shared.py"),
+                           "--images", self.work / "input/images"]
+            elif name == "20-a-mapanything":
+                command += ["--batch-size", self.config["a_v4"]["batch_size"]]
+            elif name in capped:
+                group = "c" if "-c-" in name else "a_v4" if "-a-" in name else "b_v2"
+                budget = self.config["texture"]["max_threads"] if "texture" in name else self.config[group]["openmvs_threads"]
+                command += ["--max-threads", budget, "-w", self.work / name]
+            self.step(name, command, self.work / (name + ".complete"))
+        self.validate()
+
+    def prepare(self):
+        raise AssertionError("The platform recorder must override prepare")
+
+    def validate(self):
+        raise AssertionError("The platform recorder must add final validation")
+'''
+
+
+@pytest.fixture
+def pipeline_fixture(tmp_path, monkeypatch):
+    pipeline = tmp_path / "synthetic-pipeline"
+    (pipeline / "scripts").mkdir(parents=True)
+    planner = pipeline / "scripts/run_pipeline.py"
+    planner.write_text("STAGES = " + repr(PLANNER_STAGE_NAMES) + "\n" + PLANNER_SOURCE, encoding="utf-8")
+    colmap = pipeline / "scripts/run_colmap_shared.py"
+    colmap.write_text("raise AssertionError('Synthetic COLMAP must never execute')\n", encoding="utf-8")
+    baseline = {
+        "a_v4": {"batch_size": 4, "openmvs_threads": 16},
+        "b_v2": {"source_views": 7, "height": 384, "width": 384, "refinement_steps": 1, "openmvs_threads": 24},
+        "c": {"openmvs_threads": 24}, "texture": {"max_threads": 24},
+        "camera_frontend": {"deferred_registration": {
+            "enabled": True, "relative_observation_floor": 0.2, "minimum_triangulated_ratio": 0.1,
+            "max_images": 10, "retry_abs_pose_max_error": 12.0,
+            "retry_abs_pose_min_num_inliers": 15, "retry_abs_pose_min_inlier_ratio": 0.2,
+        }},
+    }
+    config = pipeline / "configs/pipeline.json"
+    write_json(config, baseline)
+    paths = pipeline / "configs/paths.fixture.json"
+    write_json(paths, {"map_python": sys.executable})
+    # Bind the trust metadata to fixture bytes, keeping the identity checks live.
+    baseline_sha = hashlib.sha256(config.read_bytes()).hexdigest()
+    monkeypatch.setattr(high_profile, "BASE_CONFIG_SHA", baseline_sha)
+    monkeypatch.setattr(high_profile, "COLMAP_SCRIPT_SHA", hashlib.sha256(colmap.read_bytes()).hexdigest())
+    monkeypatch.setattr(stage_module, "PIPELINE_SCRIPT_SHA", hashlib.sha256(planner.read_bytes()).hexdigest())
+    monkeypatch.setattr(stage_module, "COLMAP_SCRIPT_SHA", high_profile.COLMAP_SCRIPT_SHA)
+    profile = {
+        "profile_kind": "offline_high_cpu_candidate", "autorun": False,
+        "full_guarded_launcher_ready": False, "server_applied": False,
+        "pipeline": {"commit": high_profile.BASE_COMMIT, "baseline_config_sha256": baseline_sha,
+                     "baseline_modified": False, "quality_parameters_changed": False},
+        "target_hardware": {"logical_cpus": 40},
+        "cpu": {"sfm_threads": 12, "mapper_ba_threads": 32, "openmvs_threads": 32,
+                "texture_threads": 32, "global_blas_omp_override": None},
+        "gpu_preserved": {"task_concurrency": 1, "branches_serial": True, "map_outer_batch": 4,
+                          "map_dense_head_minibatch": 1, "map_use_amp": True, "map_requested_amp_dtype": "bf16",
+                          "mvs_source_views": 7, "mvs_height": 384, "mvs_width": 384, "mvs_refinement_steps": 1},
+        "protection": {"disk_floor_bytes": 20 * 1024**3, "reservation_bytes": 64 * 1024**3,
+                       "available_ram_floor_bytes": 32 * 1024**3, "free_vram_floor_bytes": 2 * 1024**3,
+                       "host_guard_seconds": 1, "gpu_sample_seconds": 5, "directory_sample_seconds": 15,
+                       "overall_timeout_seconds": 14400},
+        "target_experiment": {"scene": "synthetic-test", "root": str(tmp_path / "_experiments/synthetic-test")},
+    }
+    profile_path = tmp_path / "profile.json"
+    write_json(profile_path, profile)
+    return SimpleNamespace(root=pipeline, profile=profile, profile_path=profile_path, baseline=baseline, paths=paths)
+
+
+def test_frozen_plan_has_real_final_validation_and_no_creation(tmp_path, monkeypatch, pipeline_fixture):
+    fixture = pipeline_fixture
+    profile = deepcopy(fixture.profile)
     root = tmp_path / "_experiments/test-complete"
     profile["target_experiment"]["root"] = str(root)
-    baseline = json.loads((PIPELINE / "configs/pipeline.json").read_bytes())
-    overlay, _ = build_pipeline_overlay(baseline, profile)
+    overlay, _ = build_pipeline_overlay(fixture.baseline, profile)
     config = tmp_path / "overlay.json"
     write_json(config, overlay)
     for key in ("RE3D_MAP_PYTHON", "RE3D_MVS_PYTHON", "RE3D_TEXTUREMESH_EXE",
                 "RE3D_WORK_DIR", "RE3D_OUTPUT_DIR", "RE3D_LOG_DIR"):
         monkeypatch.delenv(key, raising=False)
-    plan = build_stage_plan(pipeline_root=PIPELINE, config_path=config,
-        paths_path=PIPELINE / "configs/paths.local.json", profile_path=PROFILE_PATH,
+    plan = build_stage_plan(pipeline_root=fixture.root, config_path=config,
+        paths_path=fixture.paths, profile_path=fixture.profile_path,
         profile=profile, dimensions=(2048,1080), experiment_root=root, wrapper_path=WRAPPER_PATH)
     assert len(plan.stages) == 31
     assert tuple(stage.name for stage in plan.stages) == STAGE_NAMES
@@ -59,12 +166,12 @@ def test_frozen_plan_has_real_final_validation_and_no_creation(tmp_path, monkeyp
     assert not root.exists()
 
 
-def test_planner_rejects_environment_override_before_import(tmp_path, monkeypatch):
+def test_planner_rejects_environment_override_before_import(tmp_path, monkeypatch, pipeline_fixture):
     monkeypatch.setenv("RE3D_MAP_PYTHON", "not-approved")
     with pytest.raises(ExperimentGateError, match="ENVIRONMENT_OVERRIDE"):
-        build_stage_plan(pipeline_root=PIPELINE, config_path=tmp_path / "missing",
-            paths_path=tmp_path / "missing", profile_path=PROFILE_PATH,
-            profile=json.loads(PROFILE_PATH.read_bytes()), dimensions=(1,1),
+        build_stage_plan(pipeline_root=pipeline_fixture.root, config_path=tmp_path / "missing",
+            paths_path=tmp_path / "missing", profile_path=pipeline_fixture.profile_path,
+            profile=pipeline_fixture.profile, dimensions=(1,1),
             experiment_root=tmp_path / "_experiments/new", wrapper_path=WRAPPER_PATH)
 
 
@@ -283,14 +390,14 @@ def test_options_hooks_fail_closed_and_restore():
     assert colmap.extract_features is extract and module.mapping_options is factory
 
 
-def test_child_without_execute_only_prepares_and_never_imports_native(tmp_path,monkeypatch,capsys):
+def test_child_without_execute_only_prepares_and_never_imports_native(tmp_path,monkeypatch,capsys,pipeline_fixture):
     wrapper=load_wrapper();root=tmp_path / "_experiments/child-preview";reports=root / "reports"
     reports.mkdir(parents=True)
-    profile=json.loads(PROFILE_PATH.read_bytes());profile_path=tmp_path / "profile.json"
+    profile=deepcopy(pipeline_fixture.profile);profile_path=tmp_path / "child-profile.json"
     write_json(profile_path,profile)
-    baseline=json.loads((PIPELINE / "configs/pipeline.json").read_bytes())
+    baseline=pipeline_fixture.baseline
     deferred=baseline["camera_frontend"]["deferred_registration"]
-    args=["--platform-root",str(WRAPPER_PATH.parents[1]),"--pipeline-root",str(PIPELINE),
+    args=["--platform-root",str(WRAPPER_PATH.parents[1]),"--pipeline-root",str(pipeline_fixture.root),
         "--profile",str(profile_path),"--profile-sha256",hashlib.sha256(profile_path.read_bytes()).hexdigest(),
         "--experiment-root",str(root),"--options-report",str(reports / "sfm-actual-options.json"),"--",
         "--images",str(root / "work/input/images"),"--masks",str(root / "work/input/masks"),
@@ -309,10 +416,10 @@ def test_child_without_execute_only_prepares_and_never_imports_native(tmp_path,m
     assert "reconstruction_started\": false" in capsys.readouterr().out
 
 
-def test_child_invalid_hash_is_sanitized_and_does_not_start(tmp_path,capsys):
+def test_child_invalid_hash_is_sanitized_and_does_not_start(tmp_path,capsys,pipeline_fixture):
     wrapper=load_wrapper();root=tmp_path / "_experiments/child-no-start";(root / "reports").mkdir(parents=True)
-    rc=wrapper.main(["--platform-root",str(WRAPPER_PATH.parents[1]),"--pipeline-root",str(PIPELINE),
-        "--profile",str(PROFILE_PATH),"--profile-sha256","0"*64,"--experiment-root",str(root),
+    rc=wrapper.main(["--platform-root",str(WRAPPER_PATH.parents[1]),"--pipeline-root",str(pipeline_fixture.root),
+        "--profile",str(pipeline_fixture.profile_path),"--profile-sha256","0"*64,"--experiment-root",str(root),
         "--options-report",str(root / "reports/sfm-actual-options.json")])
     value=json.loads(capsys.readouterr().out)
     assert rc==1 and value["error_code"]=="PROFILED_COLMAP_PROFILE_HASH_MISMATCH"

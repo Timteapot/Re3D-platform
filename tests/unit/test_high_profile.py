@@ -4,6 +4,7 @@ from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 import json
+import os
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -103,6 +104,8 @@ class HighProfileTests(unittest.TestCase):
         stages[1]['argv'][-1] = '24'
         with self.assertRaises(ExperimentGateError): validate_stage_plan(stages, profile())
 
+    @unittest.skipUnless(os.environ.get('RE3D_RUN_LOCAL_PIPELINE_TESTS') == '1',
+                         'Set RE3D_RUN_LOCAL_PIPELINE_TESTS=1 for the separate local frozen pipeline check')
     def test_local_native_planner_no_execution_or_runtime_data_creation(self):
         pipeline = Path(__file__).resolve().parents[3] / 'Re3D'
         if not (pipeline / 'configs/pipeline.json').is_file():

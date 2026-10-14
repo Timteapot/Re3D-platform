@@ -143,14 +143,17 @@ reports/                     evaluation、storage-usage
 
 | 层级 | 当前入口或证据 | 后续重点 |
 |---|---|---|
-| 后端单元 | `unittest discover -s tests/unit` | 状态、身份、路径、额度、超时与清理负向边界 |
+| 后端单元 | `scripts/check.ps1 -Component backend`，pytest 同时收集 unittest 类与函数测试 | 状态、身份、路径、额度、超时与清理负向边界 |
 | PostgreSQL 集成 | 临时 Docker 数据库，名称以 `_test` 结尾 | 事务并发、迁移往返、租约和恢复 |
 | 前端 | Vitest / Testing Library、类型检查和生产构建 | 路由、请求、查看器生命周期与 UI 回归 |
 | 浏览器人工验收 | 受限 11 图真实链路与截图/脱敏记录 | 大模型、移动端、权限与断线 |
 | GPU 验收 | 11 图小任务及 150 图管线记录 | 直接 300 图、失败样本与故障恢复 |
 | 部署/数据恢复 | 就绪检查、WinSW 清单、ACL 与监听检查 | 新环境复现、restricted 备份恢复 |
+| CI | GitHub Actions：Windows 平台与前端检查、Ubuntu 临时 PostgreSQL 检查 | 分支必需检查、失败诊断与回归范围维护 |
 
-Pytest、Playwright 自动化 E2E、对象存储、模型简化/LOD、百分比流式下载进度和扩展输入质量分析不作为已完成实现；如纳入后续范围，应建立独立验收任务。
+本地和 CI 共用入口，参数与验证边界见 [开发检查与 CI](docs/development-checks.md)。
+
+Playwright 自动化 E2E、对象存储、模型简化/LOD、百分比流式下载进度和扩展输入质量分析不作为已完成实现；如纳入后续范围，应建立独立验收任务。
 
 ## 7. 完成定义
 
