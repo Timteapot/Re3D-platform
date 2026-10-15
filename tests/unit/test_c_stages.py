@@ -164,20 +164,37 @@ def test_environment_override_refused_before_loading(fixture, monkeypatch):
         c_stages.build_c_stage_plan(**fixture)
 
 
-def output_fixture(root):
-    folder = root / "output/C"
-    folder.mkdir(parents=True)
-    (folder / "mesh.obj").write_text("mtllib mesh.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n")
-    (folder / "mesh.mtl").write_text("newmtl material\nd 1.000000\nmap_Kd texture.jpg\n")
-    (folder / "texture.jpg").write_bytes(b"\xff\xd8\xff\xe0fixture\xff\xd9")
-    gltf = {"asset": {"version": "2.0"}, "accessors": [{"count": 3}], "meshes": [{"primitives": [{"indices": 0}]}]}
+def synthetic_glb(path, *, vertices=3, faces=1):
+    # Only the header/JSON/index-count contract is needed; no mesh library or
+    # local reconstruction environment is involved in this synthetic fixture.
+    gltf = {"asset": {"version": "2.0"}, "accessors": [{"count": 3 * faces}, {"count": vertices}],
+            "meshes": [{"primitives": [{"indices": 0, "attributes": {"POSITION": 1}}]}]}
     payload = json.dumps(gltf).encode()
     payload += b" " * ((-len(payload)) % 4)
     binary = b"\0" * 12
     size = 12 + 8 + len(payload) + 8 + len(binary)
-    (folder / "mesh.glb").write_bytes(struct.pack("<4sII", b"glTF", 2, size) + struct.pack("<I4s", len(payload), b"JSON")
-                                      + payload + struct.pack("<I4s", len(binary), b"BIN\0") + binary)
-    write_json(root / "output/validation.json", {"all_passed": True, "branches": {"C": {"status": "pass", "errors": [], "obj_vertices": 3, "obj_faces": 1, "glb_faces": 1}}})
+    path.write_bytes(struct.pack("<4sII", b"glTF", 2, size) + struct.pack("<I4s", len(payload), b"JSON")
+                     + payload + struct.pack("<I4s", len(binary), b"BIN\0") + binary)
+
+
+def output_fixture(root, *, uv_seam=False):
+    folder = root / "output/C"
+    folder.mkdir(parents=True)
+    obj = "mtllib mesh.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n"
+    if uv_seam:
+        # Positions 1 and 3 have different UVs across the two triangles. The
+        # frozen validator's loaded counts may therefore be six, not four.
+        obj = ("mtllib mesh.mtl\nv 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\n"
+               "vt 0 0\nvt 1 0\nvt 1 1\nvt 0.1 0\nvt 0.9 1\nvt 0 1\n"
+               "f 1/1 2/2 3/3\nf 1/4 3/5 4/6\n")
+    loaded_vertices, faces = (6, 2) if uv_seam else (3, 1)
+    (folder / "mesh.obj").write_text(obj)
+    (folder / "mesh.mtl").write_text("newmtl material\nd 1.000000\nmap_Kd texture.jpg\n")
+    (folder / "texture.jpg").write_bytes(b"\xff\xd8\xff\xe0fixture\xff\xd9")
+    synthetic_glb(folder / "mesh.glb", vertices=loaded_vertices, faces=faces)
+    write_json(root / "output/validation.json", {"all_passed": True, "branches": {"C": {
+        "status": "pass", "errors": [], "obj_vertices": loaded_vertices, "glb_vertices": loaded_vertices,
+        "obj_faces": faces, "glb_faces": faces}}})
 
 
 def test_c_only_outputs_four_hashed_artifacts_without_global_mutation(tmp_path):
@@ -187,7 +204,62 @@ def test_c_only_outputs_four_hashed_artifacts_without_global_mutation(tmp_path):
     assert result["all_passed"] and result["artifact_count"] == 4
     assert not result["geometry_accuracy_certified"]
     assert all(len(row["sha256"]) == 64 for row in result["artifacts"])
+    assert result["vertex_count_semantics"] == {"raw_obj_vertex_records": 3, "obj_loaded_vertices": 3,
+                                               "glb_loaded_vertices": 3, "raw_and_loaded_equality_required": False}
     assert stages.LABELS == labels == ("A-v4", "B-v2", "C")
+
+
+def test_uv_seam_loaded_vertices_need_not_equal_raw_obj_records(tmp_path):
+    output_fixture(tmp_path, uv_seam=True)
+    validation_path = tmp_path / "output/validation.json"
+    validation_before = validation_path.read_bytes()
+    result = c_stages.gate_c_outputs(tmp_path)
+    assert result["all_passed"] and result["artifact_count"] == 4
+    assert result["vertex_count_semantics"] == {"raw_obj_vertex_records": 4, "obj_loaded_vertices": 6,
+                                               "glb_loaded_vertices": 6, "raw_and_loaded_equality_required": False}
+    glb = next(row for row in result["artifacts"] if row["relative_path"].endswith("mesh.glb"))
+    assert glb["glb_header"]["indexed_triangle_faces"] == 2
+    assert all(row["sha256"] == hashlib.sha256((tmp_path / row["relative_path"]).read_bytes()).hexdigest()
+               for row in result["artifacts"])
+    assert validation_path.read_bytes() == validation_before
+
+
+@pytest.mark.parametrize("field", ["obj_vertices", "glb_vertices"])
+@pytest.mark.parametrize("invalid", [None, 0, -1, True, 1.0, "6"])
+def test_c_outputs_reject_invalid_loaded_vertex_counts(tmp_path, field, invalid):
+    output_fixture(tmp_path, uv_seam=True)
+    path = tmp_path / "output/validation.json"
+    value = json.loads(path.read_bytes())
+    value["branches"]["C"][field] = invalid
+    write_json(path, value)
+    with pytest.raises(ExperimentGateError, match="C_OUTPUT_VERTEX_COUNT_INVALID"):
+        c_stages.gate_c_outputs(tmp_path)
+
+
+def test_c_outputs_require_positive_raw_obj_vertex_count(tmp_path):
+    output_fixture(tmp_path, uv_seam=True)
+    path = tmp_path / "output/C/mesh.obj"
+    path.write_text("".join(line for line in path.read_text().splitlines(keepends=True) if not line.startswith("v ")))
+    with pytest.raises(ExperimentGateError, match="C_OUTPUT_VERTEX_COUNT_INVALID"):
+        c_stages.gate_c_outputs(tmp_path)
+
+
+@pytest.mark.parametrize("source", ["obj_report", "glb_report", "raw_obj", "glb_indices"])
+def test_uv_seam_does_not_relax_face_count_agreement(tmp_path, source):
+    output_fixture(tmp_path, uv_seam=True)
+    folder = tmp_path / "output/C"
+    if source.endswith("report"):
+        path = tmp_path / "output/validation.json"
+        value = json.loads(path.read_bytes())
+        value["branches"]["C"]["obj_faces" if source == "obj_report" else "glb_faces"] = 1
+        write_json(path, value)
+    elif source == "raw_obj":
+        path = folder / "mesh.obj"
+        path.write_text(path.read_text().replace("f 1/4 3/5 4/6\n", ""))
+    else:
+        synthetic_glb(folder / "mesh.glb", vertices=6, faces=1)
+    with pytest.raises(ExperimentGateError, match="C_OUTPUT_FACE_COUNT_MISMATCH"):
+        c_stages.gate_c_outputs(tmp_path)
 
 
 @pytest.mark.parametrize("mutation,code", [("extra_branch", "VALIDATION"), ("material", "MATERIAL_REFERENCE"), ("texture", "TEXTURE_REFERENCE"), ("opacity", "TEXTURE_REFERENCE"), ("glb", "GLB_HEADER"), ("jpeg", "JPEG"), ("faces", "FACE_COUNT")])

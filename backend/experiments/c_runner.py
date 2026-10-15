@@ -15,7 +15,8 @@ import shutil
 import threading
 import time
 
-from backend.experiments.c_profile import validate_c_profile, validate_terminal_binding
+from backend.experiments.c_profile import (validate_c_profile, validate_terminal_binding,
+    verify_handoff_receipt_binding)
 from backend.experiments.c_stages import C_STAGE_NAMES, build_c_stage_plan, gate_c_stage
 from backend.experiments.cpu_runner import ordinary
 from backend.experiments.evidence import EvidenceSink, PRIVATE_PARENT
@@ -223,17 +224,122 @@ class CStageSupervisor:
         return result
 
 
-def verify_handoff_receipt_binding(verified, receipt):
-    """Tie a verified handoff's DB/model to the accepted CPU terminal receipt."""
-    database = next((row for row in verified.manifest['files']
-                     if row['relative_path'] == 'work/shared/colmap/database.db'), None)
-    require(database and database['sha256'] == receipt['hashes']['final_database_sha256']
-            and verified.manifest['sfm_gate']['database_images'] == 300
-            and verified.manifest['sfm_gate']['registered_images'] == 300
-            and verified.manifest['sfm_gate'] == receipt['result']['final_sfm_gate']
-            and Path(verified.manifest['execution']['source_experiment_root']).name == receipt['scene']
-            and verified.manifest['source']['source_job_id'] == receipt['source_job_id'],
-            'LOCAL_C_HANDOFF_RECEIPT_MISMATCH')
+def _verify_c_frozen_files(pipeline):
+    config = pipeline / 'configs/pipeline.json'
+    require(digest(config) == BASE_CONFIG_SHA
+            and digest(pipeline / 'scripts/run_pipeline.py') == PIPELINE_SCRIPT_SHA
+            and digest(pipeline / 'scripts/run_colmap_shared.py') == COLMAP_SCRIPT_SHA,
+            'LOCAL_C_FROZEN_IDENTITY_CHANGED')
+    return config
+
+
+def _read_c_source_bindings(args, profile):
+    from scripts.run_local_c import read as read_pinned
+    from backend.experiments.cpu_runner import validate_cpu_profile
+    terminal = read_pinned(args.terminal_receipt, expected_sha256=profile['source']['terminal_receipt_sha256'])
+    budget_values = validate_terminal_binding(profile, terminal, profile['source']['terminal_receipt_sha256'])
+    source_profile = read_pinned(args.source_cpu_profile, expected_sha256=args.source_cpu_profile_sha256)
+    validate_cpu_profile(source_profile)
+    require(source_profile['target_experiment']['scene'] == terminal['scene']
+            and args.source_cpu_profile_sha256 == terminal['tool_identity']['profile_sha256'],
+            'LOCAL_C_SOURCE_PROFILE_CHANGED')
+    return terminal, budget_values, source_profile
+
+
+def _check_c_host_resources(root, profile):
+    guards = profile['protection']
+    host, errors = HostResourceReader().read(root.parent)
+    hardware = profile['target_hardware']
+    require(not errors and host['cpu']['logical_count'] == hardware['logical_cpus']
+            and abs(host['memory']['total_bytes'] - hardware['host_ram_bytes']) <= GIB,
+            'LOCAL_C_HARDWARE_CHANGED')
+    available = host['memory']['total_bytes'] - host['memory']['used_bytes']
+    require(available > guards['available_ram_floor_bytes'], 'LOCAL_C_RAM_ADMISSION_FAILED')
+    data_free = shutil.disk_usage(root.parent).free
+    evidence_free = shutil.disk_usage('C:\\').free
+    require(data_free >= guards['reservation_bytes'] + guards['disk_floor_bytes'], 'LOCAL_C_DISK_ADMISSION_FAILED')
+    require(evidence_free >= guards['evidence_creation_free_bytes'], 'LOCAL_C_EVIDENCE_ADMISSION_FAILED')
+    return {'available_ram_bytes': available, 'data_disk_free_bytes': data_free,
+            'evidence_disk_free_bytes': evidence_free}
+
+
+def _verify_c_source_handoff(profile, source_profile, terminal, health):
+    source = source_profile['source_checkpoint']
+    verified_input = verify_hybrid_source(**source, source_job_id=source_profile['source_job_id'],
+        pipeline_commit=BASE_COMMIT, config_sha256=BASE_CONFIG_SHA, health_check=health)
+    handoff = verify_sfm_handoff(profile['source']['root'], profile['source']['handoff_manifest_sha256'],
+        input_source=verified_input, expected_quality_config_sha256=BASE_CONFIG_SHA,
+        expected_pipeline_script_sha256=PIPELINE_SCRIPT_SHA,
+        expected_colmap_script_sha256=COLMAP_SCRIPT_SHA, health_check=health)
+    verify_handoff_receipt_binding(handoff, terminal)
+    return verified_input, handoff
+
+
+def preflight_local_c(args, profile, *, tool_identity, health_check=lambda: None):
+    """Read-only snapshot, never an execution permit or an implicit elevation.
+
+    Reuse execution's pinned-file, receipt, source and resource gates. Do not call
+    Git or the algorithm interpreter: clean-worktree identity and real dependency
+    imports remain explicit execution-time gates. No claim, target, import,
+    evidence sink, mutex, monitor, sleep request, child or background thread is
+    created. An optional synchronous caller guard is additive to the internal
+    read deadline, never a replacement. Even a passed snapshot must be rechecked
+    by execute.
+    """
+    started = time.monotonic()
+    validate_c_profile(profile)
+    require(getattr(args, 'execute_c_only', False) is False, 'LOCAL_C_EXECUTION_MODE_MISMATCH')
+    from scripts.run_local_c import SHA, plain, read as read_pinned, verify_runtime_manifest
+    required = ('profile', 'profile_sha256', 'terminal_receipt', 'source_cpu_profile',
+                'source_cpu_profile_sha256', 'runtime_manifest', 'runtime_manifest_sha256', 'pipeline_root')
+    require(all(getattr(args, key, None) is not None for key in required)
+            and isinstance(tool_identity, str) and SHA.fullmatch(tool_identity),
+            'LOCAL_C_PREFLIGHT_ARGUMENTS_REQUIRED')
+    try:
+        health_check()
+        pinned_profile = read_pinned(args.profile, expected_sha256=args.profile_sha256)
+        require(pinned_profile == profile, 'LOCAL_C_PROFILE_CHANGED')
+        root = ordinary(Path(profile['target_experiment']['root']), missing_leaf=True)
+        require(not root.exists(), 'LOCAL_C_NEW_TARGET_REQUIRED')
+        pipeline = plain(args.pipeline_root)
+        _verify_c_frozen_files(pipeline)
+        terminal, budget_values, source_profile = _read_c_source_bindings(args, profile)
+        protected_roots = (source_profile['target_experiment']['root'],
+                           source_profile['source_checkpoint']['original_root'],
+                           source_profile['source_checkpoint']['snapshot_root'], str(pipeline))
+        require(all(not str(value).startswith(('\\\\', '//'))
+                    and not any(':' in part for part in Path(value).parts[1:])
+                    for value in protected_roots), 'LOCAL_C_PREFLIGHT_LOCAL_PATH_REQUIRED')
+        require(all(not root.is_relative_to(Path(value)) and not Path(value).is_relative_to(root)
+                    for value in protected_roots), 'LOCAL_C_SOURCE_TARGET_OVERLAP')
+        runtime = verify_runtime_manifest(Path(args.runtime_manifest), args.runtime_manifest_sha256, pipeline)
+        health_check()
+        resources = _check_c_host_resources(root, profile)
+        # Cooperative, synchronous read deadline. This is not a compute budget
+        # claim and does not replenish or charge the accepted source allowance.
+        deadline = started + min(120, budget_values['remaining_seconds'])
+        def health():
+            require(time.monotonic() < deadline, 'LOCAL_C_PREFLIGHT_READ_DEADLINE')
+            health_check()
+        health()
+        _verify_c_source_handoff(profile, source_profile, terminal, health)
+        health()
+        return {'schema_version': '1.0', 'status': 'read_only_preflight_passed',
+            'mode': 'preflight', 'scope': 'local-only', 'branches': ['c'],
+            'execution_authorized': False, 'reconstruction_started': False,
+            'source_verified': True, 'source_modified': False, 'target_created': False,
+            'handoff_imported': False, 'budget_claimed': False, 'budget_charged': False,
+            'server_accessed': False, 'gpu_accessed': False, 'uac_requested': False,
+            'child_process_started': False, 'tool_manifest_sha256': tool_identity,
+            'runtime_manifest_verified': True, 'runtime_file_count': len(runtime['files']),
+            'frozen_pipeline_files_verified': True, 'host_resource_snapshot': resources,
+            'remaining_budget_seconds': budget_values['remaining_seconds'],
+            'elapsed_seconds': max(0, time.monotonic() - started),
+            'deferred_checks': ['git_clean_worktree_identity', 'actual_python_dependency_imports',
+                                'privileged_evidence_and_budget_claim', 'supervised_sfm_import',
+                                'stage_plan_and_runtime_admission', 'execution_time_resource_recheck']}
+    except PermissionError:
+        raise SupervisionError('LOCAL_C_PREFLIGHT_ACCESS_DENIED') from None
 
 
 def execute_local_c(args, profile, *, tool_identity):
@@ -246,35 +352,13 @@ def execute_local_c(args, profile, *, tool_identity):
     require(not root.exists(), 'LOCAL_C_NEW_TARGET_REQUIRED')
     pipeline = ordinary(Path(args.pipeline_root))
     verify_git_identity(pipeline, BASE_COMMIT)
-    config = pipeline / 'configs/pipeline.json'
-    require(digest(config) == BASE_CONFIG_SHA
-            and digest(pipeline / 'scripts/run_pipeline.py') == PIPELINE_SCRIPT_SHA
-            and digest(pipeline / 'scripts/run_colmap_shared.py') == COLMAP_SCRIPT_SHA,
-            'LOCAL_C_FROZEN_IDENTITY_CHANGED')
-    from scripts.run_local_c import read as read_pinned
-    terminal = read_pinned(args.terminal_receipt, expected_sha256=profile['source']['terminal_receipt_sha256'])
-    budget_values = validate_terminal_binding(profile, terminal, profile['source']['terminal_receipt_sha256'])
+    config = _verify_c_frozen_files(pipeline)
+    terminal, budget_values, source_profile = _read_c_source_bindings(args, profile)
     budget = WholeRunBudget(budget_values['remaining_seconds'])
     budget.started = admission_started  # Admission does not get a fresh timeout.
     budget.check()
-    source_profile = read_pinned(args.source_cpu_profile, expected_sha256=args.source_cpu_profile_sha256)
-    from backend.experiments.cpu_runner import validate_cpu_profile
-    validate_cpu_profile(source_profile)
-    require(source_profile['target_experiment']['scene'] == terminal['scene']
-            and args.source_cpu_profile_sha256 == terminal['tool_identity']['profile_sha256'],
-            'LOCAL_C_SOURCE_PROFILE_CHANGED')
     guards = profile['protection']
-    host, errors = HostResourceReader().read(root.parent)
-    hardware = profile['target_hardware']
-    require(not errors and host['cpu']['logical_count'] == hardware['logical_cpus']
-            and abs(host['memory']['total_bytes'] - hardware['host_ram_bytes']) <= GIB,
-            'LOCAL_C_HARDWARE_CHANGED')
-    require(host['memory']['total_bytes'] - host['memory']['used_bytes'] > guards['available_ram_floor_bytes'],
-            'LOCAL_C_RAM_ADMISSION_FAILED')
-    require(shutil.disk_usage(root.parent).free >= guards['reservation_bytes'] + guards['disk_floor_bytes'],
-            'LOCAL_C_DISK_ADMISSION_FAILED')
-    require(shutil.disk_usage('C:\\').free >= guards['evidence_creation_free_bytes'],
-            'LOCAL_C_EVIDENCE_ADMISSION_FAILED')
+    _check_c_host_resources(root, profile)
     # Runtime files and their DLL closure are externally pinned, not inferred from
     # presence alone. Imports/weights for learned A/B are deliberately unnecessary.
     from scripts.run_local_c import verify_runtime_manifest
@@ -283,15 +367,7 @@ def execute_local_c(args, profile, *, tool_identity):
                 'source_manifest_sha256': profile['source']['handoff_manifest_sha256'],
                 'pipeline_commit': BASE_COMMIT, 'config_sha256': BASE_CONFIG_SHA}
     def verify(health):
-        source = source_profile['source_checkpoint']
-        verified_input = verify_hybrid_source(**source, source_job_id=source_profile['source_job_id'],
-            pipeline_commit=BASE_COMMIT, config_sha256=BASE_CONFIG_SHA, health_check=health)
-        handoff = verify_sfm_handoff(profile['source']['root'], profile['source']['handoff_manifest_sha256'],
-            input_source=verified_input, expected_quality_config_sha256=BASE_CONFIG_SHA,
-            expected_pipeline_script_sha256=PIPELINE_SCRIPT_SHA,
-            expected_colmap_script_sha256=COLMAP_SCRIPT_SHA, health_check=health)
-        verify_handoff_receipt_binding(handoff, terminal)
-        return verified_input, handoff
+        return _verify_c_source_handoff(profile, source_profile, terminal, health)
     with exclusive_long_test():
         evidence = EvidenceSink.create_production(profile['target_experiment']['scene'],
             known_stages=C_STAGE_NAMES, known_codes=LOCAL_C_CODES)

@@ -173,6 +173,160 @@ def validate_terminal_binding(profile, terminal_receipt, actual_receipt_sha256):
                                            _number(budget["remaining_seconds"], "C_ONLY_BUDGET_INVALID")))}
 
 
+def verify_handoff_receipt_binding(verified, receipt):
+    """Pure identity cross-check after the caller's complete handoff verification.
+
+    This cannot authenticate files or manufacture a verified handoff. It binds
+    the already verified database, gate and optional final-snapshot provenance
+    to the separately hash-pinned accepted terminal receipt.
+    """
+    code = "LOCAL_C_HANDOFF_RECEIPT_MISMATCH"
+    manifest = getattr(verified, "manifest", None)
+    require(type(manifest) is dict and type(receipt) is dict, code)
+    hashes, identity = receipt.get("hashes"), receipt.get("tool_identity")
+    result = receipt.get("result")
+    require(type(hashes) is dict and type(identity) is dict and type(result) is dict, code)
+    entries, gate = manifest.get("files"), manifest.get("sfm_gate")
+    execution, source = manifest.get("execution"), manifest.get("source")
+    require(type(entries) is list and type(gate) is dict and type(execution) is dict
+            and type(source) is dict, code)
+    databases = [row for row in entries if type(row) is dict
+                 and row.get("relative_path") == "work/shared/colmap/database.db"]
+    require(len(databases) == 1 and _hash(hashes.get("final_database_sha256"))
+            and databases[0].get("sha256") == hashes["final_database_sha256"]
+            and type(gate.get("database_images")) is int and gate["database_images"] == 300
+            and type(gate.get("registered_images")) is int and gate["registered_images"] == 300
+            and gate == result.get("final_sfm_gate")
+            and isinstance(receipt.get("scene"), str)
+            and isinstance(execution.get("source_experiment_root"), str)
+            and _path(execution["source_experiment_root"], code).name == receipt["scene"]
+            and source.get("source_job_id") == receipt.get("source_job_id")
+            and isinstance(receipt.get("source_job_id"), str), code)
+    if "database_source" in manifest:
+        provenance = manifest["database_source"]
+        require(type(provenance) is dict
+                and provenance.get("kind") == "validated_final_snapshot"
+                and _hash(hashes.get("cpu_result_sha256"))
+                and provenance.get("cpu_result_sha256") == hashes["cpu_result_sha256"]
+                and _hash(identity.get("profile_sha256"))
+                and provenance.get("cpu_profile_sha256") == identity["profile_sha256"]
+                and provenance.get("database_sha256") == hashes["final_database_sha256"]
+                and type(provenance.get("validated_complete_pair_records")) is int
+                and provenance["validated_complete_pair_records"] == manifest.get("complete_pair_records")
+                and type(provenance.get("database_size_bytes")) is int
+                and provenance["database_size_bytes"] == databases[0].get("size_bytes"), code)
+    return verified
+
+
+def bind_c_profile(template, *, terminal_receipt, terminal_receipt_sha256,
+                   verified_handoff, source_cpu_profile, source_cpu_profile_sha256):
+    """Bind a C candidate from caller-verified objects without any I/O or launch.
+
+    Actual hashes must come from the exact bytes the caller read and verified;
+    no alternate JSON serialization is hashed here. Template source placeholders
+    and historical timing examples are not authority to replenish a budget.
+    An already bound template may only be rebound to the identical source.
+    """
+    from backend.experiments.cpu_runner import validate_cpu_profile
+
+    require(type(template) is dict and type(terminal_receipt) is dict,
+            "C_ONLY_BIND_INPUT_INVALID")
+    validate_cpu_profile(source_cpu_profile)
+    require(_hash(terminal_receipt_sha256) and _hash(source_cpu_profile_sha256),
+            "C_ONLY_BIND_SHA_INVALID")
+    manifest = getattr(verified_handoff, "manifest", None)
+    handoff_sha = getattr(verified_handoff, "manifest_sha256", None)
+    handoff_root = getattr(verified_handoff, "root", None)
+    require(type(manifest) is dict and _hash(handoff_sha)
+            and isinstance(handoff_root, (str, Path)), "C_ONLY_BIND_HANDOFF_INVALID")
+    root = _path(str(handoff_root), "C_ONLY_SOURCE_PATH_INVALID")
+    hashes, identity = terminal_receipt.get("hashes"), terminal_receipt.get("tool_identity")
+    require(type(hashes) is dict and _hash(hashes.get("cpu_result_sha256"))
+            and type(identity) is dict
+            and identity.get("profile_sha256") == source_cpu_profile_sha256,
+            "C_ONLY_SOURCE_PROFILE_CHANGED")
+    target = source_cpu_profile["target_experiment"]
+    require(terminal_receipt.get("scene") == target["scene"]
+            and terminal_receipt.get("source_job_id") == source_cpu_profile["source_job_id"],
+            "C_ONLY_SOURCE_PROFILE_CHANGED")
+    verify_handoff_receipt_binding(verified_handoff, terminal_receipt)
+    execution, source = manifest["execution"], manifest["source"]
+    cpu, runtime = source_cpu_profile["cpu"], source_cpu_profile["runtime"]
+    require(manifest.get("schema_version") == "1.0"
+            and manifest.get("kind") == "re3d_cpu_sfm_handoff"
+            and source.get("pipeline_commit") == BASE_COMMIT
+            and source.get("pipeline_config_sha256") == BASE_CONFIG_SHA
+            and manifest.get("quality_config_sha256") == BASE_CONFIG_SHA
+            and manifest.get("scripts") == {"run_pipeline_sha256": PIPELINE_SCRIPT_SHA,
+                                          "run_colmap_shared_sha256": COLMAP_SCRIPT_SHA}
+            and manifest.get("old_platform_contracts_copied") is False
+            and manifest.get("geometry_accuracy_certified") is False,
+            "C_ONLY_BIND_HANDOFF_IDENTITY_MISMATCH")
+    require(_path(execution["source_experiment_root"], "C_ONLY_SOURCE_PATH_INVALID")
+            == _path(target["root"], "C_ONLY_SOURCE_PATH_INVALID")
+            and type(execution.get("sfm_threads")) is int
+            and execution["sfm_threads"] == cpu["sfm_threads"]
+            and type(execution.get("mapper_threads")) is int
+            and execution["mapper_threads"] == cpu["mapper_ba_threads"]
+            and execution.get("python_version") == runtime["python_version"]
+            and execution.get("pycolmap_version") == runtime["pycolmap_version"],
+            "C_ONLY_SOURCE_CPU_OPTIONS_CHANGED")
+    checkpoint = source_cpu_profile["source_checkpoint"]
+    bindings = {"original_checkpoint_manifest_sha256": "original_manifest_sha256",
+                "original_database_sha256": "original_database_sha256",
+                "selected_database_sha256": "snapshot_database_sha256",
+                "snapshot_manifest_sha256": "snapshot_manifest_sha256",
+                "selected_complete_pair_records": "expected_complete_pair_records"}
+    require(all(type(source.get(key)) is type(checkpoint[profile_key])
+                and source[key] == checkpoint[profile_key] for key, profile_key in bindings.items()),
+            "C_ONLY_SOURCE_CHECKPOINT_CHANGED")
+    completion = manifest.get("completion")
+    require(type(completion) is dict and set(completion) == {
+        "process_tree_stopped", "snapshot_worker_stopped", "terminal_evidence_confirmed",
+        "source_checkpoint_unchanged"} and all(value is True for value in completion.values()),
+        "C_ONLY_BIND_HANDOFF_COMPLETION_INVALID")
+    candidate = deepcopy(template)
+    bound_source = {"root": str(root), "cpu_result_sha256": hashes["cpu_result_sha256"],
+                    "terminal_receipt_sha256": terminal_receipt_sha256,
+                    "handoff_manifest_sha256": handoff_sha}
+    previous = _object(candidate.get("source"), bound_source, "C_ONLY_SOURCE_INVALID")
+    pins = ("cpu_result_sha256", "terminal_receipt_sha256", "handoff_manifest_sha256")
+    bound = any(previous[key] is not None for key in pins)
+    if bound:
+        require(all(previous[key] == bound_source[key] for key in pins)
+                and _path(previous["root"], "C_ONLY_SOURCE_PATH_INVALID") == root,
+                "C_ONLY_ALREADY_BOUND_SOURCE_CHANGED")
+    budget = _object(candidate.get("budget"), {"original_total_seconds", "consumed_sfm_seconds",
+        "remaining_seconds", "source_terminal_receipt_sha256"}, "C_ONLY_BUDGET_INVALID")
+    require(budget.get("original_total_seconds") == 14400
+            and type(budget["original_total_seconds"]) is int
+            and budget.get("source_terminal_receipt_sha256") in (None, terminal_receipt_sha256),
+            "C_ONLY_BUDGET_RECEIPT_MISMATCH")
+    timing = terminal_receipt.get("timing")
+    require(type(timing) is dict, "C_ONLY_SOURCE_BUDGET_INVALID")
+    charged = _number(timing.get("cumulative_budget_charge_seconds"), "C_ONLY_SOURCE_BUDGET_INVALID")
+    unused = _number(timing.get("unused_total_budget_seconds"), "C_ONLY_SOURCE_BUDGET_INVALID")
+    require(0 < charged < _BUDGET_TOTAL and 0 < unused < _BUDGET_TOTAL
+            and abs(charged + unused - _BUDGET_TOTAL) <= _BUDGET_TOLERANCE,
+            "C_ONLY_SOURCE_BUDGET_INVALID")
+    remaining = min(unused, _BUDGET_TOTAL - charged)
+    if bound:
+        validate_terminal_binding(candidate, terminal_receipt, terminal_receipt_sha256)
+        remaining = min(remaining, _number(budget["remaining_seconds"], "C_ONLY_BUDGET_INVALID"))
+    candidate["source"] = bound_source
+    candidate["budget"] = {"original_total_seconds": 14400,
+        "consumed_sfm_seconds": float(_BUDGET_TOTAL - remaining), "remaining_seconds": float(remaining),
+        "source_terminal_receipt_sha256": terminal_receipt_sha256}
+    validate_terminal_binding(candidate, terminal_receipt, terminal_receipt_sha256)
+    target_root = _path(candidate["target_experiment"]["root"], "C_ONLY_TARGET_INVALID")
+    for value in (target["root"], checkpoint["original_root"], checkpoint["snapshot_root"]):
+        source_root = _path(value, "C_ONLY_SOURCE_PATH_INVALID")
+        require(not target_root.is_relative_to(source_root) and not source_root.is_relative_to(target_root),
+                "C_ONLY_SOURCE_TARGET_OVERLAP")
+    validate_c_profile(candidate)
+    return candidate
+
+
 def build_c_pipeline_overlay(baseline, profile):
     """Only cap C and texture thread pools; preserve reconstruction quality."""
     validate_c_profile(profile)

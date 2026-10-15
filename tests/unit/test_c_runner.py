@@ -192,7 +192,7 @@ def test_handoff_binding_requires_same_completed_database_and_model():
     verified = SimpleNamespace(manifest={'files': [{'relative_path':'work/shared/colmap/database.db', 'sha256':'a'*64}],
         'sfm_gate':sfm, 'execution': {'source_experiment_root':'D:/_experiments/cpu-v3'},
         'source':{'source_job_id':'job'}})
-    receipt = {'hashes':{'final_database_sha256':'a'*64}, 'result':{'final_sfm_gate':sfm},
+    receipt = {'hashes':{'final_database_sha256':'a'*64}, 'result':{'final_sfm_gate':sfm}, 'tool_identity':{},
                'scene':'cpu-v3', 'source_job_id':'job'}
     verify_handoff_receipt_binding(verified, receipt)
     receipt['hashes']['final_database_sha256'] = 'b'*64

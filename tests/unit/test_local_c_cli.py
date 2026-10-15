@@ -340,3 +340,85 @@ def test_runtime_stage_rechecks_admitted_closure_without_running_any_program(run
     (f.root / f.cli.VC18 / "MVS.dll").write_bytes(b"changed after admission")
     with pytest.raises(f.cli.CLIError, match="LOCAL_C_RUNTIME_CHANGED_AFTER_ADMISSION"):
         f.cli.verify_runtime_stage(native, admitted)
+
+
+@pytest.mark.parametrize('code', [
+    'C_OUTPUT_FACE_COUNT_MISMATCH', 'C_OUTPUT_UV_NONFINITE', 'C_STAGE_GATE_FAILED',
+    'C_OUTPUT_VERTEX_COUNT_INVALID',
+    'C_ONLY_BUDGET_ALREADY_CLAIMED', 'EXPERIMENT_PROCESS_IO_FAILED',
+    'LOCAL_C_ENTRY_FAILED', 'LOW_RAM_AUTO_STOPPED', 'RESOURCE_THREAD_SHUTDOWN_FAILED',
+    'EVIDENCE_TERMINAL_TIMED_OUT', 'LONG_BUDGET_EXHAUSTED',
+    'HYBRID_CLI_UNSEALED_MODULE_IMPORT_REJECTED', 'HANDOFF_FINAL_CPU_PROFILE_MISMATCH',
+    'C_WRAPPER_PUBLIC_WRITE_TIMEOUT', 'HOST_RESOURCE_PROBE_FAILED',
+])
+def test_public_error_mapping_preserves_structured_namespace_codes(code):
+    cli = load_cli()
+    assert cli.stable_public_error_code(code) == code
+    assert cli.stable_public_error_code(SimpleNamespace(code=code)) == code
+
+
+@pytest.mark.parametrize('value', [
+    None, False, 42, {}, RuntimeError('C_OUTPUT_FACE_COUNT_MISMATCH'),
+    'C_OUTPUT_FAILED password=not-a-real-secret', 'C_OUTPUT_FAILED\nTraceback',
+    'C_OUTPUT_FAILED D:\\private\\output.obj', 'C_OUTPUT_FAILED/token',
+    'C_OUTPUT_' + 'A' * 96, 'C_OUTPUT_failed', 'C_OUTPUT_FAILED\n',
+    'UNRECOGNIZED_CODE', 'LOCAL_C_',
+])
+def test_public_error_mapping_never_uses_raw_exception_or_secret_text(value):
+    cli = load_cli()
+    assert cli.stable_public_error_code(value) == 'LOCAL_C_ENTRY_FAILED'
+    assert cli.stable_public_error_code(SimpleNamespace(code=value)) == 'LOCAL_C_ENTRY_FAILED'
+
+
+def test_public_error_mapping_fallback_is_also_sanitized():
+    cli = load_cli()
+    assert cli.stable_public_error_code(None, fallback='C_WRAPPER_FAILED') == 'C_WRAPPER_FAILED'
+    assert cli.stable_public_error_code(None, fallback='password=private') == 'LOCAL_C_ENTRY_FAILED'
+
+
+@pytest.mark.parametrize('code,expected', [
+    ('C_OUTPUT_FACE_COUNT_MISMATCH', 'C_OUTPUT_FACE_COUNT_MISMATCH'),
+    ('C_STAGE_GATE_FAILED', 'C_STAGE_GATE_FAILED'),
+    ('EXPERIMENT_PROCESS_IO_FAILED', 'EXPERIMENT_PROCESS_IO_FAILED'),
+    ('C_OUTPUT_FAILED password=not-a-real-secret', 'LOCAL_C_ENTRY_FAILED'),
+])
+def test_cli_exception_uses_same_public_error_mapping(monkeypatch, capsys, code, expected):
+    cli = load_cli()
+    def failing_seal(root):
+        raise SimpleStructuredFailure(code)
+    monkeypatch.setattr(cli, 'seal_tools', failing_seal)
+    assert cli.main(['--mode', 'seal-tools']) == 1
+    observed = result(capsys)
+    assert observed['error_code'] == expected
+    assert 'password=' not in json.dumps(observed)
+
+
+class SimpleStructuredFailure(RuntimeError):
+    def __init__(self, code):
+        self.code = code
+        super().__init__('raw exception text must not be used')
+
+
+@pytest.mark.parametrize('mode', ['preflight', 'execute'])
+@pytest.mark.parametrize('code,expected', [
+    ('C_OUTPUT_FACE_COUNT_MISMATCH', 'C_OUTPUT_FACE_COUNT_MISMATCH'),
+    ('C_OUTPUT_FAILED token=not-a-real-secret', 'LOCAL_C_ENTRY_FAILED'),
+])
+def test_cli_returned_result_uses_same_error_mapping(monkeypatch, capsys, mode, code, expected):
+    cli = load_cli()
+    terminal = {'status': 'failed', 'error_code': code}
+    runner = SimpleNamespace(preflight_local_c=lambda *a, **k: dict(terminal),
+                             execute_local_c=lambda *a, **k: dict(terminal))
+    monkeypatch.setattr(cli, 'load_backend', lambda *a: runner)
+    monkeypatch.setattr(cli, 'read', lambda *a, **k: {})
+    monkeypatch.setattr(cli, 'sha', lambda *a: 'a' * 64)
+    argv = ['--mode', mode, '--profile', 'synthetic-profile', '--profile-sha256', 'a' * 64,
+            '--tool-manifest-sha256', 'b' * 64, '--source-cpu-profile', 'synthetic-cpu-profile',
+            '--source-cpu-profile-sha256', 'c' * 64, '--terminal-receipt', 'synthetic-receipt',
+            '--runtime-manifest', 'synthetic-runtime', '--runtime-manifest-sha256', 'd' * 64]
+    if mode == 'execute':
+        argv += ['--execute-c-only']
+    assert cli.main(argv) == 1
+    observed = result(capsys)
+    assert observed['error_code'] == expected
+    assert 'token=' not in json.dumps(observed)

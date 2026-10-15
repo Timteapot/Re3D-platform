@@ -52,7 +52,11 @@ class FakeEvidence:
 
 
 @pytest.fixture
-def wiring(tmp_path, monkeypatch):
+def wiring(tmp_path_factory, monkeypatch):
+    # Default pytest node basenames plus the immutable 64-hex budget filenames
+    # exceeded Windows' legacy 260-character boundary under a long D test root.
+    # Reserve one short, exclusive root; never change production path handling.
+    tmp_path = tmp_path_factory.mktemp("cw")
     profile = local_c_profile(tmp_path)
     cpu_profile = local_profile(tmp_path)
     cpu_profile_path = tmp_path / "accepted-cpu-profile.json"
@@ -74,6 +78,9 @@ def wiring(tmp_path, monkeypatch):
     pipeline.mkdir()
     private_parent = tmp_path / "synthetic-private-evidence"
     private_parent.mkdir()
+    claim_path = private_parent / ("c-budget-" + "a" * 64 + ".json")
+    charge_path = claim_path.with_name(claim_path.stem + "-charge.json")
+    assert max(len(str(claim_path)), len(str(charge_path))) < 260, "synthetic C budget path exceeds Windows test limit"
     runtime = {"python": str(tmp_path / "synthetic-python.exe")}
     stages = tuple(StageSpec(name, (str(tmp_path / "synthetic.exe"), name, "--max-threads", "8"),
                             target / ("marker-" + name), pipeline) for name in C_STAGE_NAMES)
@@ -92,6 +99,12 @@ def wiring(tmp_path, monkeypatch):
         terminal_receipt=terminal_path, source_cpu_profile=cpu_profile_path,
         source_cpu_profile_sha256=cpu_profile_sha, runtime_manifest=tmp_path / "runtime.json",
         runtime_manifest_sha256="e" * 64)
+    case.caught_errors = []
+    actual_error_code = runner.error_code
+    def record_error_code(exc):
+        case.caught_errors.append((type(exc).__name__, str(exc)))
+        return actual_error_code(exc)
+    monkeypatch.setattr(runner, "error_code", record_error_code)
     # Never touch production C evidence or execute OS privilege/native probes.
     monkeypatch.setattr(runner, "PRIVATE_PARENT", private_parent)
     case.admin = Mock()
@@ -161,7 +174,7 @@ def wiring(tmp_path, monkeypatch):
 def test_complete_execution_wires_actual_supervisor_without_gpu_queue_or_server(wiring):
     c = wiring
     result = runner.execute_local_c(c.args, c.profile, tool_identity="f" * 64)
-    assert result["status"] == "succeeded"
+    assert result["status"] == "succeeded", (result, c.caught_errors)
     assert result["process_tree_stopped"] and result["observation_stopped"]
     assert result["terminal_evidence_confirmed"] and result["source_handoff_unchanged"]
     assert not result["server_accessed"] and not result["gpu_stage_started"] and not result["platform_job_resume"]
@@ -188,11 +201,19 @@ def test_complete_execution_wires_actual_supervisor_without_gpu_queue_or_server(
     assert recorded["cumulative_charge_seconds"] >= recorded["prior_sfm_charge_seconds"]
 
 
+def test_wiring_uses_short_exclusive_root_for_both_budget_receipts(wiring):
+    c = wiring
+    claim = c.private_parent / ("c-budget-" + "a" * 64 + ".json")
+    charge = claim.with_name(claim.stem + "-charge.json")
+    assert c.private_parent.parent.name.startswith("cw")
+    assert max(len(str(claim)), len(str(charge))) < 260
+
+
 @pytest.mark.parametrize("confirmed", (False, True))
 def test_failed_dependencies_never_create_supervisor_and_report_stop_proof(wiring, confirmed):
     c = wiring; c.probe_return_code = 1; c.probe_stop = confirmed
     result = runner.execute_local_c(c.args, c.profile, tool_identity="f" * 64)
-    assert result["status"] == "failed" and result["error_code"] == "LOCAL_C_PYTHON_DEPENDENCIES_UNAVAILABLE"
+    assert result["status"] == "failed" and result["error_code"] == "LOCAL_C_PYTHON_DEPENDENCIES_UNAVAILABLE", (result, c.caught_errors)
     assert result["process_tree_stopped"] is confirmed
     assert result["reconstruction_started"] is False and not c.owners and not c.gates
     assert len(c.process_calls) == 1 and c.evidence.closed and c.monitors[0].closed

@@ -1,7 +1,9 @@
 """Local C-only tools. No arguments prepares nothing and starts no process.
 
 seal-tools writes a new code manifest, seal-runtime a new native dependency
-manifest. inspect only checks fixed dependencies. execute needs pinned manifests,
+manifest. inspect only checks fixed dependencies. preflight checks pinned source,
+runtime and host snapshots without writes, children or execution permission.
+execute needs pinned manifests,
 a verified SfM bundle and the exact --execute-c-only flag; it never requests UAC.
 """
 from __future__ import annotations
@@ -38,6 +40,23 @@ class CLIError(ValueError):
     def __init__(self, code):
         self.code = code
         super().__init__(code)
+
+
+def stable_public_error_code(value, *, fallback='LOCAL_C_ENTRY_FAILED'):
+    """Only a bounded structured identifier may cross the public log boundary.
+
+    Do not derive codes from exception text: it may contain paths, credentials,
+    or a traceback. Strings are accepted only as already structured codes.
+    """
+    pattern = r'(?:C_OUTPUT|C_STAGE|C_ONLY|C_WRAPPER|EXPERIMENT|LOCAL_C|LOW|RESOURCE|EVIDENCE|LONG|HYBRID_CLI|HANDOFF|CHECKPOINT|CPU|SFM|HOST_RESOURCE|DIRECTORY_RESOURCE|GPU_RESOURCE)_[A-Z][A-Z0-9_]*'
+    def valid(code):
+        return type(code) is str and len(code) <= 96 and re.fullmatch(pattern, code) is not None
+    safe_fallback = fallback if valid(fallback) else 'LOCAL_C_ENTRY_FAILED'
+    try:
+        code = value if type(value) is str else getattr(value, 'code', None)
+    except BaseException:
+        return safe_fallback
+    return code if valid(code) else safe_fallback
 
 
 def require(condition, code):
@@ -248,7 +267,7 @@ def verify_runtime_stage(stage, value):
 def main(argv=None, *, tool_root=None):
     try:
         parser = Parser(description=__doc__, allow_abbrev=False)
-        parser.add_argument('--mode', choices=('prepare', 'inspect', 'seal-tools', 'seal-runtime', 'execute'), default='prepare')
+        parser.add_argument('--mode', choices=('prepare', 'inspect', 'seal-tools', 'seal-runtime', 'preflight', 'execute'), default='prepare')
         parser.add_argument('--profile', type=Path)
         parser.add_argument('--profile-sha256')
         parser.add_argument('--pipeline-root', type=Path, default=Path(r'D:\3Dreconstruction\Re3D'))
@@ -264,13 +283,13 @@ def main(argv=None, *, tool_root=None):
         require(args.mode == 'execute' or not args.execute_c_only, 'LOCAL_C_EXECUTION_MODE_MISMATCH')
         execution_options = (args.profile_sha256, args.source_cpu_profile, args.source_cpu_profile_sha256,
                              args.terminal_receipt, args.runtime_manifest_sha256)
-        require(args.mode == 'execute' or not any(value is not None for value in execution_options),
+        require(args.mode in ('preflight', 'execute') or not any(value is not None for value in execution_options),
                 'LOCAL_C_ARGUMENT_MODE_MISMATCH')
-        require(args.mode in ('seal-runtime', 'execute') or args.runtime_manifest is None,
+        require(args.mode in ('seal-runtime', 'preflight', 'execute') or args.runtime_manifest is None,
                 'LOCAL_C_ARGUMENT_MODE_MISMATCH')
-        require(args.mode in ('prepare', 'execute') or args.profile is None,
+        require(args.mode in ('prepare', 'preflight', 'execute') or args.profile is None,
                 'LOCAL_C_ARGUMENT_MODE_MISMATCH')
-        require(args.mode in ('inspect', 'execute') or args.tool_manifest_sha256 is None,
+        require(args.mode in ('inspect', 'preflight', 'execute') or args.tool_manifest_sha256 is None,
                 'LOCAL_C_ARGUMENT_MODE_MISMATCH')
         if args.mode == 'prepare':
             # No backend, host, input, UAC, runtime or process dependency here.
@@ -286,6 +305,11 @@ def main(argv=None, *, tool_root=None):
             print(json.dumps({'status': 'sealed_not_executed', 'runtime_manifest_sha256':
                               seal_runtime(args.pipeline_root, args.runtime_manifest)}))
             return 0
+        if args.mode == 'preflight':
+            require(all(value is not None for value in (args.profile, args.profile_sha256,
+                args.tool_manifest_sha256, args.terminal_receipt, args.source_cpu_profile,
+                args.source_cpu_profile_sha256, args.runtime_manifest, args.runtime_manifest_sha256)),
+                'LOCAL_C_PREFLIGHT_ARGUMENTS_REQUIRED')
         runner = load_backend(root, args.tool_manifest_sha256)
         if args.mode == 'inspect':
             from backend.experiments.c_integrity import inspect_requirements
@@ -298,6 +322,13 @@ def main(argv=None, *, tool_root=None):
             observed = inspect_requirements(requirements)
             print(json.dumps(observed, ensure_ascii=True))
             return 0 if observed['status'] == 'observed_requirements_present' else 1
+        if args.mode == 'preflight':
+            result = runner.preflight_local_c(args, read(args.profile, expected_sha256=args.profile_sha256),
+                                              tool_identity=args.tool_manifest_sha256)
+            if result.get('error_code') is not None:
+                result['error_code'] = stable_public_error_code(result['error_code'])
+            print(json.dumps(result, ensure_ascii=True, allow_nan=False))
+            return 0 if result.get('status') == 'read_only_preflight_passed' else 1
         require(args.execute_c_only and all(value is not None for value in (args.profile, args.terminal_receipt,
             args.source_cpu_profile, args.runtime_manifest, args.runtime_manifest_sha256,
             args.source_cpu_profile_sha256, args.profile_sha256)), 'LOCAL_C_EXPLICIT_EXECUTION_REQUIRED')
@@ -305,13 +336,14 @@ def main(argv=None, *, tool_root=None):
                 'LOCAL_C_PROFILE_CHANGED')
         result = runner.execute_local_c(args, read(args.profile, expected_sha256=args.profile_sha256),
                                         tool_identity=args.tool_manifest_sha256)
+        if result.get('error_code') is not None:
+            result['error_code'] = stable_public_error_code(result['error_code'])
         print(json.dumps({key: result[key] for key in ('status', 'error_code', 'elapsed_seconds',
             'remaining_budget_seconds', 'process_tree_stopped', 'terminal_evidence_confirmed',
             'source_handoff_unchanged') if key in result}, ensure_ascii=True, allow_nan=False))
         return 0 if result.get('status') == 'succeeded' else 1
     except BaseException as exc:
-        code = getattr(exc, 'code', None)
-        code = code if isinstance(code, str) and re.fullmatch(r'[A-Z][A-Z0-9_]{2,95}', code) else 'LOCAL_C_ENTRY_FAILED'
+        code = stable_public_error_code(exc)
         print(json.dumps({'status': 'blocked', 'error_code': code, 'reconstruction_started': False}))
         return 1
 

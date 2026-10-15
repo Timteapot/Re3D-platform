@@ -190,13 +190,13 @@ def gate_c_outputs(experiment_root: Path, health_check=lambda: None) -> dict:
     files = {name: checked_path(experiment_root / "output/C" / name, experiment_root)
              for name in ("mesh.obj", "mesh.mtl", "texture.jpg", "mesh.glb")}
     glb = _glb(files["mesh.glb"])
-    vertices = faces = references = 0
+    raw_obj_vertices = raw_obj_faces = references = 0
     with files["mesh.obj"].open(encoding="utf-8", errors="strict") as stream:
         for index, raw in enumerate(stream):
             if index % 4096 == 0:
                 health_check()
-            vertices += raw.startswith("v ")
-            faces += raw.startswith("f ")
+            raw_obj_vertices += raw.startswith("v ")
+            raw_obj_faces += raw.startswith("f ")
             if raw.strip().startswith("mtllib "):
                 require(raw.strip() == "mtllib mesh.mtl", "C_OUTPUT_MATERIAL_REFERENCE_INVALID")
                 references += 1
@@ -213,16 +213,28 @@ def gate_c_outputs(experiment_root: Path, health_check=lambda: None) -> dict:
     require(start == b"\xff\xd8\xff" and end == b"\xff\xd9", "C_OUTPUT_JPEG_INVALID")
     report = validation["branches"]["C"]
     require(isinstance(report, dict) and report.get("status") == "pass" and report.get("errors") == []
-            and type(report.get("obj_faces")) is int and faces > 0
-            and report.get("obj_faces") == report.get("glb_faces") == faces == glb["indexed_triangle_faces"]
-            and report.get("obj_vertices") == vertices > 0, "C_OUTPUT_FACE_COUNT_MISMATCH")
+            and type(report.get("obj_faces")) is int and type(report.get("glb_faces")) is int
+            and raw_obj_faces > 0
+            and report.get("obj_faces") == report.get("glb_faces") == raw_obj_faces == glb["indexed_triangle_faces"],
+            "C_OUTPUT_FACE_COUNT_MISMATCH")
+    # The frozen validator reports loaded mesh vertices. OBJ UV/normal seams can
+    # split one raw `v` record into several loaded vertices without changing faces.
+    require(raw_obj_vertices > 0
+            and type(report.get("obj_vertices")) is int and report["obj_vertices"] > 0
+            and type(report.get("glb_vertices")) is int and report["glb_vertices"] > 0,
+            "C_OUTPUT_VERTEX_COUNT_INVALID")
+    vertex_count_semantics = {"raw_obj_vertex_records": raw_obj_vertices,
+                              "obj_loaded_vertices": report["obj_vertices"],
+                              "glb_loaded_vertices": report["glb_vertices"],
+                              "raw_and_loaded_equality_required": False}
     artifacts = []
     for name, path in files.items():
         health_check()
         artifacts.append({"relative_path": path.relative_to(experiment_root).as_posix(),
                           "size_bytes": path.stat().st_size, "sha256": _hash(path, health_check),
                           **({"glb_header": glb} if name == "mesh.glb" else {})})
-    return {"all_passed": True, "artifact_count": 4, "artifacts": artifacts, "geometry_accuracy_certified": False}
+    return {"all_passed": True, "artifact_count": 4, "artifacts": artifacts,
+            "vertex_count_semantics": vertex_count_semantics, "geometry_accuracy_certified": False}
 
 
 def gate_c_stage(stage: StageSpec, experiment_root: Path, image_names: tuple[str, ...], health_check=lambda: None):
