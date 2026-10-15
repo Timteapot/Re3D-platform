@@ -56,6 +56,12 @@ Windows 子进程先挂起，再加入私有 Job Object 后开始计算；超时
 
 本机 C-only 后续执行仅在 `experiment/local-c-only` 分支作为临时实验维护，暂不合入 `main`。主线通用监督与 SfM 交接不自动启用该路线，也不改变网页默认三分支或冻结 Re3D 算法基线。
 
+### 本 checkout 的临时 C-only 工具
+
+`run_local_c.py` 默认不执行；`c_profile.py` 绑定 SfM 终态、剩余预算和本机 8 线程配置，`c_integrity.py` 只盘点固定路径，`c_stages.py` 复用冻结算法规划 8 个后续阶段，`c_runner.py` 监督新目录中的 C 运算与仅 C 产物门禁。保持 8 GiB RAM/20 GiB 磁盘线，不重复 SfM、不执行 A/B、不触发服务器操作。
+
+`build_local_c_toolpack.py` 从明确的实验分支提交读取固定 Git blob，生成 23 文件代码闭包、未绑定模板、文档及完整归档清单，并验证离线恢复。包不含环境、模型或输入/结果数据；实际提交和 ZIP 身份由仓库外回执绑定。源码及离线测试不等于真实 300 图 C 验收，操作前提见 [临时 C-only 路线](../../docs/local-c-only.md)。历史固定 v1 的 `run_local_cpu_elevated.py` 仅留作实验记录，不是 C launcher，不纳入 C 工具包。
+
 ## 离线偏高实验档（2026-10-14）
 
 `high_profile.py` 与 `scripts/preview_high_profile.py` 仅生成/检查配置和本机命令预览，不启动子进程、连接服务器或写入实验运行目录。当前独立候选数据位于仓库外 `Re3D-data/experiments/lighthouse300-high-cpu-v1`。

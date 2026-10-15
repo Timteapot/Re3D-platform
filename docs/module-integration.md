@@ -52,6 +52,14 @@ Re3D v1.1.3 A-v4 / B-v2 / C（Tesla T4：MapAnything batch size 4；DINOv2 离�
 
 主线只提供通用 CPU 监督、异常取证、恢复断点和 SfM 文件交接；本机 C-only 在 `experiment/local-c-only` 分支独立维护，定位为未合入主线的临时实验。它不接入网页、API、Worker 或任务状态机，不能将实验工具离线检查解释为完整 C 或三分支运行验收。网页默认 A-v4/B-v2/C 和冻结算法基线保持不变。
 
+### 本实验分支的 C-only 旁路
+
+当前 checkout 额外提供 `scripts/run_local_c.py`，默认不执行。`c_profile.py` 固定 accepted SfM 回执、累计剩余预算和本机 8 线程；`c_integrity.py` 仅做固定路径盘点。已验证 handoff 通过通用 `hybrid_handoff.py` 导入预留的新实验根，不复用旧目录或 marker。
+
+`c_stages.py` 从冻结算法收集 `02-extract-cameras` 至仅 C 验证的 8 阶段，不运行 `01-colmap` 或 A/B；`c_runner.py` 接入自有 Job Object、8 GiB RAM/20 GiB 磁盘线、资源/目录观察、小型终态证据和 C 四产物门禁。原生程序、DLL、辅助脚本及解释器另固定运行时身份；CPU 结果 SHA 绑定一次性预算 claim，不自动重试或重置余量。
+
+源码工具包仅验证提交/文件/归档身份和离线恢复，真实 C 运行、受保护来源内容、OpenMVS 容量与完整 C/DMAP 跨主机交接尚未验收。详细边界见 [临时 C-only 实验](local-c-only.md)，不应将其视为网页默认管线替代品。
+
 ### 独立长测监督器
 
 `backend/experiments` 是受限容量实验旁路，不改变现有 API、数据库任务状态机、Worker 租约或浏览器会话。新实验只恢复经过 SHA 和 SQLite 完整性验证的原图、预处理输入、掩码及 SfM 数据库；不复制旧阶段成功标记，不直接恢复旧网页任务。

@@ -1,5 +1,7 @@
 # Re3D Platform
 
+当前文档对应 `experiment/local-c-only` 临时实验分支。通用 CPU 监督、取证和 SfM 交接保留在主线；本分支额外的 C-only 工具暂不合并到 `main`，不是网页平台新增能力。
+
 Re3D Platform 是基于 Re3D 多视图三维重建管线的非商业学习与工程实践项目，提供用户认证、图片上传、异步重建、三分支预览与下载，以及可解释的结构健康评估。当前部署范围为 Windows 本机或通过 SSH 回环转发访问的受限环境；公开互联网部署属于后续路线，尚未开放。
 
 ## 当前状态
@@ -13,6 +15,7 @@ Re3D Platform 是基于 Re3D 多视图三维重建管线的非商业学习与工
 | 管线容量 | Tesla T4 上 Lighthouse 150 图三分支断点续跑验收；300 图部分 SfM 断点和 4/8 线程短测 | 完整 300 图三分支及 GPU 阶段资源验收 |
 | 独立 300 图长测 | 31 阶段监督、真实参数接线、周期 SQLite 断点、C 盘异常证据；服务器同源 8/12 线程短测已通过 | 完整高 CPU 档及 GPU 阶段实测；不替代网页任务续跑接口 |
 | 本机 CPU 与服务器交接 | 300 图本机 SfM 完成，300/300 注册；CPU-only 监督、SfM 导出与新目录导入工具 | 真实导出/导入及后续三分支验收 |
+| 临时 C-only 实验（仅本分支） | 8 阶段旁路、8 线程保护档、代码/运行时身份、C-only 门禁及离线封装工具 | 受保护源内容复核、真实交接及 300 图 C 实跑 |
 | 公网发布 | production 模板、权限拆分和部署工具 | 合规入口、域名/TLS、生产邮件、边缘防护、集中监控和实机验收 |
 
 `6e8ad0c` 启动的网页 300 图任务未完成重建，不能计为容量通过。此前 `29eda46` 的网页 11 图生命周期验收仍是成功闭环证据。2026-10-15 本机独立 8 线程 SfM 续跑通过，44,850 对匹配完成、300/300 图注册、205,329 个稀疏点；这不是冷启动耗时或完整三分支验收。服务器保持停机。后续本机 C-only 仅作为临时实验路线，在 `experiment/local-c-only` 分支独立维护，不属于 `main` 的平台能力，不改变网页默认三分支或冻结算法基线。
@@ -20,6 +23,8 @@ Re3D Platform 是基于 Re3D 多视图三维重建管线的非商业学习与工
 长测入口为 `scripts/run_long_experiment.py`，默认只输出准备状态；只有完整的 `--execute-long-test` 参数才可能执行。执行还要求工具 SHA 清单、固定主机与管线身份、停止的平台服务及只读队列检查；完整长测必须先提交同源、同工具、同配置的 8/12 线程短测报告。详细作用和接线见 [模块集成](docs/module-integration.md#独立长测监督器)。
 
 本机分段实验入口为 `scripts/run_hybrid_experiment.py`，默认只检查候选配置，不运行重建。实际 CPU 执行另需 `--mode cpu --execute-cpu` 和固定工具清单 SHA。导入工具只创建新的服务器实验目录并返回下一阶段 `02-extract-cameras`，不启动后续计算、平台服务或旧网页任务。流程与使用前提见 [本机 CPU 与服务器交接](docs/hybrid-cpu-sfm.md)。
+
+仅本实验分支提供 `scripts/run_local_c.py`，默认不执行；显式运行仍须绑定来源、累计剩余预算、工具与运行时身份，并保持 8 GiB RAM/20 GiB 磁盘安全线。它不自动请求 UAC、不接入网页或启动服务器。`build_local_c_toolpack.py` 用明确实验提交生成固定代码清单和 ZIP；离线恢复检查不等于真实 C 验收。详见 [临时 C-only 路线](docs/local-c-only.md)。
 
 活动算法基线为 `re3d-pipeline-v1.1.3`，提交 `e517a161b4c0895f8be4258fb339272e4f99e1d6`。首期固定运行 `A-v4`、`B-v2`、`C`；Tesla T4 使用 MapAnything `batch_size=4`，MVSAnywhere 从本地 DINOv2 Torch Hub 缓存加载。完整版本、配置与模型清单身份见 [固定基线](config/pipeline-baseline.json)，历史冻结版本保留而不覆盖。
 
@@ -165,6 +170,7 @@ pwsh -NoProfile -File scripts/check.ps1 -Component postgres
 | [项目计划](PROJECT_PLAN.md) | 有效范围、后续阶段与验收条件 |
 | [模块集成](docs/module-integration.md) | 运行时数据流、模块边界与对接 |
 | [本机 CPU 与服务器交接](docs/hybrid-cpu-sfm.md) | 独立断点恢复、CPU 监督及 SfM 导出／导入 |
+| [临时 C-only 实验](docs/local-c-only.md) | 仅实验分支的本机 C 旁路、保护和源码工具包边界 |
 | [前端](docs/frontend.md) | 前端结构与交互 |
 | [开发检查与 CI](docs/development-checks.md) | 统一本地门禁、测试边界和 GitHub Actions |
 | [认证](docs/authentication.md)、[任务](docs/job-api.md)、[上传](docs/image-uploads.md) | 当前 API 和业务合同 |
