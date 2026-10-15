@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0",
+  "profile_kind": "local_sky_c_supervised_candidate",
+  "autorun": false,
+  "c_profile": {
+    "schema_version": "1.0",
+    "profile_kind": "local_c_only_candidate",
+    "autorun": false,
+    "execution": {
+      "scope": "local-only",
+      "branches": ["c"],
+      "gpu_required": false,
+      "platform_job_resume": false,
+      "openmvs_mode": "cpu-only-vendor-build"
+    },
+    "pipeline": {
+      "commit": "e517a161b4c0895f8be4258fb339272e4f99e1d6",
+      "config_sha256": "9f8cbc83cb67b8313f624913686fbdc453e7572a18603d015bc198a9a92b8883",
+      "pipeline_script_sha256": "65ceba6c891b78ea49ed5b6f5079a1c6711bc00dfd45e6c729efbdc10c562378",
+      "colmap_script_sha256": "a7918cce6dcd64fee5949e9f0e4d5091c72f97cefb70208be79dfbdc6c2ada41"
+    },
+    "source": {
+      "root": "D:/REPLACE-WITH-VERIFIED-BUNDLE",
+      "cpu_result_sha256": null,
+      "terminal_receipt_sha256": null,
+      "handoff_manifest_sha256": null
+    },
+    "target_hardware": {"logical_cpus": 32, "host_ram_bytes": 34141495296},
+    "target_experiment": {
+      "scene": "replace-with-new-sky-scene",
+      "root": "D:/REPLACE-WITH-NEW-EXPERIMENT-ROOT"
+    },
+    "budget": {
+      "original_total_seconds": 14400,
+      "consumed_sfm_seconds": null,
+      "remaining_seconds": null,
+      "source_terminal_receipt_sha256": null
+    },
+    "cpu": {"openmvs_threads": 8, "texture_threads": 8},
+    "protection": {
+      "reservation_bytes": 8589934592,
+      "disk_floor_bytes": 21474836480,
+      "evidence_creation_free_bytes": 10737418240,
+      "evidence_disk_floor_bytes": 2147483648,
+      "available_ram_floor_bytes": 8589934592,
+      "host_guard_seconds": 1,
+      "resource_sample_seconds": 5,
+      "directory_sample_seconds": 15
+    }
+  },
+  "mask_binding": {"path": "D:/REPLACE-WITH-VERIFIED-SKY-BINDING.json", "sha256": null},
+  "prepared_admission": {"path": "D:/REPLACE-WITH-VERIFIED-SKY-ADMISSION.json", "sha256": null},
+  "budget_lineage": {
+    "root_profile_sha256": null,
+    "root_claim_sha256": null,
+    "root_charge_sha256": null,
+    "expected_tip_sha256": null,
+    "maximum_remaining_seconds": null
+  }
+}

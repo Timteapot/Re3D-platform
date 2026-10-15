@@ -14,6 +14,8 @@
 
 ## 路线与模块
 
+天空蒙版的独立后半程实验见 [sky-mask-experiment.md](sky-mask-experiment.md)，包含输入准备、独立监督闭包和累计预算准入，默认不执行计算。它不改变本页现有执行器，也不授予同源预算重领或重置资格。
+
 ```text
 完整 SfM + 原始输入 authority → 已验证的 SfM handoff
   → 新 _experiments/<scene>/work 中受监督导入
