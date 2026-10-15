@@ -18,7 +18,7 @@ from typing import Callable
 
 from backend.experiments.checkpoint import _database, _hash, _json, _relative
 from backend.experiments.hybrid_checkpoint import (
-    VerifiedHybridSource, _stable_database_identity, restore_hybrid_source,
+    VerifiedHybridSource, _stable_database_identity, _verify_selected_snapshot, restore_hybrid_source,
 )
 from backend.experiments.stages import gate_sfm
 
@@ -28,6 +28,15 @@ _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _FIXED = {"work/shared/colmap/database.db", "work/shared/colmap/reconstruction_metrics.json",
           "reports/sfm-actual-options.json", "identity/quality-config.json"}
 _MODEL_NAMES = {"cameras", "images", "points3D", "rigs", "frames"}
+_SNAPSHOT_NAME = re.compile(r"snapshot-\d{8}T\d{12}Z-[0-9a-f]{32}\Z")
+_SNAPSHOT_PREFIX = 'identity/final-snapshot/'
+_SNAPSHOT_FILES = frozenset(_SNAPSHOT_PREFIX + name for name in (
+    'cpu-result.json', 'effective-cpu-profile.json', 'snapshot-manifest.json', 'DONE.json'))
+_SNAPSHOT_KEYS = {'schema_version', 'owner_id', 'directory', 'database_relative_path',
+    'database_sha256', 'database_size_bytes', 'validated_complete_pair_records', 'image_count',
+    'created_at_utc', 'reason', 'committed_wal_included', 'source_write_operations',
+    'sqlite_backup_completed', 'sqlite_integrity_and_mapping_validation',
+    'database_hash_checked_before_and_after_validation', 'sfm_completion_certified'}
 _OPTIONS_KEYS = {
     "schema_version", "status", "profile_sha256", "colmap_script_sha256",
     "pipeline_script_sha256", "baseline_config_sha256", "quality_config_sha256",
@@ -102,8 +111,10 @@ def _inventory(root, health):
     return files
 
 
-def _allowed(relative):
+def _allowed(relative, *, final_snapshot=False):
     if relative in _FIXED:
+        return True
+    if final_snapshot and relative in _SNAPSHOT_FILES:
         return True
     for prefix, suffix in (("work/shared/colmap/mapper/0/", ".bin"),
                            ("work/shared/colmap/refined_text/", ".txt")):
@@ -173,7 +184,7 @@ def _validate_database(database, source, health):
     return count
 
 
-def _gate(root, source, execution, health):
+def _gate(root, source, execution, health, *, database_path=None):
     original_root = Path(execution["source_experiment_root"])
     _require(original_root.is_absolute() and ".." not in original_root.parts
              and original_root.parent.name == "_experiments"
@@ -181,12 +192,13 @@ def _gate(root, source, execution, health):
              "HANDOFF_SOURCE_EXPERIMENT_INVALID")
     metrics = _json(root / "work/shared/colmap/reconstruction_metrics.json")
     _require(set(metrics) <= _METRIC_KEYS, "HANDOFF_METRIC_FIELD_REJECTED")
+    extra = {'database_path': database_path} if database_path is not None else {}
     return gate_sfm(root, source.image_names, health,
                     expected_sfm_threads=execution["sfm_threads"],
                     expected_mapper_threads=execution["mapper_threads"],
                     expected_python_version=execution["python_version"],
                     expected_binary_model_path=original_root / "work/shared/colmap/mapper/0",
-                    expected_text_model_path=original_root / "work/shared/colmap/refined_text")
+                    expected_text_model_path=original_root / "work/shared/colmap/refined_text", **extra)
 
 
 def _options(options, execution, quality_sha, colmap_sha):
@@ -213,6 +225,130 @@ def _options(options, execution, quality_sha, colmap_sha):
             _pin(options[key])
 
 
+def _snapshot_evidence_paths(root):
+    return {name: root / name for name in _SNAPSHOT_FILES}
+
+
+def _verify_snapshot_evidence(provenance, paths, database, source, execution, options,
+                              quality_sha, pipeline_sha, colmap_sha, sfm_gate, health):
+    """Verify copied evidence using only fixed payload paths, never report paths."""
+    keys = {'kind', 'snapshot_directory', 'cpu_result_sha256', 'cpu_profile_sha256',
+        'snapshot_manifest_sha256', 'snapshot_done_sha256', 'database_sha256',
+        'database_size_bytes', 'validated_complete_pair_records'}
+    _require(type(provenance) is dict and set(provenance) == keys
+             and provenance['kind'] == 'validated_final_snapshot'
+             and isinstance(provenance['snapshot_directory'], str)
+             and _SNAPSHOT_NAME.fullmatch(provenance['snapshot_directory']),
+             'HANDOFF_FINAL_SNAPSHOT_PROVENANCE_INVALID')
+    pins = {'cpu-result.json': 'cpu_result_sha256', 'effective-cpu-profile.json': 'cpu_profile_sha256',
+            'snapshot-manifest.json': 'snapshot_manifest_sha256', 'DONE.json': 'snapshot_done_sha256'}
+    documents = {}
+    for name, key in pins.items():
+        path = _path(paths[_SNAPSHOT_PREFIX + name])
+        _require(path.stat().st_size <= 4 * CHUNK and _hash(path, health) == _pin(provenance[key]),
+                 'HANDOFF_FINAL_SNAPSHOT_EVIDENCE_CHANGED')
+        documents[name] = _json(path)
+    report, profile = documents['cpu-result.json'], documents['effective-cpu-profile.json']
+    snapshot, done = documents['snapshot-manifest.json'], documents['DONE.json']
+    _require(set(snapshot) == _SNAPSHOT_KEYS and snapshot.get('schema_version') == '1.0'
+             and snapshot.get('directory') == provenance['snapshot_directory']
+             and snapshot.get('database_relative_path') == provenance['snapshot_directory'] + '/database.db'
+             and snapshot.get('database_sha256') == _pin(provenance['database_sha256'])
+             and type(snapshot.get('database_size_bytes')) is int
+             and snapshot['database_size_bytes'] == provenance['database_size_bytes'] == database.stat().st_size
+             and type(snapshot.get('validated_complete_pair_records')) is int
+             and snapshot['validated_complete_pair_records'] == provenance['validated_complete_pair_records']
+             and type(snapshot.get('image_count')) is int and snapshot['image_count'] == 300
+             and snapshot.get('reason') == 'terminal'
+             and snapshot.get('source_write_operations') is False
+             and snapshot.get('sfm_completion_certified') is False
+             and all(snapshot.get(key) is True for key in ('committed_wal_included', 'sqlite_backup_completed',
+                 'sqlite_integrity_and_mapping_validation', 'database_hash_checked_before_and_after_validation'))
+             and isinstance(snapshot.get('owner_id'), str) and re.fullmatch(r'[0-9a-f]{32}', snapshot['owner_id']),
+             'HANDOFF_FINAL_SNAPSHOT_IDENTITY_INVALID')
+    _require(done == {'schema_version': '1.0', 'owner_id': snapshot['owner_id'],
+        'snapshot_manifest_sha256': provenance['snapshot_manifest_sha256'],
+        'database_sha256': provenance['database_sha256']}, 'HANDOFF_FINAL_SNAPSHOT_DONE_INVALID')
+    _require(report.get('schema_version') == '1.0' and report.get('mode') == 'cpu-sfm'
+             and report.get('status') == 'succeeded' and report.get('final_snapshot_status') == 'valid'
+             and report.get('final_snapshot') == {**snapshot, 'manifest_sha256': provenance['snapshot_manifest_sha256']}
+             and all(report.get(key) is True for key in ('process_tree_stopped', 'snapshot_worker_stopped',
+                 'observation_relay_stopped', 'terminal_evidence_confirmed', 'source_checkpoint_unchanged'))
+             and report.get('sfm_gate') == sfm_gate
+             and report.get('profile_sha256') == provenance['cpu_profile_sha256']
+             and report.get('pipeline_commit') == source.original.pipeline_commit
+             and report.get('config_sha256') == quality_sha
+             and report.get('source_manifest_sha256') == source.original.manifest_sha256
+             and report.get('source_database_sha256') == source.selected_database_sha256
+             and report.get('source_job_id') == source.original.job_id
+             and type(report.get('sfm_threads')) is int and report['sfm_threads'] == execution['sfm_threads']
+             and type(report.get('mapper_ba_threads')) is int and report['mapper_ba_threads'] == execution['mapper_threads']
+             and report.get('final_pair_counts', {}).get('complete_pair_records') == snapshot['validated_complete_pair_records'],
+             'HANDOFF_FINAL_CPU_RESULT_UNCONFIRMED')
+    pipeline, cpu, runtime = profile.get('pipeline', {}), profile.get('cpu', {}), profile.get('runtime', {})
+    checkpoint, target = profile.get('source_checkpoint', {}), profile.get('target_experiment', {})
+    _require(all(type(value) is dict for value in (pipeline, cpu, runtime, checkpoint, target)),
+             'HANDOFF_FINAL_CPU_PROFILE_MISMATCH')
+    profile_root = target.get('root')
+    _require(isinstance(profile_root, str) and Path(profile_root).is_absolute()
+             and '..' not in Path(profile_root).parts, 'HANDOFF_FINAL_CPU_PROFILE_MISMATCH')
+    _require(profile.get('profile_kind') == 'local_cpu_sfm_candidate' and profile.get('autorun') is False
+             and profile.get('source_job_id') == source.original.job_id
+             and pipeline.get('commit') == source.original.pipeline_commit
+             and pipeline.get('config_sha256') == quality_sha and pipeline.get('colmap_script_sha256') == colmap_sha
+             and cpu == {'sfm_threads': execution['sfm_threads'], 'mapper_ba_threads': execution['mapper_threads']}
+             and runtime.get('python_version') == execution['python_version']
+             and runtime.get('pycolmap_version') == '3.13.0' and runtime.get('pycolmap_has_cuda') is False
+             # Root paths are metadata here, never opened at the receiver.
+             # Windows forward/backslash serialization does not change identity.
+             and Path(profile_root) == Path(execution['source_experiment_root'])
+             and target.get('scene') == Path(execution['source_experiment_root']).name
+             and checkpoint.get('original_manifest_sha256') == source.original.manifest_sha256
+             and checkpoint.get('original_database_sha256') == source.original.database_sha256
+             and checkpoint.get('snapshot_manifest_sha256') == source.snapshot_manifest_sha256
+             and checkpoint.get('snapshot_database_sha256') == source.selected_database_sha256
+             and options.get('profile_sha256') == provenance['cpu_profile_sha256']
+             # The CPU-only producer executes run_colmap_shared, not the full
+             # pipeline. Older genuine options therefore omit this optional
+             # field; a supplied value must still match the transfer identity.
+             and ('pipeline_script_sha256' not in options or options['pipeline_script_sha256'] == pipeline_sha),
+             'HANDOFF_FINAL_CPU_PROFILE_MISMATCH')
+    _require(_hash(database, health) == provenance['database_sha256'], 'HANDOFF_FINAL_DATABASE_CHANGED')
+
+
+def _final_snapshot_source(root, proposed, cpu_result_path, cpu_pin, input_source, execution,
+                           options, quality_sha, pipeline_sha, colmap_sha, health):
+    """Admit only the exact terminal snapshot pinned by the completed CPU report."""
+    snapshot_root = _path(proposed)
+    _require(snapshot_root.parent == root / 'checkpoints' and _SNAPSHOT_NAME.fullmatch(snapshot_root.name),
+             'HANDOFF_FINAL_SNAPSHOT_ROOT_INVALID')
+    report_path = root / 'reports/cpu-result.json'
+    _require(cpu_result_path is None or Path(cpu_result_path) == report_path,
+             'HANDOFF_FINAL_CPU_RESULT_PATH_INVALID')
+    _require(_hash(_path(report_path), health) == _pin(cpu_pin), 'HANDOFF_FINAL_CPU_RESULT_HASH_MISMATCH')
+    report = _json(report_path)
+    record = report.get('final_snapshot')
+    _require(type(record) is dict and record.get('directory') == snapshot_root.name
+             and report.get('final_snapshot_status') == 'valid', 'HANDOFF_FINAL_SNAPSHOT_UNCONFIRMED')
+    _verify_selected_snapshot(input_source.original, snapshot_root, _pin(record.get('manifest_sha256')),
+        _pin(record.get('database_sha256')), record.get('validated_complete_pair_records'), health)
+    paths = {_SNAPSHOT_PREFIX + 'cpu-result.json': report_path,
+             _SNAPSHOT_PREFIX + 'effective-cpu-profile.json': root / 'reports/effective-cpu-profile.json',
+             _SNAPSHOT_PREFIX + 'snapshot-manifest.json': snapshot_root / 'snapshot-manifest.json',
+             _SNAPSHOT_PREFIX + 'DONE.json': snapshot_root / 'DONE.json'}
+    database = snapshot_root / 'database.db'
+    provenance = {'kind': 'validated_final_snapshot', 'snapshot_directory': snapshot_root.name,
+        'cpu_result_sha256': cpu_pin, 'cpu_profile_sha256': _pin(report.get('profile_sha256')),
+        'snapshot_manifest_sha256': record['manifest_sha256'],
+        'snapshot_done_sha256': _hash(paths[_SNAPSHOT_PREFIX + 'DONE.json'], health),
+        'database_sha256': record['database_sha256'], 'database_size_bytes': record.get('database_size_bytes'),
+        'validated_complete_pair_records': record.get('validated_complete_pair_records')}
+    gate = _gate(root, input_source, execution, health, database_path=database)
+    _verify_snapshot_evidence(provenance, paths, database, input_source, execution, options,
+                              quality_sha, pipeline_sha, colmap_sha, gate, health)
+    return database, provenance, paths, gate
+
+
 @dataclass(frozen=True)
 class VerifiedSfmHandoff:
     root: Path
@@ -236,7 +372,8 @@ def export_sfm_handoff(experiment_root, bundle_root, *, input_source: VerifiedHy
                        sfm_threads: int, mapper_threads: int, python_version: str,
                        quality_config_path, quality_config_sha256: str,
                        pipeline_script_sha256: str, colmap_script_sha256: str,
-                       cpu_result_path=None, health_check: Callable[[], None] = _noop) -> VerifiedSfmHandoff:
+                       cpu_result_path=None, final_snapshot_root=None, expected_cpu_result_sha256=None,
+                       health_check: Callable[[], None] = _noop) -> VerifiedSfmHandoff:
     root, bundle = _path(experiment_root), _path(bundle_root, exists=False)
     _require(not bundle.exists() and not bundle.is_relative_to(root) and not root.is_relative_to(bundle),
              "HANDOFF_NEW_SEPARATE_BUNDLE_REQUIRED")
@@ -256,12 +393,22 @@ def export_sfm_handoff(experiment_root, bundle_root, *, input_source: VerifiedHy
                  "mapper_threads": mapper_threads, "python_version": python_version,
                  "pycolmap_version": "3.13.0"}
     _options(options, execution, quality_config_sha256, colmap_script_sha256)
-    sfm_gate = _gate(root, input_source, execution, health_check)
-    report = _json(_path(cpu_result_path or root / "reports/cpu-result.json"))
-    _require(report.get("status") == "succeeded" and report.get("mode") == "cpu-sfm"
-             and all(report.get(key) is True for key in ("process_tree_stopped", "snapshot_worker_stopped",
-                 "terminal_evidence_confirmed", "source_checkpoint_unchanged"))
-             and report.get("sfm_gate") == sfm_gate, "HANDOFF_CPU_COMPLETION_UNCONFIRMED")
+    _require((final_snapshot_root is None) == (expected_cpu_result_sha256 is None),
+             'HANDOFF_FINAL_SNAPSHOT_ARGUMENTS_REQUIRED')
+    final_snapshot = final_snapshot_root is not None
+    provenance, evidence_paths = None, {}
+    if final_snapshot:
+        database, provenance, evidence_paths, sfm_gate = _final_snapshot_source(root, final_snapshot_root,
+            cpu_result_path, expected_cpu_result_sha256, input_source, execution, options,
+            quality_config_sha256, pipeline_script_sha256, colmap_script_sha256, health_check)
+    else:
+        database = root / 'work/shared/colmap/database.db'
+        sfm_gate = _gate(root, input_source, execution, health_check)
+        report = _json(_path(cpu_result_path or root / "reports/cpu-result.json"))
+        _require(report.get("status") == "succeeded" and report.get("mode") == "cpu-sfm"
+                 and all(report.get(key) is True for key in ("process_tree_stopped", "snapshot_worker_stopped",
+                     "terminal_evidence_confirmed", "source_checkpoint_unchanged"))
+                 and report.get("sfm_gate") == sfm_gate, "HANDOFF_CPU_COMPLETION_UNCONFIRMED")
     prepared_info = next(row for row in input_source.original.files
                          if row.relative_path == "runtime/work/input/input-manifest.json")
     _require(_hash(root / "work/input/input-manifest.json", health_check) == prepared_info.sha256,
@@ -276,12 +423,13 @@ def export_sfm_handoff(experiment_root, bundle_root, *, input_source: VerifiedHy
     files = _inventory(root / "work/shared/colmap/refined_text", health_check)
     payload_names |= {"work/shared/colmap/refined_text/" + item for item in files}
     payload_names |= _FIXED - {"identity/quality-config.json"}
-    _require(all(_allowed(item) for item in payload_names), "HANDOFF_PAYLOAD_NOT_ALLOWED")
-    database = root / "work/shared/colmap/database.db"
+    payload_names |= set(evidence_paths)
+    _require(all(_allowed(item, final_snapshot=final_snapshot) for item in payload_names), "HANDOFF_PAYLOAD_NOT_ALLOWED")
     pair_count = _validate_database(database, input_source, health_check)
     records = []
     for relative in sorted(payload_names):
-        path = _path(root / relative)
+        path = _path(database if relative == 'work/shared/colmap/database.db'
+                     else evidence_paths.get(relative, root / relative))
         records.append({"relative_path": relative, "size_bytes": path.stat().st_size,
                         "sha256": _hash(path, health_check)})
     records.append({"relative_path": "identity/quality-config.json", "size_bytes": config.stat().st_size,
@@ -291,7 +439,10 @@ def export_sfm_handoff(experiment_root, bundle_root, *, input_source: VerifiedHy
     bundle.mkdir()
     _write(bundle / "INCOMPLETE.json", {"status": "incomplete", "schema_version": "1.0"})
     for row in records:
-        source = config if row["relative_path"] == "identity/quality-config.json" else root / row["relative_path"]
+        relative = row['relative_path']
+        source = config if relative == 'identity/quality-config.json' else (
+            database if relative == 'work/shared/colmap/database.db'
+            else evidence_paths.get(relative, root / relative))
         _copy(source, bundle / "payload" / row["relative_path"], row["size_bytes"], row["sha256"], health_check)
     manifest = {"schema_version": "1.0", "kind": "re3d_cpu_sfm_handoff", "source": source_identity(input_source),
                 "execution": execution, "quality_config_sha256": quality_config_sha256,
@@ -301,6 +452,13 @@ def export_sfm_handoff(experiment_root, bundle_root, *, input_source: VerifiedHy
                 "completion": {key: True for key in ("process_tree_stopped", "snapshot_worker_stopped",
                                "terminal_evidence_confirmed", "source_checkpoint_unchanged")},
                 "old_platform_contracts_copied": False, "geometry_accuracy_certified": False}
+    if final_snapshot:
+        manifest['database_source'] = provenance
+        # Copying never authorizes drift in the pinned source after admission.
+        _require(_hash(database, health_check) == provenance['database_sha256'], 'HANDOFF_FINAL_DATABASE_CHANGED')
+        for relative, path in evidence_paths.items():
+            record = next(row for row in records if row['relative_path'] == relative)
+            _require(_hash(path, health_check) == record['sha256'], 'HANDOFF_FINAL_SNAPSHOT_EVIDENCE_CHANGED')
     manifest_sha = _write(bundle / MANIFEST, manifest)
     _write(bundle / "DONE.json", {"schema_version": "1.0", "handoff_manifest_sha256": manifest_sha})
     _path(bundle / "INCOMPLETE.json").unlink()
@@ -320,9 +478,11 @@ def verify_sfm_handoff(bundle_root, expected_manifest_sha256, *, input_source: V
         _pin(pin)
     _require(_hash(root / MANIFEST, health_check) == expected_sha, "HANDOFF_MANIFEST_HASH_MISMATCH")
     manifest, done = _json(root / MANIFEST), _json(root / "DONE.json")
-    _require(set(manifest) == {"schema_version", "kind", "source", "execution", "quality_config_sha256",
+    legacy_fields = {"schema_version", "kind", "source", "execution", "quality_config_sha256",
                  "scripts", "complete_pair_records", "sfm_gate", "files", "completion",
-                 "old_platform_contracts_copied", "geometry_accuracy_certified"}, "HANDOFF_MANIFEST_FIELDS_INVALID")
+                 "old_platform_contracts_copied", "geometry_accuracy_certified"}
+    _require(set(manifest) in (legacy_fields, legacy_fields | {'database_source'}), 'HANDOFF_MANIFEST_FIELDS_INVALID')
+    final_snapshot = 'database_source' in manifest
     _require(done == {"schema_version": "1.0", "handoff_manifest_sha256": expected_sha}, "HANDOFF_DONE_INVALID")
     _require(manifest.get("schema_version") == "1.0" and manifest.get("kind") == "re3d_cpu_sfm_handoff"
              and manifest.get("source") == source_identity(input_source)
@@ -344,12 +504,13 @@ def verify_sfm_handoff(bundle_root, expected_manifest_sha256, *, input_source: V
              and re.fullmatch(r"3\.12\.\d+", execution["python_version"])
              and execution.get("pycolmap_version") == "3.13.0", "HANDOFF_RUNTIME_INVALID")
     entries, expected, folded = manifest.get("files"), set(), set()
-    _require(isinstance(entries, list) and 10 <= len(entries) <= 14, "HANDOFF_FILE_COUNT_INVALID")
+    minimum, maximum = (14, 18) if final_snapshot else (10, 14)
+    _require(isinstance(entries, list) and minimum <= len(entries) <= maximum, "HANDOFF_FILE_COUNT_INVALID")
     for row in entries:
         _require(isinstance(row, dict) and set(row) == {"relative_path", "size_bytes", "sha256"},
                  "HANDOFF_FILE_RECORD_INVALID")
         relative = _relative(row["relative_path"])
-        _require(_allowed(relative) and relative.casefold() not in folded,
+        _require(_allowed(relative, final_snapshot=final_snapshot) and relative.casefold() not in folded,
                  "HANDOFF_PAYLOAD_NOT_ALLOWED")
         folded.add(relative.casefold()); expected.add(relative)
         _require(type(row["size_bytes"]) is int and row["size_bytes"] > 0, "HANDOFF_FILE_SIZE_INVALID")
@@ -359,6 +520,8 @@ def verify_sfm_handoff(bundle_root, expected_manifest_sha256, *, input_source: V
     required = _FIXED | {prefix + name + suffix for prefix, suffix in
                          (("work/shared/colmap/mapper/0/", ".bin"), ("work/shared/colmap/refined_text/", ".txt"))
                          for name in ("cameras", "images", "points3D")}
+    if final_snapshot:
+        required |= _SNAPSHOT_FILES
     _require(required <= expected, "HANDOFF_REQUIRED_MODEL_MISSING")
     inventory = _inventory(root, health_check)
     _require(inventory == {MANIFEST, "DONE.json"} | {"payload/" + item for item in expected},
@@ -367,10 +530,19 @@ def verify_sfm_handoff(bundle_root, expected_manifest_sha256, *, input_source: V
     _options(options, execution, expected_quality_config_sha256, expected_colmap_script_sha256)
     _require(_hash(root / "payload/identity/quality-config.json", health_check) == expected_quality_config_sha256,
              "HANDOFF_QUALITY_CONFIG_CHANGED")
-    _require(_gate(root / "payload", input_source, execution, health_check) == manifest.get("sfm_gate"),
+    database = root / 'payload/work/shared/colmap/database.db'
+    gate_options = {'database_path': database} if final_snapshot else {}
+    _require(_gate(root / "payload", input_source, execution, health_check, **gate_options) == manifest.get("sfm_gate"),
              "HANDOFF_GATE_MISMATCH")
-    pair_count = _validate_database(root / "payload/work/shared/colmap/database.db", input_source, health_check)
+    if final_snapshot:
+        _verify_snapshot_evidence(manifest['database_source'], _snapshot_evidence_paths(root / 'payload'),
+            database, input_source, execution, options, expected_quality_config_sha256,
+            expected_pipeline_script_sha256, expected_colmap_script_sha256, manifest['sfm_gate'], health_check)
+    pair_count = _validate_database(database, input_source, health_check)
     _require(pair_count == manifest.get("complete_pair_records"), "HANDOFF_PAIR_COUNT_MISMATCH")
+    if final_snapshot:
+        _require(pair_count == manifest['database_source']['validated_complete_pair_records'],
+                 'HANDOFF_FINAL_SNAPSHOT_PAIR_COUNT_MISMATCH')
     # A model/database consistency read must not certify an export that changed
     # after its first hash pass. This is the transfer boundary, not a polling loop.
     for row in entries:
@@ -416,9 +588,10 @@ def import_sfm_handoff(verified: VerifiedSfmHandoff, target_root, *, input_sourc
     rebound["text_model"] = str(target / "work/shared/colmap/refined_text")
     _write(target / "work/shared/colmap/reconstruction_metrics.json", rebound)
     execution = fresh.manifest["execution"]
+    database_options = {'database_path': target / 'work/shared/colmap/database.db'} if 'database_source' in fresh.manifest else {}
     result = gate_sfm(target, input_source.image_names, health_check,
                       expected_sfm_threads=execution["sfm_threads"], expected_mapper_threads=execution["mapper_threads"],
-                      expected_python_version=execution["python_version"])
+                      expected_python_version=execution["python_version"], **database_options)
     _require(result == fresh.manifest["sfm_gate"], "HANDOFF_IMPORTED_GATE_MISMATCH")
     provenance = target / "reports/handoff-import.json"
     _write(provenance, {"schema_version": "1.0", "kind": "verified_cpu_sfm_import",

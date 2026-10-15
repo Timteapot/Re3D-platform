@@ -6,6 +6,7 @@ timeouts, resource protection, checkpoints and process containment.
 """
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import dataclass, field
 import hashlib
 import importlib.util
@@ -303,7 +304,8 @@ def gate_sfm(experiment_root: Path, image_names: tuple[str, ...], health_check=l
              expected_sfm_threads: int = 12, expected_mapper_threads: int = 32,
              expected_python_version: str = "3.12.14",
              expected_binary_model_path: Path | None = None,
-             expected_text_model_path: Path | None = None) -> dict:
+             expected_text_model_path: Path | None = None,
+             database_path: Path | None = None) -> dict:
     # Independent CPU handoffs have their own explicit runtime/thread contract.
     # Defaults deliberately retain the existing target-server admission gate.
     require(type(expected_sfm_threads) is int and expected_sfm_threads > 0
@@ -328,8 +330,15 @@ def gate_sfm(experiment_root: Path, image_names: tuple[str, ...], health_check=l
                     and row.get("phase") == ("initial" if index == 0 else "deferred_retry")
                     for index, row in enumerate(mapper)), "EXPERIMENT_SFM_ACTUAL_MAPPER_MISMATCH")
     require(len(image_names) == len(set(image_names)) == 300, "EXPERIMENT_SFM_EXPECTED_IMAGES_INVALID")
-    database = checked_path(folder / "database.db", experiment_root)
-    with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=1) as connection:
+    # An explicitly supplied, independently pinned static snapshot must not
+    # consult or create WAL/SHM files beside the old working database. Default
+    # callers retain the existing read-only live-database visibility contract.
+    database = checked_path(Path(database_path) if database_path is not None else folder / "database.db", experiment_root)
+    if database_path is not None:
+        require(all(not database.with_name(database.name + suffix).exists() for suffix in ('-wal', '-shm')),
+                'EXPERIMENT_SFM_STATIC_DATABASE_SIDECAR')
+    uri = database.as_uri() + ("?mode=ro&immutable=1" if database_path is not None else "?mode=ro")
+    with closing(sqlite3.connect(uri, uri=True, timeout=1)) as connection:
         connection.execute("PRAGMA query_only=ON")
         connection.set_progress_handler(lambda: (health_check(), 0)[1], 10000)
         require(connection.execute("PRAGMA quick_check").fetchone() == ("ok",), "EXPERIMENT_SFM_DATABASE_INVALID")

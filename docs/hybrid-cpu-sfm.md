@@ -100,6 +100,17 @@ $ToolSha = '<封装记录中的64位SHA256>'
    & $Python "$ToolRoot\scripts\run_hybrid_experiment.py" --mode export-sfm --profile $ProfileFile --tool-manifest-sha256 $ToolSha --pipeline-root 'D:\3Dreconstruction\Re3D' --bundle-root 'D:\3Dreconstruction\Re3D-data\handoffs\<新SfM包>'
    ```
 
+   对已完成 CPU 实验，优先显式指定最终静态快照，而不是使用可能带有 WAL/SHM 的工作数据库。两个参数必须同时提供，且仅允许用于 `export-sfm`：
+
+   ```text
+   --final-snapshot-root <原实验/checkpoints/最终snapshot目录>
+   --cpu-result-sha256 <独立验收记录中的cpu-result原始字节SHA256>
+   ```
+
+   此模式只接受固定 `reports/cpu-result.json` 所绑定的有效最终快照，验证快照清单、DONE、数据库大小/SHA、停止证明、profile、CPU 参数、完整图像对及模型。旧工作库及其 WAL/SHM 不被打开、哈希、复制或清理；交接 payload 的规范数据库路径不变，但字节来自所选最终快照。包内增加 `database_source` 来源说明及必要的小证据，接收端只核验包内固定路径，不跟随原机器上的绝对路径。静态快照缺失、非最终、侧车、路径越界、内容或绑定不一致均拒绝，不自动回退到工作库。
+
+   未传这两个新参数的旧调用仍保留原工作库行为与侧车拒绝门禁。新模式需包含本次修复的已固定工具源码，旧发布包不会自动获得新能力。导出不启动重建，也不授予管理员权限；受保护来源需要单独授权。
+
 5. 之后再恢复服务器，传输 SfM 包、新工具及所需来源断点。接收 profile 的来源路径需对应服务器已保存的同 SHA 数据；线程/运行时项描述本机 SfM 来源，导入模式不据此启动服务器 CPU 计算。可先 `--mode verify-handoff`；真正导入用相同参数追加新的目标目录。
 
    ```powershell
@@ -110,6 +121,6 @@ $ToolSha = '<封装记录中的64位SHA256>'
 
 ## 后续服务器验收
 
-导入通过后，完整服务器三分支仍需接入从 `02-extract-cameras` 开始的受监督后续执行、目标机容量/GPU/模型/停止服务和只读队列门禁，并单独授权。不能直接调用原完整长测入口来宣称跳过 CPU：其旧路径会恢复原断点并重新执行 `01-colmap`。本机 C-only 作为 `experiment/local-c-only` 分支上的临时实验单独开发和封装；主线不提供该实验入口，完整 300 图 C 实跑尚未验收。
+导入通过后，完整服务器三分支仍需接入从 `02-extract-cameras` 开始的受监督后续执行、目标机容量/GPU/模型/停止服务和只读队列门禁，并单独授权。不能直接调用原完整长测入口来宣称跳过 CPU：其旧路径会恢复原断点并重新执行 `01-colmap`。本机 C-only 作为 `experiment/local-c-only` 分支上的临时实验单独开发和封装，主线不提供该实验入口。2026-10-15 候选已完成 300 图 C 重建，修正附加门禁后既有四产物只读复验通过，原运行失败回执仍保留；这不是新源码包、服务器三分支或网页任务的成功验收。
 
 服务器剩余步骤包含相机导出、C 分支稠密重建、A/B 推理、融合、网格和贴图，仍有 CPU 工作，不是纯 GPU 阶段。最终要验收三分支 12 个标准产物、SHA/GLB/结构指标、阶段与 RAM/VRAM/磁盘观测，独立结果不自动改写旧网页任务成功状态。

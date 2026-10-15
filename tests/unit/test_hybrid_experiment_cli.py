@@ -244,3 +244,48 @@ def test_backend_fallback_or_unverified_namespace_is_rejected(cli_fixture):
     f = cli_fixture
     with pytest.raises(f.cli.HybridCLIError, match="NOT_HASH_VERIFIED"):
         f.cli.bootstrap_namespace(f.root)
+
+
+@pytest.mark.parametrize('mode', ['prepare', 'cpu', 'verify-source', 'restore-source', 'verify-handoff', 'import-sfm'])
+def test_snapshot_options_only_export_and_never_reach_source(cli_fixture, monkeypatch, capsys, mode):
+    f = cli_fixture
+    monkeypatch.setattr(f.cli, '_load_modules', lambda *_: pytest.fail('no import for mixed action'))
+    assert f.cli.main(args(f, mode, '--final-snapshot-root', str(f.tmp / 'snapshot'),
+        '--cpu-result-sha256', 'a' * 64), tool_root=f.root) == 1
+    assert output(capsys)['error_code'] == 'HYBRID_CLI_SNAPSHOT_ARGUMENT_MODE_MISMATCH'
+
+
+@pytest.mark.parametrize('extra', [
+    ['--final-snapshot-root', 'D:/not-read'],
+    ['--cpu-result-sha256', 'a' * 64],
+    ['--final-snapshot-root', 'D:/not-read', '--cpu-result-sha256', 'short'],
+])
+def test_final_snapshot_requires_complete_external_pin_before_import(cli_fixture, monkeypatch, capsys, extra):
+    f = cli_fixture
+    monkeypatch.setattr(f.cli, '_load_modules', lambda *_: pytest.fail('no import before external pin'))
+    assert f.cli.main(args(f, 'export-sfm', *extra), tool_root=f.root) == 1
+    assert output(capsys)['error_code'] == 'HYBRID_CLI_FINAL_SNAPSHOT_PIN_REQUIRED'
+
+
+def test_explicit_final_snapshot_arguments_reach_export_without_cpu_execution(cli_fixture, monkeypatch, capsys):
+    f = cli_fixture
+    calls = []
+    source = SimpleNamespace(complete_pair_records=44850)
+    def exported(*positional, **keywords):
+        calls.append((positional, keywords))
+        return SimpleNamespace(manifest_sha256='f' * 64, manifest={'complete_pair_records': 44850})
+    modules = SimpleNamespace(cpu_runner=SimpleNamespace(validate_cpu_profile=lambda value: value),
+        checkpoint=SimpleNamespace(verify_hybrid_source=lambda **_: source),
+        handoff=SimpleNamespace(export_sfm_handoff=exported))
+    monkeypatch.setattr(f.cli, '_load_modules', lambda *_: modules)
+    monkeypatch.setattr(f.cli, 'sha_file', lambda path: f.cli.COLMAP_SHA if Path(path).name
+                        == 'run_colmap_shared.py' else f.cli.PIPELINE_SHA)
+    monkeypatch.setattr(f.cli, 'verify_before_import', lambda *_: None)
+    snapshot = f.tmp / 'final-snapshot'
+    assert f.cli.main(args(f, 'export-sfm', '--bundle-root', str(f.tmp / 'new-bundle'),
+        '--final-snapshot-root', str(snapshot), '--cpu-result-sha256', 'e' * 64), tool_root=f.root) == 0
+    assert len(calls) == 1
+    assert calls[0][1]['final_snapshot_root'] == snapshot
+    assert calls[0][1]['expected_cpu_result_sha256'] == 'e' * 64
+    assert output(capsys)['status'] == 'handoff_exported'
+    assert not (f.tmp / 'new-bundle').exists()

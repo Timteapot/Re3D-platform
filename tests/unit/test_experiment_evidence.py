@@ -66,6 +66,60 @@ class EvidenceTests(unittest.TestCase):
             time.sleep(0.005)
         self.fail("journal did not finish")
 
+    def blocked_journal(self):
+        release, writer_entered = threading.Event(), threading.Event()
+        self.releases.append(release)
+        def write(fd, raw):
+            writer_entered.set()
+            release.wait()
+            return os.write(fd, raw)
+        sink = self.sink(write_bytes=write, intervals=(0.02, 0.2))
+        sink.start()
+        sink.append("event", {"event_code": "STAGE_START", "phase": "sfm"})
+        self.assertTrue(writer_entered.wait(5), "journal writer never entered the injected block")
+        self.wait_trip(sink, "EVIDENCE_PROBE_STALE")
+        return sink, release
+
+    def complete_while_journal_blocked(self, sink, release, operation):
+        """Assert ordering, not a subsecond filesystem performance guarantee.
+
+        Six seconds is only a deadlock watchdog, longer than the production
+        terminal's unchanged five-second timeout. Cleanup releases the injected
+        writer even if a regression makes the operation incorrectly depend on it.
+        """
+        done, result = threading.Event(), {}
+        def invoke():
+            try:
+                result["value"] = operation()
+            except BaseException as error:
+                result["error"] = error
+            finally:
+                done.set()
+        worker = threading.Thread(target=invoke, daemon=True, name="test-independent-terminal-call")
+        worker.start()
+        try:
+            self.assertTrue(done.wait(6), "operation did not complete while journal remained blocked")
+            if "error" in result:
+                raise result["error"]
+            self.assertFalse(release.is_set(), "operation released the blocked journal")
+            self.assertTrue(sink._threads["writer"].is_alive())
+            return result["value"]
+        finally:
+            if not done.is_set():
+                release.set()
+            worker.join(timeout=6)
+            self.assertFalse(worker.is_alive(), "synthetic caller did not stop after journal cleanup")
+
+    def independent_terminal(self, sink, release):
+        terminal = self.complete_while_journal_blocked(sink, release,
+            lambda: sink.finish_terminal({"status": "failed", "tree_stopped": True}))
+        document = json.loads(terminal.read_bytes())
+        self.assertEqual(document["last_event"]["payload"]["event_code"], "STAGE_START")
+        self.assertEqual(document["summary"], {"status": "failed", "tree_stopped": True})
+        self.assertEqual(document["sink"]["journal_bytes"], 0)
+        self.assertEqual(document["sink"]["running_error_code"], "EVIDENCE_PROBE_STALE")
+        return terminal
+
     def test_live_journal_and_terminal_are_whitelisted_fsynced_and_separate(self):
         sink = self.sink(known_codes=["SUPERVISOR_STAGE_FAILED"])
         sink.start()
@@ -220,22 +274,40 @@ class EvidenceTests(unittest.TestCase):
         self.assertLess(time.monotonic() - began, 0.05)
 
     def test_blocked_journal_writer_preserves_last_event_in_independent_terminal(self):
-        release = threading.Event()
-        self.releases.append(release)
-        def write(fd, raw):
+        sink, release = self.blocked_journal()
+        self.independent_terminal(sink, release)
+        self.complete_while_journal_blocked(sink, release, sink.close)
+
+    def test_slow_terminal_fsync_preserves_independence_and_durability(self):
+        sink, release = self.blocked_journal()
+        original_fsync, durations = os.fsync, []
+        def delayed_terminal_fsync(descriptor):
+            if threading.current_thread().name == "re3d-small-evidence-terminal":
+                began = time.monotonic()
+                time.sleep(0.3)  # Valid durable IO can exceed the old 0.2s assertion.
+                original_fsync(descriptor)
+                durations.append(time.monotonic() - began)
+            else:
+                original_fsync(descriptor)
+        with patch("backend.experiments.evidence.os.fsync", side_effect=delayed_terminal_fsync):
+            self.independent_terminal(sink, release)
+        self.assertEqual(len(durations), 1)
+        self.assertGreater(durations[0], 0.2)
+
+    def test_independence_assertion_rejects_terminal_waiting_for_journal(self):
+        sink, release = self.blocked_journal()
+        original_finish = sink.finish_terminal
+        dependency_entered = threading.Event()
+        def incorrectly_dependent_terminal(summary):
+            dependency_entered.set()
             release.wait()
-            return os.write(fd, raw)
-        sink = self.sink(write_bytes=write, intervals=(0.02, 0.2))
-        sink.start()
-        sink.append("event", {"event_code": "STAGE_START", "phase": "sfm"})
-        self.wait_trip(sink, "EVIDENCE_PROBE_STALE")
-        began = time.monotonic()
-        terminal = sink.finish_terminal({"status": "failed", "tree_stopped": True})
-        self.assertLess(time.monotonic() - began, 0.2)
-        self.assertEqual(json.loads(terminal.read_bytes())["last_event"]["payload"]["event_code"], "STAGE_START")
-        began = time.monotonic()
-        sink.close()
-        self.assertLess(time.monotonic() - began, 0.4)
+            return original_finish(summary)
+        # Negative control: the same assertion must reject a terminal path that
+        # waits for the journal, then release/join it instead of leaking a thread.
+        with patch.object(sink, "finish_terminal", side_effect=incorrectly_dependent_terminal):
+            with self.assertRaisesRegex(AssertionError, "did not complete while journal remained blocked"):
+                self.independent_terminal(sink, release)
+        self.assertTrue(dependency_entered.is_set())
 
     def test_queue_overflow_is_nonblocking_and_failclosed(self):
         release = threading.Event()

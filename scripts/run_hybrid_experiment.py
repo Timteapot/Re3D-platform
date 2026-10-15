@@ -279,9 +279,18 @@ def main(argv=None, *, tool_root=None):
     parser.add_argument("--quality-config-sha256")
     parser.add_argument("--pipeline-script-sha256")
     parser.add_argument("--colmap-script-sha256")
+    parser.add_argument("--final-snapshot-root", type=Path)
+    parser.add_argument("--cpu-result-sha256")
     try:
         args = parser.parse_args(argv)
         require(args.mode == "cpu" or not args.execute_cpu, "HYBRID_CLI_EXECUTION_MODE_MISMATCH")
+        snapshot_options = (args.final_snapshot_root, args.cpu_result_sha256)
+        require(args.mode == "export-sfm" or not any(value is not None for value in snapshot_options),
+                "HYBRID_CLI_SNAPSHOT_ARGUMENT_MODE_MISMATCH")
+        if any(value is not None for value in snapshot_options):
+            require(args.final_snapshot_root is not None
+                    and isinstance(args.cpu_result_sha256, str) and SHA.fullmatch(args.cpu_result_sha256),
+                    "HYBRID_CLI_FINAL_SNAPSHOT_PIN_REQUIRED")
         if args.mode == "prepare":
             require(not any((args.target_root, args.bundle_root, args.experiment_root, args.handoff_manifest_sha256,
                              args.quality_config_path, args.quality_config_sha256, args.pipeline_script_sha256,
@@ -345,11 +354,15 @@ def main(argv=None, *, tool_root=None):
                         require(sha_file(args.pipeline_root / "scripts/run_pipeline.py") == pipeline_sha
                                 and sha_file(args.pipeline_root / "scripts/run_colmap_shared.py") == colmap_sha,
                                 "HYBRID_CLI_FROZEN_SCRIPT_CHANGED")
+                        snapshot_kwargs = ({"final_snapshot_root": args.final_snapshot_root,
+                                            "expected_cpu_result_sha256": args.cpu_result_sha256}
+                                           if args.final_snapshot_root is not None else {})
                         saved = modules.handoff.export_sfm_handoff(args.experiment_root or Path(profile["target_experiment"]["root"]),
                             args.bundle_root, input_source=source, sfm_threads=profile["cpu"]["sfm_threads"],
                             mapper_threads=profile["cpu"]["mapper_ba_threads"], python_version=profile["runtime"]["python_version"],
                             quality_config_path=args.quality_config_path or args.pipeline_root / "configs/pipeline.json",
-                            quality_config_sha256=quality_sha, pipeline_script_sha256=pipeline_sha, colmap_script_sha256=colmap_sha)
+                            quality_config_sha256=quality_sha, pipeline_script_sha256=pipeline_sha,
+                            colmap_script_sha256=colmap_sha, **snapshot_kwargs)
                         result = {"status": "handoff_exported", "handoff_manifest_sha256": saved.manifest_sha256,
                                   "complete_pair_records": saved.manifest["complete_pair_records"], "sfm_complete": True}
                     else:
