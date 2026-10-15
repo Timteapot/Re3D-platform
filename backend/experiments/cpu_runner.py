@@ -122,7 +122,10 @@ def validate_cpu_profile(profile):
                 "snapshot_interval_seconds": 600, "snapshot_retained": 2,
                 "overall_timeout_seconds": 14400}
     require(set(guards) == set(expected)
-            and all(type(guards[key]) is int and guards[key] == value for key, value in expected.items()),
+            and all(type(guards[key]) is int and guards[key] == value for key, value in expected.items()
+                    if key != "overall_timeout_seconds")
+            and type(guards["overall_timeout_seconds"]) is int
+            and 0 < guards["overall_timeout_seconds"] <= 14400,
             "CPU_SFM_PROTECTION_CHANGED")
     target = profile.get("target_experiment", {})
     root = Path(target.get("root", ""))
@@ -250,6 +253,7 @@ class CPUSfmSupervisor:
                 "complete_pairs": latest["validated_complete_pair_records"] if latest else None,
                 "resources": self.monitor.summary().get("latest", {}),
                 "peaks": self.monitor.summary().get("peaks", {}),
+                "observation": self.relay.summary() if callable(getattr(self.relay, "summary", None)) else {},
                 "source_checkpoint_unchanged": result.get("source_checkpoint_unchanged")}
 
     def run(self, stage, environment):
@@ -353,6 +357,7 @@ class CPUSfmSupervisor:
             result["resources"] = self.monitor.summary()
             result["checkpoint_summary"] = self.snapshots.summary()
             result["pair_samples"] = list(self.relay.pair_samples)
+            result["observation"] = self.relay.summary() if callable(getattr(self.relay, "summary", None)) else {}
             cpu = list(self.relay.cpu_samples)
             result["cpu_sample_count"] = len(cpu)
             result["cpu_sampled_mean_percent"] = sum(value for _, value in cpu) / len(cpu) if cpu else None

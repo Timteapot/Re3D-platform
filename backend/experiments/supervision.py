@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from backend.experiments.process import run_contained_process
-from backend.experiments.runner import read_pair_counts
+from backend.experiments.runner import PairProbeError, read_pair_counts
 from backend.re3d_adapter.errors import AdapterError, PipelineTimedOut
 
 
@@ -100,24 +100,100 @@ class ObservationRelay:
     timeout/progress deadline, and never execute on the compute health callback.
     """
     def __init__(self, monitor, evidence, database, budget, *, resource_seconds=5, pair_seconds=15,
-                 pair_reader=read_pair_counts):
+                 pair_reader=read_pair_counts, monotonic=time.monotonic):
         self.monitor, self.evidence, self.database, self.budget = monitor, evidence, database, budget
         self.intervals = {'resources': resource_seconds, 'pairs': pair_seconds}
         self.pair_reader = pair_reader
+        self.monotonic = monotonic
+        # A transient read does not extend the successful-observation deadline.
+        self.pair_retry_seconds, self.pair_freshness_seconds = 5, 45
         self.stop_event = threading.Event()
         self.lock = threading.Lock()
         self.threads, self.last = {}, {}
         self.failure = None
+        self.last_failure = None
+        self.pair_started_at = self.pair_last_success_at = self.pair_last_success_elapsed = None
+        self.pair_attempt_count = self.pair_retry_count = self.pair_consecutive_failures = 0
+        self.closed_at = None
         self.stage = 'restore'
         self.last_pairs = None
         self.pair_samples = []
         self.cpu_samples = []
         self.last_snapshot = None
-        self.started = time.monotonic()
+        self.started = self.monotonic()
 
     def set_stage(self, name):
         with self.lock:
+            if name == '01-colmap' and self.stage != name:
+                self.pair_started_at = self.monotonic()
             self.stage = name
+
+    def _pair_freshness(self):
+        now = self.monotonic()
+        with self.lock:
+            active = self.stage == '01-colmap'
+            previous = self.pair_last_success_at if self.pair_last_success_at is not None else self.pair_started_at
+        if active and previous is not None and now - previous >= self.pair_freshness_seconds:
+            raise SupervisionError('LONG_OBSERVATION_PAIR_STALE')
+
+    def _diagnostic(self, kind, exc):
+        if isinstance(exc, PairProbeError):
+            details = exc.diagnostics()
+        else:
+            types = {'OperationalError','DatabaseError','IntegrityError','ProgrammingError','InterfaceError',
+                     'DataError','NotSupportedError','RuntimeError','TypeError','ValueError','OverflowError',
+                     'OSError','PermissionError','FileNotFoundError','SupervisionError'}
+            name = type(exc).__name__
+            details = {'error_code':error_code(exc), 'exception_type':name if name in types else 'Exception',
+                       'source_frame':'ObservationRelay.' + kind}
+        return {**details, 'probe_kind':kind, 'elapsed_seconds':self.budget.elapsed}
+
+    def summary(self):
+        now = self.monotonic()
+        with self.lock:
+            observed = self.closed_at if self.closed_at is not None else now
+            last = self.pair_last_success_at if self.pair_last_success_at is not None else self.pair_started_at
+            return {'pair_attempt_count':self.pair_attempt_count, 'pair_retry_count':self.pair_retry_count,
+                    'pair_consecutive_failures':self.pair_consecutive_failures,
+                    'pair_last_success_elapsed_seconds':self.pair_last_success_elapsed,
+                    'pair_observation_age_seconds':max(0.0, observed-last) if last is not None else None,
+                    'pair_freshness_limit_seconds':self.pair_freshness_seconds,
+                    'pair_retry_interval_seconds':self.pair_retry_seconds,
+                    'observation_closed':self.closed_at is not None,
+                    'last_failure':dict(self.last_failure) if self.last_failure else None}
+
+    def _sample_pairs(self, base):
+        """Attempt one bounded reader call; failed attempts never invent samples."""
+        self._pair_freshness()
+        with self.lock:
+            self.pair_attempt_count += 1
+        try:
+            value = self.pair_reader(self.database)
+        except PairProbeError as exc:
+            details = self._diagnostic('pairs', exc)
+            with self.lock:
+                self.last_failure = details
+                self.pair_consecutive_failures += 1
+                if exc.retryable:
+                    self.pair_retry_count += 1
+            if not exc.retryable:
+                raise
+            self._pair_freshness()
+            self.evidence.append('event', {**base, 'event_code':'LONG_PAIR_PROBE_DEFERRED',
+                                         'observation':self.summary()})
+            return self.pair_retry_seconds
+        self._pair_freshness()  # A late result cannot retroactively hide stale IO.
+        now, elapsed = self.monotonic(), self.budget.elapsed
+        with self.lock:
+            if self.stop_event.is_set() or self.stage != '01-colmap':
+                return self.intervals['pairs']
+            self.last_pairs = value
+            self.pair_last_success_at, self.pair_last_success_elapsed = now, elapsed
+            self.pair_consecutive_failures = 0
+            if len(self.pair_samples) < 4096:
+                self.pair_samples.append({**base, 'elapsed_seconds':elapsed, **value})
+        self.evidence.append('pairs', {**base, 'elapsed_seconds':elapsed, **value})
+        return self.intervals['pairs']
 
     def start(self):
         for kind in self.intervals:
@@ -128,6 +204,7 @@ class ObservationRelay:
     def _loop(self, kind):
         try:
             while not self.stop_event.is_set():
+                delay = self.intervals[kind]
                 with self.lock:
                     stage = self.stage
                 base = {'stage': stage, 'phase': stage_phase(stage), 'elapsed_seconds': self.budget.elapsed}
@@ -137,7 +214,7 @@ class ObservationRelay:
                     self.evidence.append('resources', {**base, 'resources': summary.get('latest', {}),
                         'peaks': summary.get('peaks', {}), 'errors': summary.get('errors', []),
                         'host_age_seconds': ages.get('host'), 'gpu_age_seconds': ages.get('gpu'),
-                        'directory_age_seconds': ages.get('directory')})
+                        'directory_age_seconds': ages.get('directory'), 'observation':self.summary()})
                     store = getattr(self, 'snapshot_store', None)
                     latest = store.latest if store else None  # Pure memory; no D IO in relay.
                     if latest and latest['directory'] != self.last_snapshot:
@@ -151,27 +228,27 @@ class ObservationRelay:
                             if len(self.cpu_samples) < 4096:
                                 self.cpu_samples.append((self.budget.elapsed, float(cpu)))
                 elif stage == '01-colmap' and self.database.is_file():
-                    value = self.pair_reader(self.database)
-                    with self.lock:
-                        self.last_pairs = value
-                        # Bounded even for a 4h run. All rows also go to C JSONL.
-                        if len(self.pair_samples) < 4096:
-                            self.pair_samples.append({**base, **value})
-                    self.evidence.append('pairs', {**base, **value})
+                    delay = self._sample_pairs(base)
                 with self.lock:
-                    self.last[kind] = time.monotonic()
-                if self.stop_event.wait(self.intervals[kind]): return
+                    self.last[kind] = self.monotonic()
+                if self.stop_event.wait(delay): return
         except BaseException as exc:
+            details = self._diagnostic(kind, exc)
             with self.lock:
                 self.failure = error_code(exc)
+                # Keep the numeric transient cause when its successful-sample
+                # deadline finally expires; the run's error records the stale stop.
+                if self.failure != 'LONG_OBSERVATION_PAIR_STALE' or self.last_failure is None:
+                    self.last_failure = details
 
     def check_health(self):
         with self.lock:
             failure, last = self.failure, dict(self.last)
         if failure:
             raise SupervisionError(failure)
+        self._pair_freshness()
         for kind, thread in self.threads.items():
-            if not thread.is_alive() or time.monotonic() - last.get(kind, self.started) > max(10, self.intervals[kind] * 3):
+            if not thread.is_alive() or self.monotonic() - last.get(kind, self.started) > max(10, self.intervals[kind] * 3):
                 raise SupervisionError('LONG_OBSERVATION_STALE')
 
     def close(self):
@@ -179,6 +256,8 @@ class ObservationRelay:
         deadline = time.monotonic() + 2
         for thread in self.threads.values():
             thread.join(max(0, deadline - time.monotonic()))
+        with self.lock:
+            self.closed_at = self.monotonic()
         return not any(thread.is_alive() for thread in self.threads.values())
 
 
@@ -241,6 +320,7 @@ class LongStageSupervisor:
             'complete_pairs': latest['validated_complete_pair_records'] if latest else None,
             'resources': self.monitor.summary().get('latest', {}),
             'peaks': self.monitor.summary().get('peaks', {}),
+            'observation':self.relay.summary() if callable(getattr(self.relay,'summary',None)) else {},
             'source_checkpoint_unchanged': result.get('source_checkpoint_unchanged'),
             'forensic_notes': [result[key] for key in ('terminal_evidence_error','snapshot_stop_error',
                 'observation_stop_error','resource_stop_error','final_snapshot_error','source_verification_error') if result.get(key)]}
@@ -407,6 +487,7 @@ class LongStageSupervisor:
             result['checkpoint_summary'] = self.snapshots.summary()
             result['resources'] = self.monitor.summary()
             result['pair_samples'] = list(self.relay.pair_samples)
+            result['observation'] = self.relay.summary() if callable(getattr(self.relay,'summary',None)) else {}
             cpu = list(self.relay.cpu_samples)
             result['cpu_sample_count'] = len(cpu)
             result['cpu_sampled_mean_percent'] = sum(value for _, value in cpu) / len(cpu) if cpu else None

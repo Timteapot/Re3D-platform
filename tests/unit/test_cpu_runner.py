@@ -93,6 +93,16 @@ class ProfileTests(unittest.TestCase):
         with self.assertRaises(SupervisionError):
             validate_cpu_profile(self.profile)
 
+    def test_remaining_budget_may_only_be_reduced_as_a_positive_integer(self):
+        for seconds in (14400, 14284, 1):
+            self.profile['protection']['overall_timeout_seconds'] = seconds
+            validate_cpu_profile(self.profile)
+        for seconds in (0, -1, 14284.0, True, 14401):
+            self.profile['protection']['overall_timeout_seconds'] = seconds
+            with self.subTest(seconds=seconds):
+                with self.assertRaisesRegex(SupervisionError, 'CPU_SFM_PROTECTION_CHANGED'):
+                    validate_cpu_profile(self.profile)
+
     def test_source_target_overlap_and_jobs_path_rejected(self):
         self.profile["source_checkpoint"]["snapshot_root"] = self.profile["target_experiment"]["root"]
         with self.assertRaisesRegex(SupervisionError, "CPU_SFM_SOURCE_TARGET_OVERLAP"):
@@ -133,16 +143,20 @@ class Monitor:
 
 
 class Evidence:
-    def __init__(self, calls): self.calls, self.fail_terminal, self.fail_forensic = calls, False, False
+    def __init__(self, calls):
+        self.calls, self.fail_terminal, self.fail_forensic = calls, False, False
+        self.terminal = self.forensic = None
     def check_health(self): pass
     def start(self): self.calls.append(("evidence-start",))
     def append(self, kind, payload): self.calls.append(("event", kind))
     def finish_terminal(self, value):
         self.calls.append(("small-terminal",))
         if self.fail_terminal: raise SupervisionError("EVIDENCE_WRITE_FAILED")
+        self.terminal = dict(value)
     def write_forensic_summary(self, value):
         self.calls.append(("forensic-summary",))
         if self.fail_forensic: raise SupervisionError("EVIDENCE_WRITE_FAILED")
+        self.forensic = dict(value)
     def close(self): self.calls.append(("evidence-close",))
 
 
@@ -315,6 +329,18 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["error_code"], "LOW_RAM_AUTO_STOPPED")
         self.assertTrue(result["terminal_evidence_confirmed"])
+
+    def test_observation_numeric_diagnostics_survive_cpu_result_and_private_c_terminal(self):
+        details = {'pair_retry_count':1, 'pair_observation_age_seconds':5,
+                   'last_failure':{'probe_kind':'pairs', 'exception_type':'OperationalError',
+                       'sqlite_errorcode':5, 'sqlite_primary_code':5, 'deadline_triggered':False,
+                       'source_frame':'read_pair_counts', 'error_code':'LONG_PAIR_PROBE_BUSY'}}
+        with patch.object(Relay, 'summary', return_value=details, create=True):
+            result = self.run_stage()
+        self.assertEqual(result['status'], 'succeeded')
+        self.assertEqual(result['observation'], details)
+        self.assertEqual(self.evidence.terminal['observation'], details)
+        self.assertEqual(self.evidence.forensic['observation'], details)
 
 
 class ChildBootstrapTests(unittest.TestCase):

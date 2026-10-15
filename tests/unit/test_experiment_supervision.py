@@ -10,7 +10,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from backend.experiments.supervision import LongStageSupervisor, SupervisionError, WholeRunBudget, bounded_read_only
+from backend.experiments.supervision import (LongStageSupervisor, ObservationRelay, SupervisionError,
+    WholeRunBudget, bounded_read_only)
+from backend.experiments.runner import PairProbeError
 from backend.experiments.process import run_contained_process
 from backend.experiments.evidence import EvidenceSink
 from backend.experiments.snapshot_store import SnapshotStore, GIB
@@ -494,6 +496,125 @@ class SupervisionTests(unittest.TestCase):
         self.assertIn('duration_seconds',result['stages'][0])
         self.assertTrue(result['terminal_evidence_confirmed'])
         self.assertEqual(self.timeout_values,[])
+
+
+class ObservationRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.calls, self.clock, self.steps = [], Clock(), []
+        self.monitor, self.evidence = Monitor(self.calls), Evidence(self.calls)
+        self.budget = WholeRunBudget(14400, monotonic=self.clock)
+        self.relay = ObservationRelay(self.monitor, self.evidence, self.root / 'synthetic.db', self.budget,
+                                      pair_reader=self.read, monotonic=self.clock)
+        self.relay.set_stage('01-colmap')
+
+    def tearDown(self): self.temporary.cleanup()
+
+    def read(self, database):
+        step = self.steps.pop(0)
+        if isinstance(step, BaseException): raise step
+        return {'complete_pair_records':step}
+
+    def base(self): return {'stage':'01-colmap', 'phase':'sfm', 'elapsed_seconds':self.budget.elapsed}
+
+    def busy(self, code='LONG_PAIR_PROBE_BUSY', numeric=5):
+        return PairProbeError(code, retryable=True, sqlite_errorcode=numeric,
+                              deadline_triggered=code == 'LONG_PAIR_PROBE_TIMED_OUT')
+
+    def health(self):
+        # Only deterministic, synthetic liveness is substituted. The production
+        # successful-observation clock and 45-second deadline remain unchanged.
+        self.relay.threads = {name:SimpleNamespace(is_alive=lambda:True) for name in ('resources','pairs')}
+        self.relay.last = {name:self.clock() for name in ('resources','pairs')}
+        self.relay.check_health()
+
+    def test_single_busy_retries_at_five_seconds_keeps_last_valid_sample_and_recovers(self):
+        self.steps = [100, self.busy(), 105]
+        self.assertEqual(self.relay._sample_pairs(self.base()), 15)
+        self.clock.advance(15)
+        self.assertEqual(self.relay._sample_pairs(self.base()), 5)
+        self.health()  # A busy observer does not terminate healthy computation.
+        self.assertEqual(self.relay.last_pairs, {'complete_pair_records':100})
+        self.assertEqual(len(self.relay.pair_samples), 1)
+        self.clock.advance(5)
+        self.assertEqual(self.relay._sample_pairs(self.base()), 15)
+        self.health()
+        summary = self.relay.summary()
+        self.assertEqual(summary['pair_attempt_count'], 3)
+        self.assertEqual(summary['pair_retry_count'], 1)
+        self.assertEqual(summary['pair_consecutive_failures'], 0)
+        self.assertEqual(summary['pair_observation_age_seconds'], 0)
+        self.assertEqual(summary['last_failure']['sqlite_primary_code'], 5)
+        self.assertEqual([row['complete_pair_records'] for row in self.relay.pair_samples], [100,105])
+        self.assertEqual(sum(kind == 'pairs' for kind,_ in self.evidence.events), 2)
+
+    def test_continuous_busy_does_not_refresh_success_deadline_or_publish_fake_pairs(self):
+        self.steps = [100] + [self.busy() for _ in range(8)]
+        self.relay._sample_pairs(self.base())
+        for _ in range(8):
+            self.clock.advance(5)
+            self.relay._sample_pairs(self.base())
+            self.health()
+        self.assertEqual(self.relay.summary()['pair_observation_age_seconds'], 40)
+        self.assertEqual(self.relay.last_pairs, {'complete_pair_records':100})
+        self.assertEqual(len(self.relay.pair_samples), 1)
+        self.clock.advance(5)
+        with self.assertRaisesRegex(SupervisionError, 'LONG_OBSERVATION_PAIR_STALE'):
+            self.health()
+        self.assertEqual(self.relay.summary()['last_failure']['error_code'], 'LONG_PAIR_PROBE_BUSY')
+
+    def test_no_initial_success_is_bounded_from_sfm_stage_entry(self):
+        self.steps = [self.busy()]
+        self.relay._sample_pairs(self.base())
+        self.clock.advance(44.999)
+        self.health()
+        self.clock.advance(0.001)
+        with self.assertRaisesRegex(SupervisionError, 'LONG_OBSERVATION_PAIR_STALE'):
+            self.health()
+        self.assertEqual(self.relay.pair_samples, [])
+        self.assertIsNone(self.relay.last_pairs)
+
+    def test_late_success_cannot_retroactively_hide_a_stale_read(self):
+        def late_read(database):
+            self.clock.advance(45)
+            return {'complete_pair_records':101}
+        self.relay.pair_reader = late_read
+        with self.assertRaisesRegex(SupervisionError, 'LONG_OBSERVATION_PAIR_STALE'):
+            self.relay._sample_pairs(self.base())
+        self.assertEqual(self.relay.pair_samples, [])
+
+    def test_locked_and_own_deadline_can_retry_but_permanent_error_is_not_swallowed(self):
+        for code,numeric in (('LONG_PAIR_PROBE_LOCKED',6),('LONG_PAIR_PROBE_TIMED_OUT',9)):
+            self.steps = [self.busy(code,numeric)]
+            self.assertEqual(self.relay._sample_pairs(self.base()), 5)
+        self.steps = [PairProbeError('LONG_PAIR_PROBE_DATABASE_FAILED', sqlite_errorcode=11,
+                                     exception_type='DatabaseError')]
+        with self.assertRaisesRegex(PairProbeError, 'LONG_PAIR_PROBE_DATABASE_FAILED'):
+            self.relay._sample_pairs(self.base())
+        self.assertEqual(self.relay.summary()['last_failure']['sqlite_errorcode'], 11)
+        self.assertEqual(self.relay.pair_samples, [])
+
+    def test_loop_records_known_frame_and_type_without_raw_error_or_sql_text(self):
+        (self.root / 'synthetic.db').write_bytes(b'synthetic placeholder only')
+        self.steps = [RuntimeError('PRIVATE_PATH_SQL_TOKEN')]
+        self.relay._loop('pairs')
+        self.assertEqual(self.relay.failure, 'LONG_STAGE_OR_IO_FAILED')
+        summary = self.relay.summary()
+        self.assertEqual(summary['last_failure']['source_frame'], 'ObservationRelay.pairs')
+        self.assertEqual(summary['last_failure']['exception_type'], 'RuntimeError')
+        self.assertNotIn('PRIVATE_PATH', json.dumps(summary))
+
+    def test_close_freezes_observation_age_during_final_snapshot_and_source_verification(self):
+        self.steps = [100]
+        self.relay._sample_pairs(self.base())
+        self.clock.advance(10)
+        self.assertTrue(self.relay.close())
+        self.clock.advance(100)
+        summary = self.relay.summary()
+        self.assertTrue(summary['observation_closed'])
+        self.assertEqual(summary['pair_observation_age_seconds'], 10)
+        self.assertEqual(self.budget.remaining, 14290)  # Retries never reset the run budget.
 
 
 if __name__ == "__main__":

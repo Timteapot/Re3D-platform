@@ -52,6 +52,9 @@ DEFAULT_CODES = frozenset({
     "HOST_RESOURCE_PROBE_FAILED", "GPU_RESOURCE_PROBE_FAILED", "DIRECTORY_RESOURCE_PROBE_FAILED",
     "RESOURCE_PROBE_FAILED", "RESOURCE_PROBE_STALE", "RESOURCE_THREAD_STOPPED", "RESOURCE_THREAD_SHUTDOWN_FAILED",
     "RESOURCE_LOG_WRITE_FAILED", "GPU_SAMPLE_UNAVAILABLE", "HOST_SAMPLE_PARTIAL", "DIRECTORY_SAMPLE_PARTIAL",
+    "LONG_PAIR_PROBE_BUSY", "LONG_PAIR_PROBE_LOCKED", "LONG_PAIR_PROBE_TIMED_OUT",
+    "LONG_PAIR_PROBE_INTERRUPTED", "LONG_PAIR_PROBE_DATABASE_FAILED", "LONG_PAIR_PROBE_RESULT_INVALID",
+    "LONG_PAIR_PROBE_DEFERRED", "LONG_OBSERVATION_PAIR_STALE", "LONG_OBSERVATION_STALE", "LONG_STAGE_OR_IO_FAILED",
     "EVIDENCE_PRIVATE_ROOT_INVALID", "EVIDENCE_PRIVATE_ACL_FAILED", "EVIDENCE_TARGET_WINDOWS_REQUIRED",
     "EVIDENCE_ADMIN_REQUIRED", "EVIDENCE_ADMISSION_FAILED", "EVIDENCE_FREE_PROBE_FAILED",
     "EVIDENCE_LOW_DISK", "EVIDENCE_CAPACITY_EXCEEDED", "EVIDENCE_WRITE_FAILED", "EVIDENCE_QUEUE_FULL",
@@ -71,11 +74,18 @@ _NUMERIC = frozenset({
     "checkpoint_count", "checkpoint_sequence", "retained_checkpoint_count", "journal_record_count", "journal_bytes",
     "complete_pairs", "stage_count", "completed_stages_count", "observation_age_seconds", "writer", "host_age_seconds",
     "gpu_age_seconds", "directory_age_seconds", "minimum_free_vram_bytes", "minimum_available_ram_bytes",
+    "pair_attempt_count", "pair_retry_count", "pair_consecutive_failures", "pair_last_success_elapsed_seconds",
+    "pair_observation_age_seconds", "pair_freshness_limit_seconds", "pair_retry_interval_seconds",
+    "sqlite_errorcode", "sqlite_primary_code",
 })
 _BOOLEAN = frozenset({"process_tree_exited", "source_checkpoint_unchanged", "source_job_modified", "platform_job_resume",
     "queue_modified", "services_stopped", "committed_wal_included", "snapshot_valid", "sfm_complete", "passed",
     "tree_stopped", "cleanup_confirmed", "snapshot_attempted"})
-_MAPS = frozenset({"cpu", "memory", "disk", "gpu", "directory", "latest", "peaks", "guard_checks", "resources", "throughput", "metrics", "trip", "snapshot", "checkpoint", "observation_ages_seconds", "evidence"})
+_BOOLEAN = _BOOLEAN | frozenset({"deadline_triggered", "observation_closed"})
+_MAPS = frozenset({"cpu", "memory", "disk", "gpu", "directory", "latest", "peaks", "guard_checks", "resources", "throughput", "metrics", "trip", "snapshot", "checkpoint", "observation_ages_seconds", "evidence", "observation", "last_failure"})
+_EXCEPTION_TYPES = frozenset({"OperationalError", "DatabaseError", "IntegrityError", "ProgrammingError", "InterfaceError",
+    "DataError", "NotSupportedError", "RuntimeError", "TypeError", "ValueError", "OverflowError", "OSError",
+    "PermissionError", "FileNotFoundError", "SupervisionError", "Exception"})
 _HASHES = frozenset({"sha256", "database_sha256", "source_database_sha256", "source_manifest_sha256", "manifest_sha256", "tool_manifest_sha256",
     "config_sha256", "profile_sha256", "latest_snapshot_sha256"})
 
@@ -264,6 +274,12 @@ class EvidenceSink:
             elif key == "phase" and isinstance(value, str) and value in _PHASES:
                 output[key] = value
             elif key == "stage" and isinstance(value, str) and value in self._stages:
+                output[key] = value
+            elif key == "probe_kind" and isinstance(value, str) and value in {"pairs", "resources"}:
+                output[key] = value
+            elif key == "source_frame" and isinstance(value, str) and value in {"read_pair_counts", "ObservationRelay.pairs", "ObservationRelay.resources"}:
+                output[key] = value
+            elif key == "exception_type" and isinstance(value, str) and value in _EXCEPTION_TYPES:
                 output[key] = value
             elif key == "status" and isinstance(value, str) and value in _STATUS:
                 output[key] = value

@@ -26,6 +26,42 @@ PIPELINE_BASE = "e517a161b4c0895f8be4258fb339272e4f99e1d6"
 CONFIG_SHA = "9f8cbc83cb67b8313f624913686fbdc453e7572a18603d015bc198a9a92b8883"
 
 
+class PairProbeError(AdapterError):
+    """Typed live-counter failure, with numeric diagnostics and no error text."""
+    def __init__(self, code, *, retryable=False, sqlite_errorcode=None,
+                 exception_type="OperationalError", deadline_triggered=False):
+        self.code, self.retryable = code, retryable is True
+        self.sqlite_errorcode = sqlite_errorcode if type(sqlite_errorcode) is int and sqlite_errorcode >= 0 else None
+        self.sqlite_primary_code = self.sqlite_errorcode & 255 if self.sqlite_errorcode is not None else None
+        known = {"OperationalError", "DatabaseError", "IntegrityError", "ProgrammingError",
+                 "InterfaceError", "DataError", "NotSupportedError"}
+        self.exception_type = exception_type if exception_type in known else "DatabaseError"
+        self.deadline_triggered = deadline_triggered is True
+        super().__init__(code)
+
+    def diagnostics(self):
+        return {"error_code": self.code, "exception_type": self.exception_type,
+                "sqlite_errorcode": self.sqlite_errorcode, "sqlite_primary_code": self.sqlite_primary_code,
+                "deadline_triggered": self.deadline_triggered, "source_frame": "read_pair_counts"}
+
+
+def classify_pair_probe_error(exc, *, deadline_triggered=False):
+    """Only SQLite numeric BUSY/LOCKED and our own deadline can be deferred."""
+    numeric = getattr(exc, "sqlite_errorcode", None)
+    primary = numeric & 255 if type(numeric) is int and numeric >= 0 else None
+    if primary == sqlite3.SQLITE_BUSY:
+        code, retryable = "LONG_PAIR_PROBE_BUSY", True
+    elif primary == sqlite3.SQLITE_LOCKED:
+        code, retryable = "LONG_PAIR_PROBE_LOCKED", True
+    elif primary == sqlite3.SQLITE_INTERRUPT and deadline_triggered:
+        code, retryable = "LONG_PAIR_PROBE_TIMED_OUT", True
+    else:
+        code = "LONG_PAIR_PROBE_INTERRUPTED" if primary == sqlite3.SQLITE_INTERRUPT else "LONG_PAIR_PROBE_DATABASE_FAILED"
+        retryable = False
+    return PairProbeError(code, retryable=retryable, sqlite_errorcode=numeric,
+                          exception_type=type(exc).__name__, deadline_triggered=deadline_triggered)
+
+
 def require(value, code):
     if not value:
         raise ExperimentGateError(code)
@@ -78,18 +114,30 @@ def build_sfm_command(interpreter, pipeline_root, work, threads):
 
 def read_pair_counts(database, health_check=lambda: None):
     deadline = time.monotonic() + 1
-    with closing(sqlite3.connect(database.as_uri() + "?mode=ro&cache=private", uri=True, timeout=0.2)) as db:
-        db.execute("PRAGMA query_only=ON")
-        db.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
-        health_check()
-        db.execute("BEGIN")
-        row = db.execute("""SELECT (SELECT COUNT(*) FROM matches),
-          (SELECT COUNT(*) FROM two_view_geometries),
-          (SELECT COUNT(*) FROM matches JOIN two_view_geometries USING(pair_id)),
-          (SELECT COUNT(*) FROM matches WHERE rows>0),
-          (SELECT COUNT(*) FROM two_view_geometries WHERE rows>=15)""").fetchone()
-        health_check()
-        return dict(zip(("matches_rows", "geometry_rows", "complete_pair_records", "nonempty_match_records", "geometry_min15_records"), row))
+    own_deadline_triggered = False
+    def progress():
+        nonlocal own_deadline_triggered
+        if time.monotonic() >= deadline:
+            own_deadline_triggered = True
+            return 1
+        return 0
+    try:
+        with closing(sqlite3.connect(database.as_uri() + "?mode=ro&cache=private", uri=True, timeout=0.2)) as db:
+            db.execute("PRAGMA query_only=ON")
+            db.set_progress_handler(progress, 1000)
+            health_check()
+            db.execute("BEGIN")
+            row = db.execute("""SELECT (SELECT COUNT(*) FROM matches),
+              (SELECT COUNT(*) FROM two_view_geometries),
+              (SELECT COUNT(*) FROM matches JOIN two_view_geometries USING(pair_id)),
+              (SELECT COUNT(*) FROM matches WHERE rows>0),
+              (SELECT COUNT(*) FROM two_view_geometries WHERE rows>=15)""").fetchone()
+            health_check()
+            require(row is not None and len(row) == 5 and all(type(value) is int and value >= 0 for value in row),
+                    "LONG_PAIR_PROBE_RESULT_INVALID")
+            return dict(zip(("matches_rows", "geometry_rows", "complete_pair_records", "nonempty_match_records", "geometry_min15_records"), row))
+    except sqlite3.Error as exc:
+        raise classify_pair_probe_error(exc, deadline_triggered=own_deadline_triggered) from None
 
 
 def snapshot_stopped_clone(database, target, health_check, expected_names=None):

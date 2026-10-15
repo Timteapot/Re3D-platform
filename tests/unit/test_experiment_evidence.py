@@ -111,6 +111,26 @@ class EvidenceTests(unittest.TestCase):
         self.assertNotIn("pid", value)
         self.assertNotIn("ram_used_bytes", value)
 
+    def test_pair_probe_diagnostics_are_closed_whitelisted_not_exception_text_or_sql(self):
+        sink = self.sink()
+        value = sink.sanitize({'observation':{'pair_attempt_count':4, 'pair_retry_count':1,
+            'pair_consecutive_failures':1, 'pair_last_success_elapsed_seconds':76.875,
+            'pair_observation_age_seconds':15, 'pair_freshness_limit_seconds':45, 'pair_retry_interval_seconds':5,
+            'observation_closed':True, 'last_failure':{'probe_kind':'pairs', 'source_frame':'read_pair_counts',
+            'error_code':'LONG_PAIR_PROBE_BUSY', 'exception_type':'OperationalError',
+            'sqlite_errorcode':773, 'sqlite_primary_code':5, 'deadline_triggered':False,
+            'elapsed_seconds':91.875, 'message':'PRIVATE_TOKEN', 'sql':'SELECT private', 'path':'D:/private'}}})
+        observation = value['observation']
+        self.assertEqual(observation['last_failure']['sqlite_primary_code'], 5)
+        self.assertEqual(observation['last_failure']['error_code'], 'LONG_PAIR_PROBE_BUSY')
+        self.assertTrue(observation['observation_closed'])
+        self.assertNotIn('PRIVATE_TOKEN', json.dumps(value))
+        self.assertNotIn('SELECT', json.dumps(value))
+        self.assertNotIn('D:/private', json.dumps(value))
+        untrusted = sink.sanitize({'observation':{'last_failure':{'probe_kind':['private'],
+            'source_frame':'secret.py:42', 'exception_type':'SecretClass', 'error_code':'PASSWORD_SECRET'}}})
+        self.assertEqual(untrusted['observation']['last_failure'], {'error_code':'UNCLASSIFIED_ERROR'})
+
     def test_explicit_stage_registry_and_snapshot_id_do_not_accept_paths(self):
         sink = self.sink(known_stages=["01-colmap", "23b-a-stage-openmvs", "../../secret"])
         snapshot_id = "snapshot-20261014T010000123456Z-" + "a" * 32

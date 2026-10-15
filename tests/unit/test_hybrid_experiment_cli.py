@@ -95,6 +95,21 @@ def test_prepare_validates_profile_but_never_accesses_missing_input_runtime_or_t
     assert not (f.tmp / "_experiments").exists()
 
 
+@pytest.mark.parametrize("seconds", [14400, 14284, 1])
+def test_recovery_budget_can_only_reduce_the_four_hour_cap(cli_fixture, seconds):
+    f = cli_fixture
+    f.profile["protection"]["overall_timeout_seconds"] = seconds
+    assert f.cli.validate_profile(f.profile) is f.profile
+
+
+@pytest.mark.parametrize("seconds", [0, -1, 14401, 14284.0, True, "14284"])
+def test_invalid_or_extended_recovery_budget_rejected(cli_fixture, seconds):
+    f = cli_fixture
+    f.profile["protection"]["overall_timeout_seconds"] = seconds
+    with pytest.raises(f.cli.HybridCLIError, match="CPU_SFM_PROTECTION_CHANGED"):
+        f.cli.validate_profile(f.profile)
+
+
 @pytest.mark.parametrize("extra", [["--execute"], ["--execute-c"], ["--execute-cpu=true"], ["--execute-long-test"], ["--mode", "full"]])
 def test_abbreviated_or_wrong_execution_switch_never_reaches_import(cli_fixture, extra, monkeypatch, capsys):
     f = cli_fixture

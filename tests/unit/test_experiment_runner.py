@@ -14,7 +14,8 @@ import unittest
 from unittest.mock import patch
 
 from backend.experiments.preflight import ExperimentGateError, IsolationGuard, SERVICES, validate_isolation
-from backend.experiments.runner import CONFIG_SHA, PIPELINE_BASE, build_sfm_command, read_pair_counts, snapshot_stopped_clone, summarize_window, validate_plan
+from backend.experiments.runner import (CONFIG_SHA, PIPELINE_BASE, PairProbeError, classify_pair_probe_error,
+    build_sfm_command, read_pair_counts, snapshot_stopped_clone, summarize_window, validate_plan)
 from backend.experiments.resources import ResourceTrip
 
 JOB = '6a90b5e9-0c99-41aa-881b-c196ebb96750'
@@ -92,6 +93,66 @@ class RunnerTests(unittest.TestCase):
             for table in ('images', 'keypoints', 'descriptors'):
                 db.execute(f'CREATE TABLE {table}(image_id INTEGER PRIMARY KEY)')
                 db.executemany(f'INSERT INTO {table} VALUES(?)', [(i,) for i in range(300)])
+
+    def test_live_exclusive_sqlite_lock_is_typed_retryable_without_leaking_message(self):
+        with closing(sqlite3.connect(self.db)) as writer:
+            writer.execute('BEGIN EXCLUSIVE')
+            with self.assertRaises(PairProbeError) as caught:
+                read_pair_counts(self.db)
+            error = caught.exception
+            self.assertEqual(error.code, 'LONG_PAIR_PROBE_BUSY')
+            self.assertTrue(error.retryable)
+            self.assertEqual(error.sqlite_primary_code, sqlite3.SQLITE_BUSY)
+            self.assertEqual(error.exception_type, 'OperationalError')
+            self.assertFalse(error.deadline_triggered)
+            writer.rollback()
+        self.assertEqual(read_pair_counts(self.db)['complete_pair_records'], 1)
+
+    def test_numeric_sqlite_classification_never_relies_on_exception_text(self):
+        cases = [(5, False, True, 'LONG_PAIR_PROBE_BUSY'), (773, False, True, 'LONG_PAIR_PROBE_BUSY'),
+                 (6, False, True, 'LONG_PAIR_PROBE_LOCKED'), (262, False, True, 'LONG_PAIR_PROBE_LOCKED'),
+                 (9, True, True, 'LONG_PAIR_PROBE_TIMED_OUT'), (9, False, False, 'LONG_PAIR_PROBE_INTERRUPTED'),
+                 (11, False, False, 'LONG_PAIR_PROBE_DATABASE_FAILED'), (26, False, False, 'LONG_PAIR_PROBE_DATABASE_FAILED'),
+                 (10, False, False, 'LONG_PAIR_PROBE_DATABASE_FAILED'), (1, False, False, 'LONG_PAIR_PROBE_DATABASE_FAILED')]
+        for numeric, deadline, retryable, code in cases:
+            original = sqlite3.OperationalError('PRIVATE_TOKEN_do_not_persist')
+            original.sqlite_errorcode = numeric
+            with self.subTest(numeric=numeric, deadline=deadline):
+                error = classify_pair_probe_error(original, deadline_triggered=deadline)
+                self.assertEqual((error.code, error.retryable), (code, retryable))
+                self.assertNotIn('PRIVATE_TOKEN', str(error))
+                self.assertNotIn('PRIVATE_TOKEN', json.dumps(error.diagnostics()))
+        original = sqlite3.OperationalError('database is locked')
+        self.assertFalse(classify_pair_probe_error(original).retryable)
+
+    def test_reader_marks_only_its_own_progress_deadline_as_retryable_interrupt(self):
+        original = sqlite3.OperationalError('PRIVATE_SQL_DETAIL')
+        original.sqlite_errorcode = sqlite3.SQLITE_INTERRUPT
+        class Connection:
+            def close(self): pass
+            def set_progress_handler(self, handler, instructions): self.handler = handler
+            def execute(self, statement):
+                if statement.startswith('SELECT'):
+                    self.assertion = self.handler()
+                    raise original
+                return self
+        connection = Connection()
+        with patch('backend.experiments.runner.sqlite3.connect', return_value=connection), \
+                patch('backend.experiments.runner.time.monotonic', side_effect=[0, 2]):
+            with self.assertRaises(PairProbeError) as caught:
+                read_pair_counts(self.db)
+        self.assertEqual(connection.assertion, 1)
+        self.assertEqual(caught.exception.code, 'LONG_PAIR_PROBE_TIMED_OUT')
+        self.assertTrue(caught.exception.deadline_triggered)
+
+    def test_missing_schema_is_permanent_not_a_transient_counter_read(self):
+        database = self.root / 'missing-schema.db'
+        with closing(sqlite3.connect(database)):
+            pass
+        with self.assertRaises(PairProbeError) as caught:
+            read_pair_counts(database)
+        self.assertFalse(caught.exception.retryable)
+        self.assertEqual(caught.exception.code, 'LONG_PAIR_PROBE_DATABASE_FAILED')
 
     def test_consistent_pair_reader_includes_empty_records_and_live_wal(self):
         with closing(sqlite3.connect(self.db)) as writer:

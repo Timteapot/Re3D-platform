@@ -382,17 +382,22 @@ def verify_sfm_handoff(bundle_root, expected_manifest_sha256, *, input_source: V
 
 
 def import_sfm_handoff(verified: VerifiedSfmHandoff, target_root, *, input_source: VerifiedHybridSource,
-                       health_check: Callable[[], None] = _noop) -> ImportedSfmHandoff:
+                       health_check: Callable[[], None] = _noop,
+                       target_work_root=None) -> ImportedSfmHandoff:
     fresh = verify_sfm_handoff(verified.root, verified.manifest_sha256, input_source=input_source,
         expected_quality_config_sha256=verified.manifest["quality_config_sha256"],
         expected_pipeline_script_sha256=verified.manifest["scripts"]["run_pipeline_sha256"],
         expected_colmap_script_sha256=verified.manifest["scripts"]["run_colmap_shared_sha256"], health_check=health_check)
     target = _path(target_root, exists=False)
-    _require(not target.exists() and target.parent.name == "_experiments"
+    _require((not target.exists() or target_work_root is not None) and target.parent.name == "_experiments"
              and not any(part.casefold() == "jobs" for part in target.parts)
              and not target.is_relative_to(fresh.root) and not fresh.root.is_relative_to(target),
              "HANDOFF_NEW_EXPERIMENT_REQUIRED")
-    restored = restore_hybrid_source(input_source, target, health_check=health_check)
+    # The checkpoint restorer only accepts the reserved-root file layout
+    # (operation-reservation + resource samples), never old work/results/markers.
+    # This layout check is not authentication of the reservation's caller.
+    restored = restore_hybrid_source(input_source, target, health_check=health_check,
+                                    target_work_root=target_work_root)
     _write(target / "HANDOFF_IMPORT_INCOMPLETE.json", {"schema_version": "1.0", "status": "incomplete"})
     # Preserve the newly cloned pre-SfM source; never replace any original or old job DB.
     original_clone = target / "work/shared/colmap/database.db"

@@ -135,7 +135,10 @@ def validate_profile(profile):
                 "snapshot_interval_seconds": 600, "snapshot_retained": 2, "overall_timeout_seconds": 14400}
     guards = profile.get("protection", {})
     require(isinstance(guards, dict) and set(guards) == set(expected)
-            and all(type(guards[key]) is int and guards[key] == value for key, value in expected.items()),
+            and all(type(guards[key]) is int and guards[key] == value
+                    for key, value in expected.items() if key != "overall_timeout_seconds")
+            and type(guards["overall_timeout_seconds"]) is int
+            and 0 < guards["overall_timeout_seconds"] <= expected["overall_timeout_seconds"],
             "CPU_SFM_PROTECTION_CHANGED")
     target = profile.get("target_experiment", {})
     require(isinstance(target, dict) and set(target) == {"scene", "root"}

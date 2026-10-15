@@ -54,6 +54,8 @@ Windows 子进程先挂起，再加入私有 Job Object 后开始计算；超时
 
 默认准备不等于预检通过或开始重建。完整 CPU 成功后才允许导出 SfM；服务器导入只恢复至新目录，后续 `02-extract-cameras` 及三分支仍需单独执行，不自动写回旧网页任务。
 
+本机 C-only 后续执行仅在 `experiment/local-c-only` 分支作为临时实验维护，暂不合入 `main`。主线通用监督与 SfM 交接不自动启用该路线，也不改变网页默认三分支或冻结 Re3D 算法基线。
+
 ## 离线偏高实验档（2026-10-14）
 
 `high_profile.py` 与 `scripts/preview_high_profile.py` 仅生成/检查配置和本机命令预览，不启动子进程、连接服务器或写入实验运行目录。当前独立候选数据位于仓库外 `Re3D-data/experiments/lighthouse300-high-cpu-v1`。
